@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PAH — Project Assistant Host</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='pah.css') }}">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">PAH <span>Project Assistant Host</span></div>
+    <div class="workspace-bar">
+      <input id="workspacePath" type="text" placeholder="/path/to/project" spellcheck="false">
+      <button id="openWorkspace">Open</button>
+      <select id="recentWorkspaces" title="Recent workspaces"><option value="">Recent…</option></select>
+    </div>
+    <div class="top-actions">
+      <button id="envButton" title="Python environment">Python</button>
+      <button id="runButton" disabled title="Run active Python file">▶ Run</button>
+      <button id="saveButton" disabled title="Save (Ctrl+S)">Save</button>
+    </div>
+  </header>
+
+  <main class="workspace-layout">
+    <aside class="sidebar">
+      <div class="panel-heading">
+        <span>PROJECT</span>
+        <button id="refreshTree" title="Refresh">↻</button>
+      </div>
+      <div class="fs-actions">
+        <button id="newFile" title="New file">+File</button>
+        <button id="newFolder" title="New folder">+Folder</button>
+        <button id="renameItem" title="Rename selected">Rename</button>
+        <button id="moveItem" title="Move selected">Move</button>
+        <button id="deleteItem" class="danger" title="Delete selected">Delete</button>
+      </div>
+      <div id="tree" class="tree"></div>
+    </aside>
+
+    <section class="main-pane">
+      <div id="tabs" class="tabs"></div>
+      <div id="emptyEditor" class="empty-state">
+        <h2>Open a local project</h2>
+        <p>PAH 0.5 adds cross-module technical-documentation workflows while keeping code analysis, documents, and references independently runnable.</p>
+      </div>
+      <div id="editorWrap" class="editor-wrap hidden">
+        <pre id="highlightLayer" aria-hidden="true"><code id="highlightCode"></code></pre>
+        <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+      </div>
+      <div class="statusbar">
+        <span id="fileStatus">No file open</span>
+        <span id="cursorStatus"></span>
+      </div>
+    </section>
+
+    <aside class="analysis-panel">
+      <div class="analysis-heading">
+        <div>
+          <span>PROJECT TOOLS</span>
+          <span id="analyzerBadge" class="badge muted">code</span>
+          <span id="documentBadge" class="badge muted">docs</span>
+          <span id="referenceBadge" class="badge muted">refs</span>
+        </div>
+        <button id="analyzeButton" disabled>Analyze</button>
+      </div>
+      <div class="analysis-tabs">
+        <button class="analysis-tab active" data-analysis-tab="context">Code</button>
+        <button class="analysis-tab" data-analysis-tab="repository">Repo</button>
+        <button class="analysis-tab" data-analysis-tab="documents">Docs</button>
+        <button class="analysis-tab" data-analysis-tab="references">Refs</button>
+      </div>
+
+      <div id="analysisContext" class="analysis-body">
+        <div id="analyzerMessage" class="analysis-message">Open a workspace to use code analysis.</div>
+
+        <section class="analysis-section">
+          <div class="section-title">ACTIVE FILE</div>
+          <div id="analysisFilePath" class="small-muted">No file open</div>
+          <div class="inline-actions">
+            <button id="generateFileDocs" disabled>Generate file docs</button>
+          </div>
+          <div id="fileEntities" class="entity-list"></div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">SELECTED ENTITY</div>
+          <div id="entityDetails" class="analysis-placeholder">Select an analyzed class, function, or method.</div>
+          <div id="entityActions" class="inline-actions hidden">
+            <button id="openEntitySource">Open source</button>
+            <button id="similarButton">Similar code</button>
+            <button id="generateDependencyDiagram">Dependency diagram</button>
+            <button id="generateEntityDocs">Generate docs</button>
+          </div>
+          <div id="codeDocumentActions" class="code-document-actions hidden">
+            <div class="small-muted">Add this analyzed entity to a technical document:</div>
+            <select id="documentTarget"><option value="">Choose document…</option></select>
+            <div class="inline-actions">
+              <button id="insertCodeReference">Insert reference</button>
+              <button id="insertCodeSource">Insert with source</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">USED IN DOCUMENTS</div>
+          <div id="entityUsage" class="analysis-placeholder">Select an entity to inspect saved document links.</div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">DEPENDENCIES</div>
+          <div id="dependencyResults" class="analysis-placeholder">Select an entity to inspect incoming and outgoing relationships.</div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">SIMILARITY</div>
+          <div class="compare-row">
+            <select id="compareTarget"><option value="">Compare with…</option></select>
+            <button id="compareButton" disabled>Compare</button>
+          </div>
+          <div id="similarityResults" class="analysis-placeholder">Similarity runs only when requested.</div>
+        </section>
+      </div>
+
+      <div id="analysisRepository" class="analysis-body hidden">
+        <section class="analysis-section">
+          <div class="section-title">OVERVIEW</div>
+          <div class="inline-actions"><button id="generateProjectDocs">Generate project docs</button></div>
+          <div id="analysisOverview" class="analysis-placeholder">Analyze the project to populate repository metrics.</div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">GLOBAL MATRIX</div>
+          <button id="matrixButton">Compute summary</button>
+          <div id="matrixResults" class="analysis-placeholder">Not computed.</div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">DUPLICATE CANDIDATES</div>
+          <div class="tool-row">
+            <label>Threshold <input id="duplicateThreshold" type="number" min="0" max="1" step="0.05" value="0.65"></label>
+            <button id="duplicatesButton">Compute</button>
+          </div>
+          <div id="duplicateResults" class="analysis-placeholder">Not computed.</div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">CLUSTERING</div>
+          <div class="tool-row">
+            <label>k <input id="clusterK" type="number" min="1" step="1" value="3"></label>
+            <button id="clustersButton">Compute</button>
+          </div>
+          <div id="clusterResults" class="analysis-placeholder">Not computed.</div>
+        </section>
+      </div>
+
+      <div id="analysisDocuments" class="analysis-body hidden">
+        <div id="documentMessage" class="analysis-message">Open a workspace to use document tools.</div>
+
+        <section class="analysis-section">
+          <div class="section-title">ACTIVE DOCUMENT</div>
+          <div id="documentFilePath" class="small-muted">No file open</div>
+          <div id="documentActions" class="inline-actions hidden">
+            <button id="parseDiagramButton" class="hidden">Parse diagram</button>
+            <button id="normalizeDiagramButton" class="hidden">Use normalized</button>
+            <button id="compileLatexButton" class="hidden">Compile LaTeX</button>
+            <button id="refreshCodeReferencesButton" class="hidden">Refresh code refs</button>
+          </div>
+          <div id="diagramInsertActions" class="code-document-actions hidden">
+            <div class="small-muted">Insert the current .diagram as Mermaid into Markdown:</div>
+            <select id="diagramDocumentTarget"><option value="">Choose Markdown document…</option></select>
+            <div class="inline-actions"><button id="insertDiagramDocument" disabled>Insert diagram</button></div>
+          </div>
+          <div id="documentResults" class="analysis-placeholder">Open Markdown, LaTeX, BibTeX, or .diagram content to use document-aware tools.</div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">LINKED ARTIFACTS</div>
+          <div id="documentLinks" class="analysis-placeholder">Open Markdown or LaTeX to inspect PAH code/reference links.</div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">DOCUMENT FILES</div>
+          <div id="documentFiles" class="entity-list"></div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">LATEX TOOLCHAIN</div>
+          <div id="compilerStatus" class="small-muted">Checking…</div>
+        </section>
+      </div>
+
+      <div id="analysisReferences" class="analysis-body hidden">
+        <div id="referenceMessage" class="analysis-message">Choose a reference library to browse papers and insert citations.</div>
+
+        <section class="analysis-section">
+          <div class="section-title">REFERENCE LIBRARY</div>
+          <input id="referenceLibraryPath" class="wide-input" type="text" placeholder="/path/to/paper/library" spellcheck="false">
+          <div class="inline-actions">
+            <button id="setReferenceLibrary">Set library</button>
+            <button id="useWorkspaceLibrary">Use workspace</button>
+            <button id="syncReferenceLibrary">Sync</button>
+          </div>
+          <div id="referenceSummary" class="small-muted">No library selected.</div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">SEARCH PAPERS</div>
+          <input id="referenceSearch" class="wide-input" type="search" placeholder="Title, author, DOI, BibKey…">
+          <div class="reference-filters">
+            <select id="referenceStatusFilter"><option value="">All statuses</option></select>
+            <select id="referenceTopicFilter"><option value="">All topics</option></select>
+          </div>
+          <div id="referencePapers" class="entity-list"></div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">SELECTED PAPER</div>
+          <div id="referenceDetails" class="analysis-placeholder">Select a paper to inspect metadata.</div>
+          <div id="referenceEditActions" class="reference-edit hidden">
+            <label>Status
+              <select id="referenceStatusEdit">
+                <option>Needs Review</option><option>Priority</option><option>Read</option>
+                <option>Cited</option><option>OK</option><option>Ignore</option>
+              </select>
+            </label>
+            <label>Notes
+              <textarea id="referenceNotesEdit" rows="4" spellcheck="true"></textarea>
+            </label>
+            <div class="inline-actions">
+              <button id="saveReferencePaper">Save metadata</button>
+              <a id="openReferencePdf" class="button-link hidden" target="_blank" rel="noopener">Open PDF</a>
+            </div>
+          </div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">USED IN DOCUMENTS</div>
+          <div id="referenceUsage" class="analysis-placeholder">Select a paper to inspect saved document links.</div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">ADD TO DOCUMENT</div>
+          <select id="referenceDocumentTarget" class="wide-input"><option value="">Choose Markdown/LaTeX document…</option></select>
+          <div class="inline-actions">
+            <button id="insertReferenceCitation" disabled>Insert citation</button>
+            <button id="insertReferenceNote" disabled>Insert note</button>
+          </div>
+          <div class="small-muted">Citation insertion uses the existing BibKey; PAH never invents one.</div>
+        </section>
+
+        <section class="analysis-section">
+          <div class="section-title">BIBTEX + DUPLICATES</div>
+          <div class="inline-actions">
+            <button id="importActiveBibtex">Import active .bib</button>
+            <button id="referenceDuplicates">Find duplicates</button>
+          </div>
+          <div id="referenceToolsResult" class="analysis-placeholder">Open a .bib file to import its current editor contents, or inspect duplicate groups.</div>
+        </section>
+      </div>
+    </aside>
+  </main>
+
+  <section id="terminalPanel" class="terminal-panel">
+    <div class="terminal-heading">
+      <span>TERMINAL</span>
+      <div>
+        <button id="terminalInterrupt">Ctrl+C</button>
+        <button id="terminalClear">Clear</button>
+        <button id="terminalRestart">Restart</button>
+        <button id="terminalToggle">Hide</button>
+      </div>
+    </div>
+    <pre id="terminalOutput" class="terminal-output"></pre>
+    <div class="terminal-input-row">
+      <span>›</span>
+      <input id="terminalInput" type="text" autocomplete="off" spellcheck="false" placeholder="Enter terminal command">
+    </div>
+  </section>
+</div>
+
+<dialog id="envDialog">
+  <form method="dialog" class="dialog-card">
+    <div class="dialog-heading">
+      <h3>Python Environment</h3>
+      <button value="cancel" class="plain">×</button>
+    </div>
+    <div id="envStatus" class="env-status"></div>
+    <label>Environment path
+      <input id="envPath" value=".venv" spellcheck="false">
+    </label>
+    <div class="dialog-actions">
+      <button id="createEnv" type="button">Create .venv</button>
+      <button id="selectEnv" type="button">Use Existing</button>
+      <button id="systemEnv" type="button">Use System Python</button>
+    </div>
+    <p class="hint">Changing environments restarts the integrated terminal so its PATH is correct.</p>
+  </form>
+</dialog>
+
+<div id="toast" class="toast"></div>
+<script src="{{ url_for('static', filename='syntax.js') }}"></script>
+<script src="{{ url_for('static', filename='pah.js') }}"></script>
+</body>
+</html>
