@@ -1,0 +1,9 @@
+[submodule "modules/code_analyzer"]
+	path = modules/code_analyzer
+	url = git@github.com:bportil1/Code_Repository_Cataloguer.git
+[submodule "modules/tech_documents"]
+	path = modules/tech_documents
+	url = git@github.com:bportil1/Research_Document_Workbench.git
+[submodule "modules/reference_manager"]
+	path = modules/reference_manager
+	url = git@github.com:bportil1/Research_Paper_Repository_Manager.git
