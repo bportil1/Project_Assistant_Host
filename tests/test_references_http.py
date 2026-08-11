@@ -48,5 +48,5 @@ def test_reference_http_surface_and_document_bridge(tmp_path: Path):
         )
         assert saved.get_json()["paper"]["Status"] == "Read"
         health = client.get("/api/health").get_json()
-        assert health["version"] == "0.5.0"
+        assert health["version"] == "0.6.0"
         assert health["references"]["available"] is True

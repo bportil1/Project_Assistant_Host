@@ -9,6 +9,6 @@ modules/
 └── reference_manager/   → Research_Paper_Repository_Manager
 ```
 
-PAH 0.5 integrates all three through their public Python APIs and adds PAH-owned cross-module documentation workflows.
+PAH 0.6 integrates all three through their public Python APIs, retains PAH-owned cross-module workflows, and can host each module's existing standalone web UI as a full work mode.
 
 Do not copy module source into PAH. Use Git submodules and editable installs.

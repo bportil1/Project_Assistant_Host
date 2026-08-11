@@ -139,3 +139,34 @@ Project_Assistant_Host/
 11. Analyzer-backed generation/refresh requires explicit current analysis; stale results are not silently treated as authoritative.
 12. Traceability is based on explicit PAH markers, not heuristic text matching.
 13. Generated documentation scaffolds may state deterministic analyzer facts but must not pretend inferred prose is ground truth.
+
+## Full standalone UI hosting (PAH 0.6)
+
+PAH 0.6 adds a presentation layer above the public-API integrations. It does **not** merge the standalone Flask applications into the PAH Flask routing table. Their mature frontends use absolute `/api/...` URLs, so merging them directly would cause route collisions and force module-specific frontend rewrites.
+
+Instead, `pah/full_tools.py` runs each installed standalone web app on a private loopback port and PAH exposes them as switchable full work modes:
+
+```text
+PAH :8765
+  ├── Workspace        native PAH UI
+  ├── Analysis   ───── iframe ───── CodeAnalyzer UI :8766
+  ├── Documents  ───── iframe ───── Document UI     :8767
+  └── References ───── iframe ───── Reference UI    :8768
+```
+
+The loopback servers are started lazily when full-tool status is first requested. They are not additional user-managed processes. PAH stops them on host shutdown. Normal internal access logs are suppressed; errors remain visible.
+
+### Document compatibility adapter
+
+The standalone Document Workbench normally owns a `documents/<project>` hierarchy. PAH instead binds it to the current arbitrary workspace through a host-owned `WorkspaceDocumentEngine` adapter. The module UI and module routes remain unchanged. Project create/delete are disabled in this hosted mode; file/folder/document operations act on the real PAH workspace. Build outputs remain under PAH state rather than being injected into the source repository.
+
+### State synchronization rules
+
+1. PAH workspace changes rebind/restart the hosted analyzer UI.
+2. The hosted document adapter resolves its project dynamically from the current PAH workspace.
+3. The hosted reference manager uses a PAH-state config file, never the module repository's `config.json`.
+4. Leaving a hosted tool refreshes clean PAH editor tabs from disk; dirty buffers are preserved.
+5. Leaving hosted Analysis marks quick-panel analysis stale because refactor operations may have modified Python source.
+6. Reference-library changes made in the hosted manager are adopted by PAH's quick reference adapter.
+
+This hosting layer is a UI integration concern only. `CodeAnalyzer`, `DocumentEngine`, and `ReferenceManager` still do not import PAH or one another.

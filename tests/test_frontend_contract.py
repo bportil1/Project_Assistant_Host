@@ -33,3 +33,33 @@ def test_pah05_routes_are_present():
         "/api/workflows/links",
     ]:
         assert route in source
+
+
+def test_pah06_full_tool_modes_exist_and_are_wired():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    for mode in ["workspace", "analysis", "documents", "references"]:
+        assert f'data-mode="{mode}"' in html
+    for element_id in [
+        "analysisMode",
+        "documentsMode",
+        "referencesMode",
+        "analysisToolFrame",
+        "documentsToolFrame",
+        "referencesToolFrame",
+        "openFullAnalysis",
+        "openFullDocuments",
+        "openFullReferences",
+    ]:
+        assert f'id="{element_id}"' in html
+    assert "async function setMode(mode)" in js
+    assert "/api/full-tools/status" in js
+    assert "/api/full-tools/return" in js
+
+
+def test_pah06_full_tool_routes_are_present():
+    source = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
+    assert "/api/full-tools/status" in source
+    assert "/api/full-tools/refresh" in source
+    assert "/api/full-tools/return" in source
+    assert "FullToolManager" in source

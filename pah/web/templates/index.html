@@ -10,6 +10,12 @@
 <div id="app">
   <header class="topbar">
     <div class="brand">PAH <span>Project Assistant Host</span></div>
+    <nav class="mode-nav" aria-label="PAH work modes">
+      <button class="mode-button active" data-mode="workspace">Workspace</button>
+      <button class="mode-button" data-mode="analysis">Analysis</button>
+      <button class="mode-button" data-mode="documents">Documents</button>
+      <button class="mode-button" data-mode="references">References</button>
+    </nav>
     <div class="workspace-bar">
       <input id="workspacePath" type="text" placeholder="/path/to/project" spellcheck="false">
       <button id="openWorkspace">Open</button>
@@ -22,7 +28,7 @@
     </div>
   </header>
 
-  <main class="workspace-layout">
+  <main id="workspaceMode" class="workspace-layout mode-surface">
     <aside class="sidebar">
       <div class="panel-heading">
         <span>PROJECT</span>
@@ -42,7 +48,7 @@
       <div id="tabs" class="tabs"></div>
       <div id="emptyEditor" class="empty-state">
         <h2>Open a local project</h2>
-        <p>PAH 0.5 adds cross-module technical-documentation workflows while keeping code analysis, documents, and references independently runnable.</p>
+        <p>PAH 0.6 adds switchable full Analysis, Documents, and References workspaces while keeping code analysis, documents, and references independently runnable.</p>
       </div>
       <div id="editorWrap" class="editor-wrap hidden">
         <pre id="highlightLayer" aria-hidden="true"><code id="highlightCode"></code></pre>
@@ -62,7 +68,7 @@
           <span id="documentBadge" class="badge muted">docs</span>
           <span id="referenceBadge" class="badge muted">refs</span>
         </div>
-        <button id="analyzeButton" disabled>Analyze</button>
+        <div class="analysis-heading-actions"><button id="openFullAnalysis">Full</button><button id="analyzeButton" disabled>Analyze</button></div>
       </div>
       <div class="analysis-tabs">
         <button class="analysis-tab active" data-analysis-tab="context">Code</button>
@@ -158,7 +164,7 @@
         <div id="documentMessage" class="analysis-message">Open a workspace to use document tools.</div>
 
         <section class="analysis-section">
-          <div class="section-title">ACTIVE DOCUMENT</div>
+          <div class="section-title section-title-row"><span>ACTIVE DOCUMENT</span><button id="openFullDocuments">Full workspace</button></div>
           <div id="documentFilePath" class="small-muted">No file open</div>
           <div id="documentActions" class="inline-actions hidden">
             <button id="parseDiagramButton" class="hidden">Parse diagram</button>
@@ -194,7 +200,7 @@
         <div id="referenceMessage" class="analysis-message">Choose a reference library to browse papers and insert citations.</div>
 
         <section class="analysis-section">
-          <div class="section-title">REFERENCE LIBRARY</div>
+          <div class="section-title section-title-row"><span>REFERENCE LIBRARY</span><button id="openFullReferences">Full manager</button></div>
           <input id="referenceLibraryPath" class="wide-input" type="text" placeholder="/path/to/paper/library" spellcheck="false">
           <div class="inline-actions">
             <button id="setReferenceLibrary">Set library</button>
@@ -260,6 +266,21 @@
       </div>
     </aside>
   </main>
+
+  <section id="analysisMode" class="full-tool-view mode-surface hidden" data-tool="analysis">
+    <div class="full-tool-status"><strong>Full Analysis</strong><span id="analysisToolStatus">Preparing analyzer…</span><button class="toolReload" data-tool-reload="analysis">Reload</button></div>
+    <iframe id="analysisToolFrame" title="Full Code Analysis" referrerpolicy="no-referrer"></iframe>
+  </section>
+
+  <section id="documentsMode" class="full-tool-view mode-surface hidden" data-tool="documents">
+    <div class="full-tool-status"><strong>Document Workbench</strong><span id="documentsToolStatus">Preparing document workspace…</span><button class="toolReload" data-tool-reload="documents">Reload</button></div>
+    <iframe id="documentsToolFrame" title="Full Document Workbench" referrerpolicy="no-referrer"></iframe>
+  </section>
+
+  <section id="referencesMode" class="full-tool-view mode-surface hidden" data-tool="references">
+    <div class="full-tool-status"><strong>Reference Manager</strong><span id="referencesToolStatus">Preparing reference manager…</span><button class="toolReload" data-tool-reload="references">Reload</button></div>
+    <iframe id="referencesToolFrame" title="Full Reference Manager" referrerpolicy="no-referrer"></iframe>
+  </section>
 
   <section id="terminalPanel" class="terminal-panel">
     <div class="terminal-heading">

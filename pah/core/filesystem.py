@@ -44,6 +44,40 @@ class FileSystemService:
         rel = path.resolve().relative_to(self.root)
         return "." if str(rel) == "." else rel.as_posix()
 
+    def list_directory(self, relative: str | Path = ".") -> list[dict[str, Any]]:
+        """Return one directory level for lazy project-tree rendering.
+
+        The browser should use this instead of recursively materializing the entire
+        workspace. Large research repositories can contain thousands of generated
+        files or virtual-environment entries; a shallow listing guarantees that
+        every immediate child of the requested directory remains visible.
+        """
+        directory = self.resolve(relative, must_exist=True)
+        if not directory.is_dir():
+            raise FileSystemError("Only directories can be listed in the project tree.")
+
+        try:
+            children = sorted(directory.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except OSError:
+            return []
+
+        result: list[dict[str, Any]] = []
+        for child in children:
+            if child.name == ".git":
+                continue
+            item = {
+                "name": child.name,
+                "path": self.relative(child),
+                "type": "dir" if child.is_dir() else "file",
+            }
+            if child.is_file():
+                try:
+                    item["size"] = child.stat().st_size
+                except OSError:
+                    item["size"] = None
+            result.append(item)
+        return result
+
     def tree(self, *, max_entries: int = 6000) -> list[dict[str, Any]]:
         count = 0
 

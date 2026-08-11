@@ -38,6 +38,12 @@
       topics: [],
       selected: null,
     },
+    mode: 'workspace',
+    fullTools: {
+      analysis: {available: false, url: null, error: null},
+      documents: {available: false, url: null, error: null},
+      references: {available: false, url: null, error: null},
+    },
   };
 
   async function api(url, options = {}) {
@@ -77,6 +83,119 @@
   }
 
   // ---------------------------------------------------------------------------
+  // PAH 0.6 full module workspaces
+  // ---------------------------------------------------------------------------
+  function toolFrameId(tool) {
+    return `${tool}ToolFrame`;
+  }
+
+  function toolStatusId(tool) {
+    return `${tool}ToolStatus`;
+  }
+
+  function renderFullToolStatus() {
+    for (const tool of ['analysis', 'documents', 'references']) {
+      const info = state.fullTools[tool] || {};
+      const button = document.querySelector(`.mode-button[data-mode="${tool}"]`);
+      if (button) {
+        button.classList.toggle('unavailable', !info.available);
+        button.title = info.available ? `Open full ${tool} workspace` : (info.error || `${tool} module unavailable`);
+      }
+      const status = $(toolStatusId(tool));
+      if (status) {
+        if (info.available) {
+          if (tool === 'analysis' && info.bound_workspace) status.textContent = info.bound_workspace;
+          else if (tool === 'documents' && info.bound_workspace) status.textContent = info.bound_workspace;
+          else if (tool === 'references' && info.library_root) status.textContent = info.library_root;
+          else status.textContent = 'Ready';
+        } else {
+          status.textContent = info.error || 'Module unavailable';
+        }
+      }
+    }
+  }
+
+  async function refreshFullTools({reloadActive = false} = {}) {
+    try {
+      const data = await api('/api/full-tools/status');
+      state.fullTools = {...state.fullTools, ...(data.tools || {})};
+      renderFullToolStatus();
+      if (reloadActive && state.mode !== 'workspace') loadToolFrame(state.mode, true);
+    } catch (error) {
+      for (const tool of ['analysis', 'documents', 'references']) {
+        state.fullTools[tool] = {available: false, url: null, error: error.message};
+      }
+      renderFullToolStatus();
+    }
+  }
+
+  function loadToolFrame(tool, force = false) {
+    const info = state.fullTools[tool];
+    const frame = $(toolFrameId(tool));
+    if (!frame || !info?.available || !info.url) return false;
+    const current = frame.dataset.toolUrl || '';
+    if (force || current !== info.url || !frame.src) {
+      const separator = info.url.includes('?') ? '&' : '?';
+      frame.src = `${info.url}${separator}pah=${Date.now()}`;
+      frame.dataset.toolUrl = info.url;
+    }
+    return true;
+  }
+
+  async function refreshCleanTabsFromDisk() {
+    let skippedDirty = 0;
+    for (const tab of state.tabs) {
+      if (tab.dirty) { skippedDirty += 1; continue; }
+      try {
+        const data = await api(`/api/file?path=${encodeURIComponent(tab.path)}`);
+        tab.content = data.content;
+        tab.saved = data.content;
+        tab.language = data.language;
+      } catch (_) {
+        // A full tool may have moved/deleted a file. Leave the tab as-is so the
+        // user can decide what to do rather than silently discarding content.
+      }
+    }
+    renderTabs();
+    showActive();
+    if (skippedDirty) toast(`${skippedDirty} unsaved PAH tab${skippedDirty === 1 ? '' : 's'} not refreshed from disk.`);
+  }
+
+  async function setMode(mode) {
+    if (!['workspace', 'analysis', 'documents', 'references'].includes(mode)) return;
+    const previousMode = state.mode;
+    if (previousMode !== 'workspace' && previousMode !== mode) {
+      try {
+        await api('/api/full-tools/return', {method: 'POST', body: JSON.stringify({mode: previousMode})});
+      } catch (error) {
+        toast(`Full-tool sync warning: ${error.message}`, true);
+      }
+      await refreshTree().catch(() => {});
+      await refreshCleanTabsFromDisk();
+      await refreshAnalyzerStatus().catch(() => {});
+      await refreshReferenceStatus().catch(() => {});
+    }
+    if (mode !== 'workspace') {
+      await refreshFullTools();
+      const info = state.fullTools[mode];
+      if (!info?.available) {
+        toast(info?.error || `${mode} module is unavailable.`, true);
+        return;
+      }
+      loadToolFrame(mode);
+    }
+    state.mode = mode;
+    document.querySelectorAll('.mode-button').forEach(button => {
+      button.classList.toggle('active', button.dataset.mode === mode);
+    });
+    $('workspaceMode').classList.toggle('hidden', mode !== 'workspace');
+    $('analysisMode').classList.toggle('hidden', mode !== 'analysis');
+    $('documentsMode').classList.toggle('hidden', mode !== 'documents');
+    $('referencesMode').classList.toggle('hidden', mode !== 'references');
+    $('app').classList.toggle('full-mode', mode !== 'workspace');
+  }
+
+  // ---------------------------------------------------------------------------
   // Workspace / files / editor
   // ---------------------------------------------------------------------------
   async function loadWorkspaceInfo() {
@@ -102,6 +221,7 @@
     await refreshAnalyzerStatus();
     await refreshDocumentStatus();
     await refreshReferenceStatus();
+    await refreshFullTools({reloadActive: Boolean(data.root)});
   }
 
   async function openWorkspace(path) {
@@ -140,11 +260,21 @@
         const children = document.createElement('div');
         children.className = 'tree-children';
         children.hidden = true;
-        renderTreeNodes(node.children || [], children);
         wrap.appendChild(children);
-        row.addEventListener('dblclick', () => {
-          children.hidden = !children.hidden;
-          icon.textContent = children.hidden ? '▸' : '▾';
+        let loaded = false;
+
+        row.addEventListener('dblclick', async () => {
+          try {
+            if (!loaded) {
+              const data = await api(`/api/tree?path=${encodeURIComponent(node.path)}`);
+              renderTreeNodes(data.tree || [], children);
+              loaded = true;
+            }
+            children.hidden = !children.hidden;
+            icon.textContent = children.hidden ? '▸' : '▾';
+          } catch (error) {
+            toast(error.message, true);
+          }
         });
       } else {
         row.addEventListener('dblclick', () => openFile(node.path).catch(error => toast(error.message, true)));
@@ -165,7 +295,7 @@
     const data = await api('/api/tree');
     const tree = $('tree');
     tree.innerHTML = '';
-    renderTreeNodes(data.tree, tree);
+    renderTreeNodes(data.tree || [], tree);
   }
 
   async function openFile(path) {
@@ -1762,6 +1892,8 @@
     $('referenceLibraryPath').value = state.references.libraryRoot || '';
     state.references.selected = null;
     await refreshReferenceStatus();
+    await refreshFullTools();
+    if (state.mode === 'references') loadToolFrame('references', true);
     toast(`Reference library: ${state.references.libraryRoot}`);
   }
 
@@ -1871,6 +2003,16 @@
   // ---------------------------------------------------------------------------
   // Event wiring
   // ---------------------------------------------------------------------------
+  document.querySelectorAll('.mode-button').forEach(button => {
+    button.addEventListener('click', () => setMode(button.dataset.mode).catch(error => toast(error.message, true)));
+  });
+  document.querySelectorAll('[data-tool-reload]').forEach(button => {
+    button.addEventListener('click', () => loadToolFrame(button.dataset.toolReload, true));
+  });
+  $('openFullAnalysis').onclick = () => setMode('analysis').catch(error => toast(error.message, true));
+  $('openFullDocuments').onclick = () => setMode('documents').catch(error => toast(error.message, true));
+  $('openFullReferences').onclick = () => setMode('references').catch(error => toast(error.message, true));
+
   $('openWorkspace').onclick = () => openWorkspace($('workspacePath').value).catch(error => toast(error.message, true));
   $('workspacePath').addEventListener('keydown', event => { if (event.key === 'Enter') $('openWorkspace').click(); });
   $('recentWorkspaces').onchange = event => { if (event.target.value) openWorkspace(event.target.value).catch(error => toast(error.message, true)); };

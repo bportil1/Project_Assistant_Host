@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import os
 import shlex
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from .core.environments import EnvironmentError, EnvironmentManager
 from .core.filesystem import FileSystemError, FileSystemService
 from .core.terminal import TerminalError, TerminalManager
 from .core.workspace import WorkspaceError, WorkspaceManager
+from .full_tools import FullToolManager
 from .integrations import (
     AnalysisDiagramBridgeError,
     AnalyzerIntegration,
@@ -43,11 +45,23 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     analyzer = AnalyzerIntegration()
     documents = DocumentIntegration(state_dir=workspaces.state_dir / "document-engine")
     references = ReferenceIntegration(state_dir=workspaces.state_dir / "references")
+    full_tools = FullToolManager(
+        state_dir=workspaces.state_dir / "full-tools",
+        analyzer_port=int(os.environ.get("PAH_ANALYSIS_PORT", "8766")),
+        documents_port=int(os.environ.get("PAH_DOCUMENTS_PORT", "8767")),
+        references_port=int(os.environ.get("PAH_REFERENCES_PORT", "8768")),
+    )
     if workspaces.root is not None:
         analyzer.bind(workspaces.root)
         documents.bind(workspaces.root)
         references.bind_workspace(workspaces.root)
+    if workspaces.root is not None:
+        full_tools.bind_workspace(workspaces.root)
+    ref_status = references.status()
+    if ref_status.get("configured") and ref_status.get("library_root"):
+        full_tools.bind_reference_library(ref_status.get("library_root"))
     atexit.register(terminals.stop_all)
+    atexit.register(full_tools.stop_all)
 
     def fs() -> FileSystemService:
         return FileSystemService(workspaces.require_root())
@@ -105,6 +119,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         analyzer.bind(root)
         documents.bind(root)
         references.bind_workspace(root)
+        full_tools.bind_workspace(root)
         return jsonify({
             "ok": True,
             "root": str(root),
@@ -112,11 +127,13 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),
+            "full_tools": full_tools.status(),
         })
 
     @app.get("/api/tree")
     def get_tree():
-        return jsonify({"ok": True, "tree": fs().tree()})
+        relative = request.args.get("path", ".")
+        return jsonify({"ok": True, "path": relative, "tree": fs().list_directory(relative)})
 
     @app.get("/api/file")
     def read_file():
@@ -377,25 +394,70 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({"ok": True, "target": target, "snippet": snippet, "entity": entity})
 
 
+    @app.get("/api/full-tools/status")
+    def full_tools_status():
+        full_tools.start_available()
+        return jsonify({"ok": True, **full_tools.status()})
+
+    @app.post("/api/full-tools/refresh")
+    def full_tools_refresh():
+        if workspaces.root is not None:
+            full_tools.bind_workspace(workspaces.root)
+        full_tools.start_available()
+        ref_status = references.status()
+        full_tools.bind_reference_library(ref_status.get("library_root") if ref_status.get("configured") else None)
+        return jsonify({"ok": True, **full_tools.status()})
+
+    @app.post("/api/full-tools/return")
+    def full_tools_return():
+        payload = request.get_json(silent=True) or {}
+        mode = str(payload.get("mode", ""))
+        # Full Analysis retains the standalone refactor controls, so returning
+        # from it conservatively invalidates the quick-panel analyzer cache.
+        if mode == "analysis":
+            analyzer.mark_stale()
+        # If the user changed the library from inside the full Reference Manager,
+        # adopt that selection back into PAH's quick reference surface.
+        if mode == "references":
+            tool_root = full_tools.reference_library_from_tool()
+            current = references.status().get("library_root")
+            if tool_root is not None and str(tool_root) != str(current or ""):
+                references.select_library(tool_root)
+        return jsonify({
+            "ok": True,
+            "analyzer": analyzer.status(),
+            "references": references.status(),
+        })
+
 
     @app.get("/api/references/status")
     def reference_status():
         references.bind_workspace(workspaces.root)
+        tool_root = full_tools.reference_library_from_tool()
+        current = references.status().get("library_root")
+        if tool_root is not None and str(tool_root) != str(current or ""):
+            references.select_library(tool_root)
         return jsonify({"ok": True, **references.status()})
 
     @app.post("/api/references/library")
     def reference_select_library():
         payload = request.get_json(silent=True) or {}
-        return jsonify({"ok": True, **references.select_library(str(payload.get("path", "")))})
+        result = references.select_library(str(payload.get("path", "")))
+        full_tools.bind_reference_library(result.get("library_root"))
+        return jsonify({"ok": True, **result})
 
     @app.delete("/api/references/library")
     def reference_clear_library():
-        return jsonify({"ok": True, **references.clear_library()})
+        result = references.clear_library()
+        full_tools.bind_reference_library(None)
+        return jsonify({"ok": True, **result})
 
     @app.post("/api/references/library/use-workspace")
     def reference_use_workspace():
         references.bind_workspace(workspaces.require_root())
-        return jsonify({"ok": True, **references.use_workspace()})
+        result = references.use_workspace()
+        full_tools.bind_reference_library(result.get("library_root"))
+        return jsonify({"ok": True, **result})
 
     @app.get("/api/references/papers")
     def reference_papers():
@@ -589,10 +651,11 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.5.1",
+            "version": "0.6.0",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),
+            "full_tools": full_tools.status(),
         })
 
     return app
