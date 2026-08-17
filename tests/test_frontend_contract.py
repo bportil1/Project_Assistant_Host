@@ -63,3 +63,28 @@ def test_pah06_full_tool_routes_are_present():
     assert "/api/full-tools/refresh" in source
     assert "/api/full-tools/return" in source
     assert "FullToolManager" in source
+
+
+def test_pah07_detachable_tool_controls_exist_and_are_wired():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    for tool in ["analysis", "documents", "references"]:
+        assert f'data-tool-detach="{tool}"' in html
+    assert 'id="terminalDetach"' in html
+    for function_name in [
+        "detachTool",
+        "reattachTool",
+        "detachTerminal",
+        "reattachTerminal",
+        "pollDetachedTerminal",
+    ]:
+        assert f"function {function_name}" in js or f"async function {function_name}" in js
+    assert "isToolDetached(mode)" in js
+    assert "state.terminalDetached" in js
+
+
+def test_pah07_version_is_reported():
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
+    assert 'version = "0.7.0"' in pyproject
+    assert '"version": "0.7.0"' in app

@@ -322,3 +322,10 @@ button.entity-item:hover, button.result-row:hover { border-color: #3b4658; backg
   .brand span { display: none; }
   .mode-button { font-size: 10px; }
 }
+
+
+/* PAH 0.7: detachable tool windows */
+.mode-button.detached { color: #b8d28b; border-color: #496344; }
+.mode-button.detached::after { content: ' ↗'; color: #8fb785; }
+.full-tool-status button[data-tool-detach] { border-color: #3d4d68; }
+.terminal-panel.detached .terminal-heading > span::after { content: ' · detached'; color: #8fb785; letter-spacing: 0; text-transform: none; }

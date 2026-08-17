@@ -44,6 +44,9 @@
       documents: {available: false, url: null, error: null},
       references: {available: false, url: null, error: null},
     },
+    detachedWindows: {analysis: null, documents: null, references: null, terminal: null},
+    detachedWatch: null,
+    terminalDetached: false,
   };
 
   async function api(url, options = {}) {
@@ -93,6 +96,139 @@
     return `${tool}ToolStatus`;
   }
 
+  function detachedWindow(tool) {
+    const popup = state.detachedWindows[tool];
+    if (!popup || popup.closed) return null;
+    return popup;
+  }
+
+  function isToolDetached(tool) {
+    return Boolean(detachedWindow(tool));
+  }
+
+  function renderDetachedState() {
+    for (const tool of ['analysis', 'documents', 'references']) {
+      const detached = isToolDetached(tool);
+      const modeButton = document.querySelector(`.mode-button[data-mode="${tool}"]`);
+      if (modeButton) {
+        modeButton.classList.toggle('detached', detached);
+        if (detached) modeButton.title = `Focus detached ${tool} window`;
+      }
+      const detachButton = document.querySelector(`[data-tool-detach="${tool}"]`);
+      if (detachButton) {
+        detachButton.textContent = detached ? 'Focus window' : 'Detach';
+        detachButton.disabled = !(state.fullTools[tool]?.available);
+      }
+    }
+    const terminalButton = $('terminalDetach');
+    if (terminalButton) terminalButton.textContent = state.terminalDetached ? 'Focus window' : 'Detach';
+    $('terminalPanel')?.classList.toggle('detached', state.terminalDetached);
+  }
+
+  function popupFeatures(width = 1220, height = 820) {
+    const left = Math.max(0, Math.round((window.screenX || 0) + 80));
+    const top = Math.max(0, Math.round((window.screenY || 0) + 70));
+    return `popup=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`;
+  }
+
+  function writeDetachedToolShell(popup, tool, url) {
+    const title = {analysis: 'Code Analyzer', documents: 'Document Workbench', references: 'Reference Manager'}[tool] || tool;
+    popup.document.open();
+    popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PAH — ${title}</title><style>html,body{margin:0;height:100%;background:#111318;color:#d9dee7;font-family:Inter,system-ui,sans-serif}body{display:grid;grid-template-rows:36px minmax(0,1fr)}header{display:flex;align-items:center;gap:10px;padding:4px 8px;background:#171a21;border-bottom:1px solid #303642;font-size:12px}header strong{flex:0 0 auto}header span{flex:1;color:#8993a3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button{background:#252b35;color:#d9dee7;border:1px solid #303642;border-radius:5px;padding:4px 9px;cursor:pointer}button:hover{background:#303744}iframe{width:100%;height:100%;border:0;background:#fff}</style></head><body><header><strong>${title}</strong><span>Detached from PAH</span><button id="reattachButton">Reattach</button></header><iframe id="detachedFrame" title="${title}"></iframe></body></html>`);
+    popup.document.close();
+    const frame = popup.document.getElementById('detachedFrame');
+    const separator = url.includes('?') ? '&' : '?';
+    frame.src = `${url}${separator}pahDetached=${Date.now()}`;
+    popup.document.getElementById('reattachButton').onclick = () => reattachTool(tool, true);
+    popup.focus();
+  }
+
+  async function syncReturnedTool(mode) {
+    if (!['analysis', 'documents', 'references'].includes(mode)) return;
+    try {
+      await api('/api/full-tools/return', {method: 'POST', body: JSON.stringify({mode})});
+    } catch (error) {
+      toast(`Full-tool sync warning: ${error.message}`, true);
+    }
+    await refreshTree().catch(() => {});
+    await refreshCleanTabsFromDisk();
+    await refreshAnalyzerStatus().catch(() => {});
+    await refreshReferenceStatus().catch(() => {});
+  }
+
+  async function detachTool(tool) {
+    const existing = detachedWindow(tool);
+    if (existing) { existing.focus(); return; }
+
+    // Open synchronously from the click event so browser popup blocking does not
+    // turn a normal detach action into a silent failure.
+    const popup = window.open('', `pah-detached-${tool}`, popupFeatures());
+    if (!popup) {
+      toast('The browser blocked the detached window. Allow popups for this local PAH site.', true);
+      return;
+    }
+    popup.document.title = 'PAH — Preparing detached tool';
+
+    await refreshFullTools();
+    const info = state.fullTools[tool];
+    if (!info?.available || !info.url) {
+      popup.close();
+      toast(info?.error || `${tool} module is unavailable.`, true);
+      return;
+    }
+
+    state.detachedWindows[tool] = popup;
+    writeDetachedToolShell(popup, tool, info.url);
+    const frame = $(toolFrameId(tool));
+    if (frame) {
+      frame.src = 'about:blank';
+      delete frame.dataset.toolUrl;
+    }
+    renderDetachedState();
+    ensureDetachedWatch();
+
+    if (state.mode === tool) await setMode('workspace');
+  }
+
+  async function reattachTool(tool, activate = false) {
+    const popup = detachedWindow(tool);
+    state.detachedWindows[tool] = null;
+    if (popup && !popup.closed) popup.close();
+    renderDetachedState();
+    await syncReturnedTool(tool);
+    if (activate) await setMode(tool);
+  }
+
+  async function handleDetachedWindowClosed(tool) {
+    if (state.detachedWindows[tool] && state.detachedWindows[tool].closed) {
+      state.detachedWindows[tool] = null;
+      renderDetachedState();
+      await syncReturnedTool(tool);
+    }
+  }
+
+  function ensureDetachedWatch() {
+    if (state.detachedWatch) return;
+    state.detachedWatch = window.setInterval(() => {
+      for (const tool of ['analysis', 'documents', 'references']) {
+        handleDetachedWindowClosed(tool).catch(() => {});
+      }
+      if (state.terminalDetached && (!state.detachedWindows.terminal || state.detachedWindows.terminal.closed)) {
+        handleDetachedTerminalClosed(false);
+      }
+    }, 700);
+  }
+
+  function refreshDetachedToolWindow(tool) {
+    const popup = detachedWindow(tool);
+    const info = state.fullTools[tool];
+    if (!popup || !info?.available || !info.url) return;
+    const frame = popup.document.getElementById('detachedFrame');
+    if (!frame) return;
+    const separator = info.url.includes('?') ? '&' : '?';
+    frame.src = `${info.url}${separator}pahDetached=${Date.now()}`;
+  }
+
   function renderFullToolStatus() {
     for (const tool of ['analysis', 'documents', 'references']) {
       const info = state.fullTools[tool] || {};
@@ -108,11 +244,13 @@
           else if (tool === 'documents' && info.bound_workspace) status.textContent = info.bound_workspace;
           else if (tool === 'references' && info.library_root) status.textContent = info.library_root;
           else status.textContent = 'Ready';
+          if (isToolDetached(tool)) status.textContent += ' · detached';
         } else {
           status.textContent = info.error || 'Module unavailable';
         }
       }
     }
+    renderDetachedState();
   }
 
   async function refreshFullTools({reloadActive = false} = {}) {
@@ -120,7 +258,12 @@
       const data = await api('/api/full-tools/status');
       state.fullTools = {...state.fullTools, ...(data.tools || {})};
       renderFullToolStatus();
-      if (reloadActive && state.mode !== 'workspace') loadToolFrame(state.mode, true);
+      if (reloadActive) {
+        for (const tool of ['analysis', 'documents', 'references']) {
+          if (isToolDetached(tool)) refreshDetachedToolWindow(tool);
+        }
+      }
+      if (reloadActive && state.mode !== 'workspace' && !isToolDetached(state.mode)) loadToolFrame(state.mode, true);
     } catch (error) {
       for (const tool of ['analysis', 'documents', 'references']) {
         state.fullTools[tool] = {available: false, url: null, error: error.message};
@@ -130,6 +273,7 @@
   }
 
   function loadToolFrame(tool, force = false) {
+    if (isToolDetached(tool)) return false;
     const info = state.fullTools[tool];
     const frame = $(toolFrameId(tool));
     if (!frame || !info?.available || !info.url) return false;
@@ -163,17 +307,13 @@
 
   async function setMode(mode) {
     if (!['workspace', 'analysis', 'documents', 'references'].includes(mode)) return;
+    if (mode !== 'workspace' && isToolDetached(mode)) {
+      detachedWindow(mode).focus();
+      return;
+    }
     const previousMode = state.mode;
     if (previousMode !== 'workspace' && previousMode !== mode) {
-      try {
-        await api('/api/full-tools/return', {method: 'POST', body: JSON.stringify({mode: previousMode})});
-      } catch (error) {
-        toast(`Full-tool sync warning: ${error.message}`, true);
-      }
-      await refreshTree().catch(() => {});
-      await refreshCleanTabsFromDisk();
-      await refreshAnalyzerStatus().catch(() => {});
-      await refreshReferenceStatus().catch(() => {});
+      await syncReturnedTool(previousMode);
     }
     if (mode !== 'workspace') {
       await refreshFullTools();
@@ -518,11 +658,11 @@
     state.terminalId = data.id;
     setText('terminalOutput', '');
     clearInterval(state.terminalPoll);
-    state.terminalPoll = setInterval(pollTerminal, 300);
+    if (!state.terminalDetached) state.terminalPoll = setInterval(pollTerminal, 300);
   }
 
   async function pollTerminal() {
-    if (!state.terminalId) return;
+    if (!state.terminalId || state.terminalDetached) return;
     try {
       const data = await api(`/api/terminal/read?id=${encodeURIComponent(state.terminalId)}`);
       if (data.output) {
@@ -540,6 +680,111 @@
   async function terminalSend(data) {
     if (!state.terminalId) await startTerminal();
     await api('/api/terminal/input', {method: 'POST', body: JSON.stringify({id: state.terminalId, data})});
+  }
+
+  async function pollDetachedTerminal() {
+    if (!state.terminalId) return {output: '', closed: true};
+    try {
+      const data = await api(`/api/terminal/read?id=${encodeURIComponent(state.terminalId)}`);
+      if (data.output) {
+        const clean = stripAnsi(data.output);
+        const output = $('terminalOutput');
+        output.textContent += clean;
+        output.scrollTop = output.scrollHeight;
+        data.output = clean;
+      }
+      if (data.closed) state.terminalId = null;
+      return data;
+    } catch (_) {
+      return {output: '', closed: false};
+    }
+  }
+
+  function writeDetachedTerminalShell(popup) {
+    popup.document.open();
+    popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PAH — Terminal</title><style>html,body{margin:0;height:100%;background:#0d0f13;color:#d9dee7;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace}body{display:grid;grid-template-rows:36px minmax(0,1fr) 38px}header{display:flex;align-items:center;gap:6px;padding:4px 8px;background:#171a21;border-bottom:1px solid #303642;font-family:Inter,system-ui,sans-serif;font-size:12px}header strong{margin-right:auto}button{background:#252b35;color:#d9dee7;border:1px solid #303642;border-radius:5px;padding:4px 8px;cursor:pointer}button:hover{background:#303744}pre{margin:0;overflow:auto;padding:9px 11px;white-space:pre-wrap;word-break:break-word;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;color:#cbd4c4}div.input{display:flex;align-items:center;gap:7px;padding:4px 9px;border-top:1px solid #252a33}input{flex:1;border:0;outline:none;background:transparent;color:#d9dee7;font:12px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace}</style></head><body><header><strong>PAH Terminal</strong><button id="interrupt">Ctrl+C</button><button id="clear">Clear</button><button id="restart">Restart</button><button id="reattach">Reattach</button></header><pre id="output"></pre><div class="input"><span>›</span><input id="input" autocomplete="off" spellcheck="false" placeholder="Enter terminal command"></div></body></html>`);
+    popup.document.close();
+    const out = popup.document.getElementById('output');
+    out.textContent = $('terminalOutput').textContent;
+    out.scrollTop = out.scrollHeight;
+    const input = popup.document.getElementById('input');
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        const value = input.value;
+        input.value = '';
+        terminalSend(value + '\n').catch(error => toast(error.message, true));
+      } else if (event.ctrlKey && event.key.toLowerCase() === 'c') {
+        event.preventDefault();
+        terminalSend('\x03').catch(error => toast(error.message, true));
+      }
+    });
+    popup.document.getElementById('interrupt').onclick = () => terminalSend('\x03').catch(error => toast(error.message, true));
+    popup.document.getElementById('clear').onclick = () => { out.textContent = ''; setText('terminalOutput', ''); };
+    popup.document.getElementById('restart').onclick = async () => {
+      try { await restartTerminal(); out.textContent = ''; } catch (error) { toast(error.message, true); }
+    };
+    popup.document.getElementById('reattach').onclick = () => reattachTerminal(true);
+    popup._pahTerminalPoll = popup.setInterval(async () => {
+      const data = await pollDetachedTerminal();
+      if (data.output) {
+        out.textContent += data.output;
+        out.scrollTop = out.scrollHeight;
+      }
+    }, 300);
+    popup.focus();
+  }
+
+  async function detachTerminal() {
+    const existing = detachedWindow('terminal');
+    if (existing) { existing.focus(); return; }
+    if (!state.workspace) return toast('Open a workspace first', true);
+    const popup = window.open('', 'pah-detached-terminal', popupFeatures(980, 620));
+    if (!popup) {
+      toast('The browser blocked the detached terminal window. Allow popups for this local PAH site.', true);
+      return;
+    }
+    if (!state.terminalId) await startTerminal();
+    state.detachedWindows.terminal = popup;
+    state.terminalDetached = true;
+    clearInterval(state.terminalPoll);
+    state.terminalPoll = null;
+    writeDetachedTerminalShell(popup);
+    $('terminalPanel').classList.add('collapsed');
+    $('app').classList.add('terminal-collapsed');
+    $('terminalToggle').textContent = 'Show';
+    renderDetachedState();
+    ensureDetachedWatch();
+  }
+
+  function handleDetachedTerminalClosed(expand) {
+    const popup = state.detachedWindows.terminal;
+    if (popup && popup._pahTerminalPoll) popup.clearInterval(popup._pahTerminalPoll);
+    state.detachedWindows.terminal = null;
+    state.terminalDetached = false;
+    clearInterval(state.terminalPoll);
+    state.terminalPoll = state.terminalId ? setInterval(pollTerminal, 300) : null;
+    if (expand) {
+      $('terminalPanel').classList.remove('collapsed');
+      $('app').classList.remove('terminal-collapsed');
+      $('terminalToggle').textContent = 'Hide';
+    }
+    renderDetachedState();
+  }
+
+  function reattachTerminal(expand = true) {
+    const popup = detachedWindow('terminal');
+    state.detachedWindows.terminal = null;
+    if (popup && popup._pahTerminalPoll) popup.clearInterval(popup._pahTerminalPoll);
+    if (popup && !popup.closed) popup.close();
+    state.terminalDetached = false;
+    clearInterval(state.terminalPoll);
+    state.terminalPoll = state.terminalId ? setInterval(pollTerminal, 300) : null;
+    if (expand) {
+      $('terminalPanel').classList.remove('collapsed');
+      $('app').classList.remove('terminal-collapsed');
+      $('terminalToggle').textContent = 'Hide';
+    }
+    renderDetachedState();
   }
 
   async function restartTerminal() {
@@ -581,9 +826,13 @@
       body: JSON.stringify({path: tab.path, terminal_id: state.terminalId, args: []}),
     });
     state.terminalId = data.terminal_id;
-    $('terminalPanel').classList.remove('collapsed');
-    $('app').classList.remove('terminal-collapsed');
-    $('terminalToggle').textContent = 'Hide';
+    if (state.terminalDetached) {
+      detachedWindow('terminal')?.focus();
+    } else {
+      $('terminalPanel').classList.remove('collapsed');
+      $('app').classList.remove('terminal-collapsed');
+      $('terminalToggle').textContent = 'Hide';
+    }
     toast(`Running ${basename(tab.path)}`);
   }
 
@@ -1893,7 +2142,8 @@
     state.references.selected = null;
     await refreshReferenceStatus();
     await refreshFullTools();
-    if (state.mode === 'references') loadToolFrame('references', true);
+    if (isToolDetached('references')) refreshDetachedToolWindow('references');
+    else if (state.mode === 'references') loadToolFrame('references', true);
     toast(`Reference library: ${state.references.libraryRoot}`);
   }
 
@@ -2009,6 +2259,9 @@
   document.querySelectorAll('[data-tool-reload]').forEach(button => {
     button.addEventListener('click', () => loadToolFrame(button.dataset.toolReload, true));
   });
+  document.querySelectorAll('[data-tool-detach]').forEach(button => {
+    button.addEventListener('click', () => detachTool(button.dataset.toolDetach).catch(error => toast(error.message, true)));
+  });
   $('openFullAnalysis').onclick = () => setMode('analysis').catch(error => toast(error.message, true));
   $('openFullDocuments').onclick = () => setMode('documents').catch(error => toast(error.message, true));
   $('openFullReferences').onclick = () => setMode('references').catch(error => toast(error.message, true));
@@ -2040,6 +2293,7 @@
   $('terminalInterrupt').onclick = () => terminalSend('\x03').catch(error => toast(error.message, true));
   $('terminalClear').onclick = () => setText('terminalOutput', '');
   $('terminalRestart').onclick = () => restartTerminal().catch(error => toast(error.message, true));
+  $('terminalDetach').onclick = () => detachTerminal().catch(error => toast(error.message, true));
   $('terminalToggle').onclick = () => {
     const panel = $('terminalPanel');
     const app = $('app');
@@ -2119,6 +2373,12 @@
     if (state.tabs.some(tab => tab.dirty)) {
       event.preventDefault();
       event.returnValue = '';
+    }
+  });
+  window.addEventListener('unload', () => {
+    for (const key of ['analysis', 'documents', 'references', 'terminal']) {
+      const popup = detachedWindow(key);
+      if (popup) popup.close();
     }
   });
 

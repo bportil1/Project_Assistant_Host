@@ -2,6 +2,18 @@
 
 PAH is a local workspace for working with Python software projects, technical documentation, and research references from one interface.
 
+## PAH 0.7 — detachable workspaces
+
+PAH 0.7 keeps the existing work modes docked in the main browser window while adding IDE-style detachment for **Analysis**, **Documents**, **References**, and the integrated **Terminal**.
+
+- Open a full tool and choose **Detach** to move it into a separate resizable browser window.
+- Detached module windows continue using PAH's existing loopback tool servers, so they remain bound to the same project/reference context.
+- Each detached tool includes **Reattach**; closing its window also makes it available in the main PAH window again.
+- While a tool is detached, clicking its PAH work-mode button focuses that window instead of creating a duplicate instance.
+- The terminal keeps one PTY session: polling transfers to the detached terminal window and returns to the docked panel on reattach.
+- Detachment is host-side only and does not modify or copy any Git submodule.
+
+
 It combines a lightweight development workspace with three independently maintained tools:
 
 * **CodeAnalyzer** — repository structure, dependencies, similarity, clustering, and duplication analysis

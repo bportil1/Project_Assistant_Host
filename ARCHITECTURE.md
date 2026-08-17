@@ -170,3 +170,12 @@ The standalone Document Workbench normally owns a `documents/<project>` hierarch
 6. Reference-library changes made in the hosted manager are adopted by PAH's quick reference adapter.
 
 This hosting layer is a UI integration concern only. `CodeAnalyzer`, `DocumentEngine`, and `ReferenceManager` still do not import PAH or one another.
+
+
+## Detachable tool windows (PAH 0.7)
+
+Detachment is a host presentation concern. Analysis, Documents, and References continue to run on the same private loopback servers introduced in 0.6; a detached PAH browser window simply hosts the corresponding tool URL in its own frame. PAH intentionally avoids starting a second module backend.
+
+The host keeps at most one detached window reference per tool. A detached top-level mode is focused rather than duplicated. Reattach or window close runs the same conservative state-handoff path used when leaving a full tool, refreshing clean editor buffers and relevant quick-panel state.
+
+The terminal is different because it is PAH-native rather than a hosted module. Detachment transfers PTY polling to the popup while retaining the same server-side terminal id. The docked and detached terminal therefore never race to consume the PTY stream. Reattachment resumes polling in the main PAH window.

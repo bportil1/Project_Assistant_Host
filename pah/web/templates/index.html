@@ -268,17 +268,17 @@
   </main>
 
   <section id="analysisMode" class="full-tool-view mode-surface hidden" data-tool="analysis">
-    <div class="full-tool-status"><strong>Full Analysis</strong><span id="analysisToolStatus">Preparing analyzer…</span><button class="toolReload" data-tool-reload="analysis">Reload</button></div>
+    <div class="full-tool-status"><strong>Full Analysis</strong><span id="analysisToolStatus">Preparing analyzer…</span><button data-tool-detach="analysis">Detach</button><button class="toolReload" data-tool-reload="analysis">Reload</button></div>
     <iframe id="analysisToolFrame" title="Full Code Analysis" referrerpolicy="no-referrer"></iframe>
   </section>
 
   <section id="documentsMode" class="full-tool-view mode-surface hidden" data-tool="documents">
-    <div class="full-tool-status"><strong>Document Workbench</strong><span id="documentsToolStatus">Preparing document workspace…</span><button class="toolReload" data-tool-reload="documents">Reload</button></div>
+    <div class="full-tool-status"><strong>Document Workbench</strong><span id="documentsToolStatus">Preparing document workspace…</span><button data-tool-detach="documents">Detach</button><button class="toolReload" data-tool-reload="documents">Reload</button></div>
     <iframe id="documentsToolFrame" title="Full Document Workbench" referrerpolicy="no-referrer"></iframe>
   </section>
 
   <section id="referencesMode" class="full-tool-view mode-surface hidden" data-tool="references">
-    <div class="full-tool-status"><strong>Reference Manager</strong><span id="referencesToolStatus">Preparing reference manager…</span><button class="toolReload" data-tool-reload="references">Reload</button></div>
+    <div class="full-tool-status"><strong>Reference Manager</strong><span id="referencesToolStatus">Preparing reference manager…</span><button data-tool-detach="references">Detach</button><button class="toolReload" data-tool-reload="references">Reload</button></div>
     <iframe id="referencesToolFrame" title="Full Reference Manager" referrerpolicy="no-referrer"></iframe>
   </section>
 
@@ -289,6 +289,7 @@
         <button id="terminalInterrupt">Ctrl+C</button>
         <button id="terminalClear">Clear</button>
         <button id="terminalRestart">Restart</button>
+        <button id="terminalDetach">Detach</button>
         <button id="terminalToggle">Hide</button>
       </div>
     </div>
