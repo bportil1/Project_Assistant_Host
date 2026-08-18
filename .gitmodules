@@ -7,7 +7,4 @@
 [submodule "modules/reference_manager"]
 	path = modules/reference_manager
 	url = git@github.com:bportil1/Research_Paper_Repository_Manager.git
-[submodule "modules/paper_searcher"]
-	path = modules/paper_searcher
-	url = git@github.com:bportil1/Literature_Review_Collector.git
-	branch = main
+
