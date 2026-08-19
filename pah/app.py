@@ -651,7 +651,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.7.0",
+            "version": "0.7.1",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),

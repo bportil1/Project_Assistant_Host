@@ -83,8 +83,33 @@ def test_pah07_detachable_tool_controls_exist_and_are_wired():
     assert "state.terminalDetached" in js
 
 
-def test_pah07_version_is_reported():
+def test_pah071_version_is_reported():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
-    assert 'version = "0.7.0"' in pyproject
-    assert '"version": "0.7.0"' in app
+    assert 'version = "0.7.1"' in pyproject
+    assert '"version": "0.7.1"' in app
+
+
+def test_pah071_visual_identity_stylesheets_are_loaded_after_legacy_css():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    expected = ["pah.css", "pah-identity.css", "pah-workspace.css", "pah-tools.css"]
+    positions = [html.index(name) for name in expected]
+    assert positions == sorted(positions)
+    for name in expected[1:]:
+        assert (ROOT / "pah" / "web" / "static" / name).exists()
+
+
+def test_pah071_standalone_modules_load_shared_visual_identity():
+    analyzer_app = (ROOT / "modules" / "code_analyzer" / "code_analyzer" / "web" / "app.py").read_text(encoding="utf-8")
+    analyzer_html = (ROOT / "modules" / "code_analyzer" / "code_analyzer" / "web" / "templates" / "report.html").read_text(encoding="utf-8")
+    documents_html = (ROOT / "modules" / "tech_documents" / "tech_documents" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    references_html = (ROOT / "modules" / "reference_manager" / "reference_manager" / "web" / "static" / "index.html").read_text(encoding="utf-8")
+    research_search_html = (ROOT / "modules" / "reference_manager" / "modules" / "paper_searcher" / "paper_searcher" / "web" / "static" / "index.html").read_text(encoding="utf-8")
+
+    assert '"pah-module-theme.css"' in analyzer_app
+    assert '"pah-compat.css"' in analyzer_app
+    assert 'class="pah-module"' in analyzer_html
+    for html in [documents_html, references_html, research_search_html]:
+        assert "pah-module-theme.css" in html
+        assert "pah-compat.css" in html
+        assert 'class="pah-module"' in html

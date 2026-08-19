@@ -1,0 +1,185 @@
+/*
+ * PAH Visual Identity — workspace, file tree, editor, terminal
+ * Load after pah.css and pah-identity.css.
+ */
+
+/* ----- Workspace shell ------------------------------------------------- */
+
+.workspace-layout {
+  background: var(--pah-page);
+}
+
+.sidebar,
+.analysis-panel {
+  background: var(--pah-surface);
+  border-color: var(--pah-border);
+}
+
+.sidebar {
+  box-shadow: 1px 0 0 rgb(255 255 255 / 0.7) inset;
+}
+
+.fs-actions {
+  gap: 4px;
+  padding: 6px;
+  background: var(--pah-surface-2);
+  border-color: var(--pah-border);
+}
+
+.fs-actions button {
+  min-height: 24px;
+  padding: 2px 6px;
+  font-size: 10px;
+}
+
+/* ----- Project tree ---------------------------------------------------- */
+
+.tree {
+  background: var(--pah-surface);
+  color: var(--pah-text);
+}
+
+.tree-item {
+  min-height: 23px;
+  border-radius: var(--pah-radius-xs);
+}
+
+.tree-item:hover {
+  background: #e7f2f8;
+}
+
+.tree-item.selected {
+  background: #d6ebf5;
+  color: var(--pah-navy-950);
+  box-shadow: inset 3px 0 var(--pah-blue-600);
+}
+
+.tree-children {
+  border-left-color: #d4dde4;
+}
+
+.tree-icon {
+  color: var(--pah-blue-700);
+}
+
+/* ----- Editor ---------------------------------------------------------- */
+
+.main-pane {
+  background: var(--pah-editor);
+}
+
+.tabs {
+  min-height: 34px;
+  background: #20262e;
+  border-bottom-color: var(--pah-editor-border);
+}
+
+.tab {
+  min-width: 110px;
+  color: #9ba8b7;
+  background: #20262e;
+  border-right-color: var(--pah-editor-border);
+}
+
+.tab:hover {
+  background: #262e38;
+  color: #d6dee8;
+}
+
+.tab.active {
+  position: relative;
+  background: var(--pah-editor);
+  color: #f0f4f8;
+}
+
+.tab.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--pah-sky-300);
+}
+
+.tab .dirty {
+  color: #8ecae6;
+}
+
+#highlightLayer {
+  color: var(--pah-editor-text);
+  background: var(--pah-editor);
+}
+
+#editor {
+  caret-color: #f7fbff;
+}
+
+#editor::selection {
+  background: rgb(142 202 230 / 0.28);
+}
+
+.statusbar {
+  min-height: 24px;
+  background: #20262e;
+  color: #9da9b6;
+  border-top-color: var(--pah-editor-border);
+}
+
+.empty-state {
+  background: var(--pah-editor);
+  color: #8f9baa;
+}
+
+.empty-state h2 {
+  color: #dce5ee;
+  font-size: 18px;
+  font-weight: 650;
+}
+
+/* Syntax palette: keep existing semantic mapping but harmonize accent colors. */
+.syn-comment { color: #738676; }
+.syn-string { color: #a9cc88; }
+.syn-number { color: #d2a0df; }
+.syn-keyword { color: #8ecae6; font-weight: 650; }
+.syn-name { color: #76d0ca; }
+.syn-decorator { color: #e2bd72; }
+.syn-operator { color: #b7c0ca; }
+.syn-heading { color: #8ecae6; font-weight: 700; }
+.syn-code { color: #a9cc88; }
+.syn-link { color: #76d0ca; }
+.syn-punct { color: #b7c0ca; }
+.syn-tag { color: #8ecae6; }
+.syn-attr { color: #e2bd72; }
+
+/* ----- Terminal -------------------------------------------------------- */
+
+.terminal-panel {
+  background: var(--pah-terminal);
+  border-top: 2px solid var(--pah-navy-900);
+}
+
+.terminal-output {
+  color: #cfdbc9;
+  background: var(--pah-terminal);
+}
+
+.terminal-input-row {
+  background: #151b21;
+  color: var(--pah-sky-300);
+  border-top-color: #29333e;
+}
+
+.terminal-input-row input {
+  color: #e6edf3;
+  background: transparent;
+  border: 0;
+}
+
+.terminal-input-row input::placeholder {
+  color: #70808e;
+}
+
+.terminal-panel.detached .terminal-heading > span::after {
+  color: #c2e8c7;
+}

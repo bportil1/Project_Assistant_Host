@@ -179,3 +179,12 @@ Detachment is a host presentation concern. Analysis, Documents, and References c
 The host keeps at most one detached window reference per tool. A detached top-level mode is focused rather than duplicated. Reattach or window close runs the same conservative state-handoff path used when leaving a full tool, refreshing clean editor buffers and relevant quick-panel state.
 
 The terminal is different because it is PAH-native rather than a hosted module. Detachment transfers PTY polling to the popup while retaining the same server-side terminal id. The docked and detached terminal therefore never race to consume the PTY stream. Reattachment resumes polling in the main PAH window.
+
+
+## Shared visual identity (PAH 0.7.1)
+
+Visual identity remains a presentation concern. The host retains `pah/web/static/pah.css` as the behavioral/layout baseline and loads `pah-identity.css`, `pah-workspace.css`, and `pah-tools.css` afterward as reviewable overrides.
+
+Standalone/detached services cannot inherit CSS through their iframe/window boundary, so each independently runnable module carries a synchronized copy of the kit's `pah-module-theme.css` plus a narrow `pah-compat.css` adapter for its existing markup. The Code Analyzer inlines these styles with its existing report CSS; Document Workbench, Reference Manager, and Research Search load them from their own static roots. This intentionally duplicates a small presentation asset so every module remains independently runnable.
+
+The visual layer may add semantic classes/data attributes such as `pah-module` and `pah-tool-nav`, but it must not rename existing IDs, routes, APIs, or JavaScript contracts. Layout ownership, detach/reattach behavior, pane collapse behavior, and module boundaries remain unchanged.

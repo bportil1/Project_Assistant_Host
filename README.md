@@ -2,6 +2,13 @@
 
 PAH is a local workspace for working with Python software projects, technical documentation, and research references from one interface.
 
+## PAH 0.7.1 — visual identity
+
+PAH 0.7.1 is a presentation-only visual identity integration. It keeps the 0.7 detachable-window and local-first behavior while replacing the generic dark-dashboard appearance with a shared PAH technical-software language: navy structural framing, sky/teal accents, light work/data surfaces, dark code and terminal regions, compact utility controls, and explicit section headers.
+
+The host keeps its existing `pah.css` and loads the visual identity as reviewable override stylesheets. Analysis, Documents, References, and the nested Research Search tool each load the shared `pah-module-theme.css` contract after their legacy styles plus a small module-specific compatibility layer. No module IDs, routes, APIs, or JavaScript event contracts are renamed for the visual migration.
+
+
 ## PAH 0.7 — detachable workspaces
 
 PAH 0.7 keeps the existing work modes docked in the main browser window while adding IDE-style detachment for **Analysis**, **Documents**, **References**, and the integrated **Terminal**.

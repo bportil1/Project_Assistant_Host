@@ -1,0 +1,949 @@
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index 695a270..29f6249 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -179,3 +179,12 @@ Detachment is a host presentation concern. Analysis, Documents, and References c
+ The host keeps at most one detached window reference per tool. A detached top-level mode is focused rather than duplicated. Reattach or window close runs the same conservative state-handoff path used when leaving a full tool, refreshing clean editor buffers and relevant quick-panel state.
+ 
+ The terminal is different because it is PAH-native rather than a hosted module. Detachment transfers PTY polling to the popup while retaining the same server-side terminal id. The docked and detached terminal therefore never race to consume the PTY stream. Reattachment resumes polling in the main PAH window.
++
++
++## Shared visual identity (PAH 0.7.1)
++
++Visual identity remains a presentation concern. The host retains `pah/web/static/pah.css` as the behavioral/layout baseline and loads `pah-identity.css`, `pah-workspace.css`, and `pah-tools.css` afterward as reviewable overrides.
++
++Standalone/detached services cannot inherit CSS through their iframe/window boundary, so each independently runnable module carries a synchronized copy of the kit's `pah-module-theme.css` plus a narrow `pah-compat.css` adapter for its existing markup. The Code Analyzer inlines these styles with its existing report CSS; Document Workbench, Reference Manager, and Research Search load them from their own static roots. This intentionally duplicates a small presentation asset so every module remains independently runnable.
++
++The visual layer may add semantic classes/data attributes such as `pah-module` and `pah-tool-nav`, but it must not rename existing IDs, routes, APIs, or JavaScript contracts. Layout ownership, detach/reattach behavior, pane collapse behavior, and module boundaries remain unchanged.
+diff --git a/README.md b/README.md
+index 0f067cf..e0bdd32 100644
+--- a/README.md
++++ b/README.md
+@@ -2,6 +2,13 @@
+ 
+ PAH is a local workspace for working with Python software projects, technical documentation, and research references from one interface.
+ 
++## PAH 0.7.1 — visual identity
++
++PAH 0.7.1 is a presentation-only visual identity integration. It keeps the 0.7 detachable-window and local-first behavior while replacing the generic dark-dashboard appearance with a shared PAH technical-software language: navy structural framing, sky/teal accents, light work/data surfaces, dark code and terminal regions, compact utility controls, and explicit section headers.
++
++The host keeps its existing `pah.css` and loads the visual identity as reviewable override stylesheets. Analysis, Documents, References, and the nested Research Search tool each load the shared `pah-module-theme.css` contract after their legacy styles plus a small module-specific compatibility layer. No module IDs, routes, APIs, or JavaScript event contracts are renamed for the visual migration.
++
++
+ ## PAH 0.7 — detachable workspaces
+ 
+ PAH 0.7 keeps the existing work modes docked in the main browser window while adding IDE-style detachment for **Analysis**, **Documents**, **References**, and the integrated **Terminal**.
+diff --git a/pah/app.py b/pah/app.py
+index 8206fb7..4592ba5 100644
+--- a/pah/app.py
++++ b/pah/app.py
+@@ -651,7 +651,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
+         return jsonify({
+             "ok": True,
+             "service": "PAH",
+-            "version": "0.7.0",
++            "version": "0.7.1",
+             "analyzer": analyzer.status(),
+             "documents": documents.status(),
+             "references": references.status(),
+diff --git a/pah/web/static/pah-identity.css b/pah/web/static/pah-identity.css
+new file mode 100644
+index 0000000..3030372
+--- /dev/null
++++ b/pah/web/static/pah-identity.css
+@@ -0,0 +1,398 @@
++/*
++ * PAH Visual Identity — host shell override
++ *
++ * Load AFTER the existing pah.css. This file deliberately changes visual
++ * presentation only. Existing IDs, layout behavior, JS contracts, and module
++ * routing remain untouched.
++ */
++
++:root {
++  color-scheme: light;
++
++  /* PAH signature palette: evolved from Bryan's existing blue/sky/teal tools. */
++  --pah-navy-950: #05244c;
++  --pah-navy-900: #082f63;
++  --pah-navy-800: #0d457e;
++  --pah-blue-700: #17679c;
++  --pah-blue-600: #247eb0;
++  --pah-sky-300: #8ecae6;
++  --pah-sky-200: #b8dfef;
++  --pah-teal-600: #008f86;
++  --pah-teal-500: #00a69a;
++  --pah-green-500: #62b96a;
++
++  /* Technical application surfaces. */
++  --pah-page: #e9eef2;
++  --pah-surface: #ffffff;
++  --pah-surface-2: #f4f7f9;
++  --pah-surface-3: #eaf1f5;
++  --pah-border: #bdc8d1;
++  --pah-border-strong: #8897a3;
++  --pah-text: #17212b;
++  --pah-muted: #64717d;
++  --pah-muted-2: #7d8994;
++
++  /* Dark surfaces remain semantic: source code + terminal. */
++  --pah-editor: #15191f;
++  --pah-editor-2: #1b2129;
++  --pah-editor-border: #303946;
++  --pah-editor-text: #d7dee8;
++  --pah-terminal: #0f1419;
++
++  /* Status. */
++  --pah-danger: #a83a3a;
++  --pah-warning: #966d12;
++  --pah-success: #397b42;
++
++  /* Geometry: restrained desktop-tool feel. */
++  --pah-radius-xs: 2px;
++  --pah-radius-sm: 3px;
++  --pah-radius-md: 5px;
++  --pah-shadow-sm: 0 1px 2px rgb(5 36 76 / 0.08);
++  --pah-shadow-md: 0 5px 18px rgb(5 36 76 / 0.12);
++
++  /* Map legacy PAH variables so existing selectors inherit the new identity. */
++  --bg: var(--pah-page);
++  --panel: var(--pah-surface);
++  --panel-2: var(--pah-surface-2);
++  --border: var(--pah-border);
++  --text: var(--pah-text);
++  --muted: var(--pah-muted);
++  --accent: var(--pah-blue-600);
++  --danger: var(--pah-danger);
++}
++
++html,
++body {
++  background: var(--pah-page);
++  color: var(--pah-text);
++  font-family: "Segoe UI", "Noto Sans", Ubuntu, system-ui, -apple-system, sans-serif;
++}
++
++/* ----- Application frame ------------------------------------------------ */
++
++.topbar {
++  min-height: 48px;
++  gap: 12px;
++  padding: 6px 10px;
++  background: linear-gradient(180deg, var(--pah-navy-900), var(--pah-navy-950));
++  border-bottom: 2px solid var(--pah-sky-300);
++  color: #fff;
++  box-shadow: 0 1px 0 rgb(255 255 255 / 0.08) inset;
++}
++
++.brand {
++  color: #fff;
++  font-size: 17px;
++  font-style: italic;
++  font-weight: 800;
++  letter-spacing: 0.025em;
++  text-transform: uppercase;
++}
++
++.brand span {
++  color: rgb(255 255 255 / 0.72);
++  font-size: 11px;
++  font-style: normal;
++  font-weight: 600;
++  letter-spacing: 0.055em;
++  text-transform: uppercase;
++}
++
++.workspace-bar input,
++.workspace-bar select {
++  min-height: 31px;
++  background: rgb(255 255 255 / 0.98);
++  color: var(--pah-text);
++  border: 1px solid rgb(255 255 255 / 0.46);
++  border-radius: var(--pah-radius-sm);
++  box-shadow: 0 1px 0 rgb(0 0 0 / 0.08) inset;
++}
++
++.workspace-bar input:focus,
++.workspace-bar select:focus {
++  outline: 2px solid rgb(142 202 230 / 0.38);
++  outline-offset: 1px;
++  border-color: var(--pah-sky-300);
++}
++
++/* Navigation is navigation, not a row of floating SaaS pills. */
++.mode-nav {
++  align-self: stretch;
++  gap: 0;
++}
++
++.mode-button {
++  position: relative;
++  min-height: 100%;
++  padding: 5px 10px 4px;
++  background: transparent;
++  color: rgb(255 255 255 / 0.72);
++  border: 0;
++  border-radius: 0;
++  font-size: 10px;
++  font-weight: 750;
++  letter-spacing: 0.045em;
++  text-transform: uppercase;
++}
++
++.mode-button:hover {
++  background: rgb(255 255 255 / 0.07);
++  color: #fff;
++}
++
++.mode-button.active {
++  background: rgb(255 255 255 / 0.09);
++  color: #fff;
++  border: 0;
++}
++
++.mode-button.active::before {
++  content: "";
++  position: absolute;
++  left: 9px;
++  right: 9px;
++  bottom: 0;
++  height: 3px;
++  background: var(--pah-sky-300);
++}
++
++.mode-button.detached {
++  color: #c8edcd;
++  border: 0;
++}
++
++.mode-button.detached::after {
++  color: #b6e7be;
++}
++
++/* ----- Shared controls -------------------------------------------------- */
++
++button,
++.button-link {
++  min-height: 29px;
++  padding: 4px 9px;
++  background: linear-gradient(#ffffff, #e2e8ed);
++  color: var(--pah-text);
++  border: 1px solid var(--pah-border-strong);
++  border-radius: var(--pah-radius-sm);
++  box-shadow: 0 1px 0 rgb(255 255 255 / 0.86) inset;
++  font-weight: 600;
++}
++
++button:hover,
++.button-link:hover {
++  background: #e6f2f8;
++  color: var(--pah-navy-900);
++  border-color: var(--pah-blue-600);
++}
++
++button:active,
++.button-link:active {
++  background: #d9e8f0;
++  box-shadow: 0 1px 2px rgb(5 36 76 / 0.12) inset;
++}
++
++button:focus-visible,
++.button-link:focus-visible,
++input:focus-visible,
++select:focus-visible,
++textarea:focus-visible {
++  outline: 2px solid rgb(36 126 176 / 0.32);
++  outline-offset: 1px;
++}
++
++button:disabled {
++  opacity: 0.5;
++}
++
++button.danger:hover {
++  color: var(--pah-danger);
++  border-color: #ba7777;
++  background: #fff1f1;
++}
++
++input,
++select,
++textarea {
++  background: #fff;
++  color: var(--pah-text);
++  border: 1px solid var(--pah-border-strong);
++  border-radius: var(--pah-radius-sm);
++}
++
++input::placeholder,
++textarea::placeholder {
++  color: #87939d;
++}
++
++/* ----- Shared panel language ------------------------------------------- */
++
++.panel-heading,
++.analysis-heading,
++.terminal-heading,
++.full-tool-status {
++  color: #fff;
++  background: linear-gradient(180deg, var(--pah-navy-800), var(--pah-navy-900));
++  border-color: var(--pah-navy-950);
++}
++
++.panel-heading,
++.analysis-heading,
++.terminal-heading {
++  min-height: 32px;
++  padding: 4px 8px;
++  font-size: 10px;
++  font-weight: 800;
++  letter-spacing: 0.075em;
++}
++
++.panel-heading button,
++.analysis-heading button,
++.terminal-heading button,
++.full-tool-status button {
++  min-height: 23px;
++  padding: 2px 7px;
++  background: rgb(255 255 255 / 0.10);
++  color: #fff;
++  border-color: rgb(255 255 255 / 0.28);
++  box-shadow: none;
++  font-size: 10px;
++}
++
++.panel-heading button:hover,
++.analysis-heading button:hover,
++.terminal-heading button:hover,
++.full-tool-status button:hover {
++  background: rgb(255 255 255 / 0.18);
++  color: #fff;
++  border-color: rgb(255 255 255 / 0.52);
++}
++
++.section-title {
++  color: var(--pah-navy-900);
++  font-weight: 800;
++  letter-spacing: 0.07em;
++}
++
++.section-title::after {
++  content: "";
++  display: block;
++  width: 32px;
++  height: 2px;
++  margin-top: 4px;
++  background: var(--pah-sky-300);
++}
++
++.section-title-row::after {
++  display: none;
++}
++
++/* Remove template-like pill treatment from ordinary state labels. */
++.badge {
++  min-height: 17px;
++  padding: 1px 5px;
++  border-radius: var(--pah-radius-xs);
++  font-size: 9px;
++  font-weight: 700;
++}
++
++.badge.ready {
++  color: #285d30;
++  border-color: #8cb792;
++  background: #e6f3e8;
++}
++
++.badge.stale {
++  color: #765711;
++  border-color: #c9ae69;
++  background: #fff7dc;
++}
++
++.badge.missing {
++  color: #8a3030;
++  border-color: #cc9292;
++  background: #fff0f0;
++}
++
++.badge.muted {
++  color: var(--pah-muted);
++  background: var(--pah-surface-2);
++}
++
++/* ----- Dialogs and feedback -------------------------------------------- */
++
++dialog {
++  background: var(--pah-surface);
++  color: var(--pah-text);
++  border: 1px solid var(--pah-border-strong);
++  border-radius: var(--pah-radius-md);
++  box-shadow: 0 18px 60px rgb(5 36 76 / 0.28);
++}
++
++dialog::backdrop {
++  background: rgb(5 20 35 / 0.48);
++}
++
++.dialog-heading {
++  margin: -16px -16px 12px;
++  padding: 10px 12px 8px 16px;
++  background: linear-gradient(180deg, var(--pah-navy-800), var(--pah-navy-900));
++  color: #fff;
++  border-bottom: 2px solid var(--pah-sky-300);
++}
++
++.dialog-heading h3 {
++  margin: 0;
++  font-size: 14px;
++  letter-spacing: 0.02em;
++}
++
++.dialog-heading .plain {
++  min-height: 24px;
++  color: #fff;
++  border: 0;
++  background: transparent;
++  box-shadow: none;
++}
++
++.dialog-card label,
++.hint,
++.small-muted,
++.analysis-placeholder {
++  color: var(--pah-muted);
++}
++
++.env-status,
++.analysis-message {
++  background: var(--pah-surface-2);
++  border-color: var(--pah-border);
++  color: var(--pah-muted);
++  border-radius: var(--pah-radius-sm);
++}
++
++.analysis-message.warning {
++  color: #765711;
++  border-color: #d2b770;
++  background: #fff9e6;
++}
++
++.analysis-message.error {
++  color: #8a3030;
++  border-color: #d5a1a1;
++  background: #fff2f2;
++}
++
++.toast {
++  background: var(--pah-navy-950);
++  color: #fff;
++  border: 1px solid var(--pah-sky-300);
++  border-radius: var(--pah-radius-sm);
++  box-shadow: var(--pah-shadow-md);
++}
++
++.toast.error {
++  color: #fff;
++  border-color: #d98989;
++  background: #702f2f;
++}
+diff --git a/pah/web/static/pah-tools.css b/pah/web/static/pah-tools.css
+new file mode 100644
+index 0000000..178c6bc
+--- /dev/null
++++ b/pah/web/static/pah-tools.css
+@@ -0,0 +1,232 @@
++/*
++ * PAH Visual Identity — context tools, hosted service frames and data surfaces
++ * Load after pah.css, pah-identity.css and pah-workspace.css.
++ */
++
++/* ----- Context / quick-tool surface ----------------------------------- */
++
++.analysis-panel {
++  border-left-color: var(--pah-border);
++  background: var(--pah-surface);
++}
++
++.analysis-tabs {
++  background: var(--pah-surface-2);
++  border-bottom-color: var(--pah-border);
++}
++
++.analysis-tab {
++  position: relative;
++  min-height: 31px;
++  padding: 5px;
++  background: var(--pah-surface-2);
++  color: var(--pah-muted);
++  border-right: 1px solid var(--pah-border);
++  border-radius: 0;
++  box-shadow: none;
++  font-weight: 700;
++}
++
++.analysis-tab:last-child {
++  border-right: 0;
++}
++
++.analysis-tab:hover {
++  background: #e7f2f8;
++  color: var(--pah-navy-900);
++}
++
++.analysis-tab.active {
++  background: var(--pah-surface);
++  color: var(--pah-navy-900);
++  box-shadow: inset 0 -3px var(--pah-sky-300);
++}
++
++.analysis-body {
++  background: var(--pah-surface);
++}
++
++.analysis-section {
++  padding: 10px;
++  border-bottom-color: #d7e0e6;
++}
++
++.analysis-section:nth-of-type(even) {
++  background: #fbfcfd;
++}
++
++.entity-list {
++  gap: 2px;
++}
++
++.entity-item,
++.analysis-row,
++.result-row {
++  padding: 6px 7px;
++  background: #fff;
++  color: var(--pah-text);
++  border: 1px solid transparent;
++  border-radius: var(--pah-radius-xs);
++}
++
++.entity-list > :nth-child(even),
++.result-row:nth-child(even),
++.analysis-row:nth-child(even) {
++  background: #edf6fb;
++}
++
++button.entity-item,
++button.result-row {
++  box-shadow: none;
++  font-weight: inherit;
++}
++
++button.entity-item:hover,
++button.result-row:hover,
++.analysis-row:hover {
++  background: #dfeff7;
++  color: var(--pah-navy-950);
++  border-color: #9fc5d8;
++}
++
++.entity-item.selected {
++  background: #d6ebf5;
++  color: var(--pah-navy-950);
++  border-color: var(--pah-blue-600);
++  box-shadow: inset 3px 0 var(--pah-blue-600);
++}
++
++.button-link {
++  text-decoration: none;
++}
++
++/* ----- Full hosted modules -------------------------------------------- */
++
++.full-tool-view {
++  background: var(--pah-page);
++}
++
++.full-tool-status {
++  min-height: 34px;
++  padding: 4px 8px;
++  background: linear-gradient(180deg, var(--pah-navy-800), var(--pah-navy-900));
++  color: rgb(255 255 255 / 0.72);
++  border-bottom: 2px solid var(--pah-sky-300);
++}
++
++.full-tool-status strong {
++  color: #fff;
++  font-size: 11px;
++  font-weight: 800;
++  letter-spacing: 0.06em;
++  text-transform: uppercase;
++}
++
++.full-tool-status button[data-tool-detach] {
++  border-color: rgb(255 255 255 / 0.32);
++}
++
++.full-tool-view iframe {
++  background: var(--pah-page);
++}
++
++/* ----- Generic table styling usable by PAH-hosted module adapters ------ */
++
++.pah-data-table,
++[data-pah-table] {
++  width: 100%;
++  border-collapse: collapse;
++  background: #fff;
++  color: var(--pah-text);
++}
++
++.pah-data-table th,
++[data-pah-table] th {
++  padding: 7px 9px;
++  background: var(--pah-navy-900);
++  color: #fff;
++  border: 1px solid var(--pah-navy-950);
++  font-size: 10px;
++  font-weight: 750;
++  letter-spacing: 0.045em;
++  text-align: left;
++  text-transform: uppercase;
++}
++
++.pah-data-table td,
++[data-pah-table] td {
++  padding: 7px 9px;
++  border: 1px solid #d6dfe5;
++}
++
++.pah-data-table tbody tr:nth-child(even),
++[data-pah-table] tbody tr:nth-child(even) {
++  background: #edf6fb;
++}
++
++.pah-data-table tbody tr:hover,
++[data-pah-table] tbody tr:hover {
++  background: #dceef8;
++}
++
++/* ----- Generic module section/control adapters ------------------------- */
++
++.pah-tool-section,
++[data-pah-section] {
++  background: #fff;
++  border: 1px solid var(--pah-border);
++  border-radius: var(--pah-radius-sm);
++  box-shadow: var(--pah-shadow-sm);
++}
++
++.pah-tool-section__heading,
++[data-pah-section-heading] {
++  min-height: 30px;
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 8px;
++  padding: 5px 8px;
++  background: var(--pah-navy-900);
++  color: #fff;
++  border-bottom: 2px solid var(--pah-sky-300);
++  font-size: 10px;
++  font-weight: 800;
++  letter-spacing: 0.07em;
++  text-transform: uppercase;
++}
++
++.pah-tool-nav,
++[data-pah-tool-nav] {
++  display: flex;
++  gap: 0;
++  background: var(--pah-surface-2);
++  border-bottom: 1px solid var(--pah-border);
++}
++
++.pah-tool-nav > a,
++.pah-tool-nav > button,
++[data-pah-tool-nav] > a,
++[data-pah-tool-nav] > button {
++  position: relative;
++  min-height: 32px;
++  padding: 6px 10px;
++  background: transparent;
++  color: var(--pah-muted);
++  border: 0;
++  border-right: 1px solid var(--pah-border);
++  border-radius: 0;
++  box-shadow: none;
++  text-decoration: none;
++  font-size: 10px;
++  font-weight: 750;
++  letter-spacing: 0.04em;
++  text-transform: uppercase;
++}
++
++.pah-tool-nav > .active,
++[data-pah-tool-nav] > .active {
++  background: #fff;
++  color: var(--pah-navy-900);
++  box-shadow: inset 0 -3px var(--pah-sky-300);
++}
+diff --git a/pah/web/static/pah-workspace.css b/pah/web/static/pah-workspace.css
+new file mode 100644
+index 0000000..aa36cbe
+--- /dev/null
++++ b/pah/web/static/pah-workspace.css
+@@ -0,0 +1,185 @@
++/*
++ * PAH Visual Identity — workspace, file tree, editor, terminal
++ * Load after pah.css and pah-identity.css.
++ */
++
++/* ----- Workspace shell ------------------------------------------------- */
++
++.workspace-layout {
++  background: var(--pah-page);
++}
++
++.sidebar,
++.analysis-panel {
++  background: var(--pah-surface);
++  border-color: var(--pah-border);
++}
++
++.sidebar {
++  box-shadow: 1px 0 0 rgb(255 255 255 / 0.7) inset;
++}
++
++.fs-actions {
++  gap: 4px;
++  padding: 6px;
++  background: var(--pah-surface-2);
++  border-color: var(--pah-border);
++}
++
++.fs-actions button {
++  min-height: 24px;
++  padding: 2px 6px;
++  font-size: 10px;
++}
++
++/* ----- Project tree ---------------------------------------------------- */
++
++.tree {
++  background: var(--pah-surface);
++  color: var(--pah-text);
++}
++
++.tree-item {
++  min-height: 23px;
++  border-radius: var(--pah-radius-xs);
++}
++
++.tree-item:hover {
++  background: #e7f2f8;
++}
++
++.tree-item.selected {
++  background: #d6ebf5;
++  color: var(--pah-navy-950);
++  box-shadow: inset 3px 0 var(--pah-blue-600);
++}
++
++.tree-children {
++  border-left-color: #d4dde4;
++}
++
++.tree-icon {
++  color: var(--pah-blue-700);
++}
++
++/* ----- Editor ---------------------------------------------------------- */
++
++.main-pane {
++  background: var(--pah-editor);
++}
++
++.tabs {
++  min-height: 34px;
++  background: #20262e;
++  border-bottom-color: var(--pah-editor-border);
++}
++
++.tab {
++  min-width: 110px;
++  color: #9ba8b7;
++  background: #20262e;
++  border-right-color: var(--pah-editor-border);
++}
++
++.tab:hover {
++  background: #262e38;
++  color: #d6dee8;
++}
++
++.tab.active {
++  position: relative;
++  background: var(--pah-editor);
++  color: #f0f4f8;
++}
++
++.tab.active::before {
++  content: "";
++  position: absolute;
++  left: 0;
++  right: 0;
++  top: 0;
++  height: 2px;
++  background: var(--pah-sky-300);
++}
++
++.tab .dirty {
++  color: #8ecae6;
++}
++
++#highlightLayer {
++  color: var(--pah-editor-text);
++  background: var(--pah-editor);
++}
++
++#editor {
++  caret-color: #f7fbff;
++}
++
++#editor::selection {
++  background: rgb(142 202 230 / 0.28);
++}
++
++.statusbar {
++  min-height: 24px;
++  background: #20262e;
++  color: #9da9b6;
++  border-top-color: var(--pah-editor-border);
++}
++
++.empty-state {
++  background: var(--pah-editor);
++  color: #8f9baa;
++}
++
++.empty-state h2 {
++  color: #dce5ee;
++  font-size: 18px;
++  font-weight: 650;
++}
++
++/* Syntax palette: keep existing semantic mapping but harmonize accent colors. */
++.syn-comment { color: #738676; }
++.syn-string { color: #a9cc88; }
++.syn-number { color: #d2a0df; }
++.syn-keyword { color: #8ecae6; font-weight: 650; }
++.syn-name { color: #76d0ca; }
++.syn-decorator { color: #e2bd72; }
++.syn-operator { color: #b7c0ca; }
++.syn-heading { color: #8ecae6; font-weight: 700; }
++.syn-code { color: #a9cc88; }
++.syn-link { color: #76d0ca; }
++.syn-punct { color: #b7c0ca; }
++.syn-tag { color: #8ecae6; }
++.syn-attr { color: #e2bd72; }
++
++/* ----- Terminal -------------------------------------------------------- */
++
++.terminal-panel {
++  background: var(--pah-terminal);
++  border-top: 2px solid var(--pah-navy-900);
++}
++
++.terminal-output {
++  color: #cfdbc9;
++  background: var(--pah-terminal);
++}
++
++.terminal-input-row {
++  background: #151b21;
++  color: var(--pah-sky-300);
++  border-top-color: #29333e;
++}
++
++.terminal-input-row input {
++  color: #e6edf3;
++  background: transparent;
++  border: 0;
++}
++
++.terminal-input-row input::placeholder {
++  color: #70808e;
++}
++
++.terminal-panel.detached .terminal-heading > span::after {
++  color: #c2e8c7;
++}
+diff --git a/pah/web/templates/index.html b/pah/web/templates/index.html
+index c811c7e..465cd46 100644
+--- a/pah/web/templates/index.html
++++ b/pah/web/templates/index.html
+@@ -5,6 +5,9 @@
+   <meta name="viewport" content="width=device-width,initial-scale=1">
+   <title>PAH — Project Assistant Host</title>
+   <link rel="stylesheet" href="{{ url_for('static', filename='pah.css') }}">
++  <link rel="stylesheet" href="{{ url_for('static', filename='pah-identity.css') }}">
++  <link rel="stylesheet" href="{{ url_for('static', filename='pah-workspace.css') }}">
++  <link rel="stylesheet" href="{{ url_for('static', filename='pah-tools.css') }}">
+ </head>
+ <body>
+ <div id="app">
+diff --git a/pyproject.toml b/pyproject.toml
+index ea3db18..2f7141a 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
+ 
+ [project]
+ name = "project-assistant-host"
+-version = "0.7.0"
++version = "0.7.1"
+ description = "Local host workspace for modular Python project assistance"
+ requires-python = ">=3.10"
+ dependencies = ["Flask>=3.0,<4"]
+diff --git a/tests/test_frontend_contract.py b/tests/test_frontend_contract.py
+index 5969015..b026fe1 100644
+--- a/tests/test_frontend_contract.py
++++ b/tests/test_frontend_contract.py
+@@ -83,8 +83,33 @@ def test_pah07_detachable_tool_controls_exist_and_are_wired():
+     assert "state.terminalDetached" in js
+ 
+ 
+-def test_pah07_version_is_reported():
++def test_pah071_version_is_reported():
+     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+     app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
+-    assert 'version = "0.7.0"' in pyproject
+-    assert '"version": "0.7.0"' in app
++    assert 'version = "0.7.1"' in pyproject
++    assert '"version": "0.7.1"' in app
++
++
++def test_pah071_visual_identity_stylesheets_are_loaded_after_legacy_css():
++    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
++    expected = ["pah.css", "pah-identity.css", "pah-workspace.css", "pah-tools.css"]
++    positions = [html.index(name) for name in expected]
++    assert positions == sorted(positions)
++    for name in expected[1:]:
++        assert (ROOT / "pah" / "web" / "static" / name).exists()
++
++
++def test_pah071_standalone_modules_load_shared_visual_identity():
++    analyzer_app = (ROOT / "modules" / "code_analyzer" / "code_analyzer" / "web" / "app.py").read_text(encoding="utf-8")
++    analyzer_html = (ROOT / "modules" / "code_analyzer" / "code_analyzer" / "web" / "templates" / "report.html").read_text(encoding="utf-8")
++    documents_html = (ROOT / "modules" / "tech_documents" / "tech_documents" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
++    references_html = (ROOT / "modules" / "reference_manager" / "reference_manager" / "web" / "static" / "index.html").read_text(encoding="utf-8")
++    research_search_html = (ROOT / "modules" / "reference_manager" / "modules" / "paper_searcher" / "paper_searcher" / "web" / "static" / "index.html").read_text(encoding="utf-8")
++
++    assert '"pah-module-theme.css"' in analyzer_app
++    assert '"pah-compat.css"' in analyzer_app
++    assert 'class="pah-module"' in analyzer_html
++    for html in [documents_html, references_html, research_search_html]:
++        assert "pah-module-theme.css" in html
++        assert "pah-compat.css" in html
++        assert 'class="pah-module"' in html
