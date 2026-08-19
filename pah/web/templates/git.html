@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PAH — Git</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='pah.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='pah-identity.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='pah-workspace.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='pah-tools.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='pah-git.css') }}">
+</head>
+<body class="git-service-page">
+  <main class="git-service-shell">
+    <header class="git-service-header">
+      <div>
+        <strong>GIT</strong>
+        <span id="gitRepoLabel">No workspace</span>
+      </div>
+      <div class="git-header-status">
+        <span id="gitConnectivityBadge" class="git-connectivity-badge local">LOCAL ONLY</span>
+        <button id="gitRefresh" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <section id="gitUnavailable" class="git-empty hidden">
+      <h2>Git unavailable</h2>
+      <p id="gitUnavailableMessage">Git is not installed or available on PATH.</p>
+    </section>
+
+    <section id="gitNoWorkspace" class="git-empty hidden">
+      <h2>Open a PAH workspace</h2>
+      <p>Git tools become available after a workspace is opened.</p>
+    </section>
+
+    <section id="gitNotRepository" class="git-empty hidden">
+      <h2>Git is not enabled for this workspace</h2>
+      <p>This project can remain a normal local PAH directory. Enabling Local Git creates only a local <code>.git</code> repository and does not configure or contact any remote service.</p>
+      <button id="gitInit" type="button">Enable Local Git…</button>
+    </section>
+
+    <section id="gitRepository" class="git-repository hidden">
+      <div class="git-summary-bar">
+        <div><span class="git-summary-label">Repository</span><strong id="gitRoot">—</strong></div>
+        <div><span class="git-summary-label">Branch</span><strong id="gitBranch">—</strong></div>
+        <div><span class="git-summary-label">HEAD</span><strong id="gitHead">—</strong></div>
+        <div><span class="git-summary-label">Changes</span><strong id="gitChangeCount">0</strong></div>
+        <div><span class="git-summary-label">Tracking</span><strong id="gitTrackingSummary">None</strong></div>
+      </div>
+
+      <nav class="git-tabs" aria-label="Git views">
+        <button class="git-tab active" data-git-tab="changes">Changes</button>
+        <button class="git-tab" data-git-tab="history">History</button>
+        <button class="git-tab" data-git-tab="branches">Branches</button>
+        <button class="git-tab" data-git-tab="remotes">Remotes</button>
+        <button class="git-tab" data-git-tab="submodules">Submodules</button>
+      </nav>
+
+      <section id="gitTabChanges" class="git-tab-panel">
+        <div class="git-changes-layout">
+          <section class="git-panel git-change-list-panel">
+            <div class="git-panel-heading"><span>WORKING TREE</span><span id="gitChangeSummary">Clean</span></div>
+            <div id="gitChanges" class="git-change-list"></div>
+          </section>
+
+          <section class="git-panel git-diff-panel">
+            <div class="git-panel-heading">
+              <span id="gitDiffTitle">DIFF</span>
+              <div>
+                <button id="gitWorkingDiff" type="button" disabled>Working</button>
+                <button id="gitStagedDiff" type="button" disabled>Staged</button>
+              </div>
+            </div>
+            <pre id="gitDiff" class="git-diff-output">Select a changed file to inspect its diff.</pre>
+          </section>
+        </div>
+
+        <section class="git-panel git-commit-panel">
+          <div class="git-panel-heading"><span>COMMIT STAGED CHANGES</span><span id="gitStagedSummary">0 staged</span></div>
+          <div class="git-commit-controls">
+            <input id="gitCommitMessage" type="text" placeholder="Commit message" autocomplete="off">
+            <button id="gitCommit" type="button">Commit</button>
+          </div>
+          <div id="gitCommitMessageHint" class="git-hint">Commits are local. Remote synchronization is separate and always explicit.</div>
+        </section>
+      </section>
+
+      <section id="gitTabHistory" class="git-tab-panel hidden">
+        <section class="git-panel">
+          <div class="git-panel-heading"><span>LOCAL HISTORY</span><span>up to 40 commits</span></div>
+          <div id="gitHistory" class="git-history-list"></div>
+        </section>
+      </section>
+
+      <section id="gitTabBranches" class="git-tab-panel hidden">
+        <section class="git-panel">
+          <div class="git-panel-heading"><span>LOCAL BRANCHES</span><span id="gitRemoteBranchSummary">cached remote refs shown after fetch</span></div>
+          <div id="gitBranches" class="git-branch-list"></div>
+        </section>
+      </section>
+
+      <section id="gitTabRemotes" class="git-tab-panel hidden">
+        <div class="git-remote-grid">
+          <section class="git-panel">
+            <div class="git-panel-heading"><span>CONNECTIVITY</span><span id="gitConnectivityText">Local only</span></div>
+            <div class="git-remote-controls">
+              <p>Local Only blocks every network-capable Git route. Manual Remote permits network access only when you explicitly click Fetch, Pull, Push, Clone, or a submodule update.</p>
+              <div class="git-button-row">
+                <button id="gitEnableRemote" type="button">Enable Manual Remote</button>
+                <button id="gitDisableRemote" type="button" disabled>Return to Local Only</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="git-panel">
+            <div class="git-panel-heading"><span>REMOTES</span><span>configuration is local</span></div>
+            <div id="gitRemotes" class="git-remote-list"></div>
+            <div class="git-remote-form">
+              <input id="gitRemoteName" type="text" placeholder="origin" autocomplete="off">
+              <input id="gitRemoteUrl" type="text" placeholder="git@host:owner/repository.git or local path" autocomplete="off">
+              <button id="gitAddRemote" type="button">Add Remote</button>
+            </div>
+          </section>
+
+          <section class="git-panel">
+            <div class="git-panel-heading"><span>REMOTE SYNC</span><span id="gitSyncSummary">Explicit only</span></div>
+            <div class="git-sync-controls">
+              <label>Remote
+                <select id="gitRemoteSelect"></select>
+              </label>
+              <div class="git-button-row">
+                <button id="gitFetch" type="button">Fetch</button>
+                <button id="gitPull" type="button">Pull · FF only</button>
+                <button id="gitPush" type="button">Push</button>
+              </div>
+              <div class="git-hint">Pull is fast-forward only and is blocked while the working tree has local changes. Push sets the upstream automatically when the current branch has none.</div>
+            </div>
+          </section>
+
+          <section class="git-panel">
+            <div class="git-panel-heading"><span>CLONE</span><span>manual remote only</span></div>
+            <div class="git-clone-form">
+              <input id="gitCloneUrl" type="text" placeholder="Repository URL or path" autocomplete="off">
+              <input id="gitCloneDestination" type="text" placeholder="/path/to/new/project" autocomplete="off">
+              <input id="gitCloneBranch" type="text" placeholder="Optional branch" autocomplete="off">
+              <button id="gitClone" type="button">Clone</button>
+            </div>
+            <div class="git-hint">After cloning, PAH can open the cloned directory as the active workspace. Remote permission resets to Local Only when the workspace changes.</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="gitTabSubmodules" class="git-tab-panel hidden">
+        <section class="git-panel">
+          <div class="git-panel-heading">
+            <span>SUBMODULES</span>
+            <div>
+              <button id="gitSubmoduleRecorded" type="button">Update Recorded</button>
+              <button id="gitSubmoduleRemote" type="button">Update Tracked Branches</button>
+            </div>
+          </div>
+          <div class="git-hint git-submodule-hint">Both update modes require Manual Remote because even a recorded-commit update may need to fetch a missing submodule object.</div>
+          <div id="gitSubmodules" class="git-submodule-list"></div>
+        </section>
+      </section>
+    </section>
+  </main>
+  <div id="gitToast" class="toast hidden"></div>
+  <script src="{{ url_for('static', filename='git.js') }}"></script>
+</body>
+</html>

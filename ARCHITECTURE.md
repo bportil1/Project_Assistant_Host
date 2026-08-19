@@ -223,3 +223,57 @@ The three resizable panes use the existing pane-state contract rather than intro
 Detached surfaces remain owned by the PAH 0.8.2 window-surface controller. Their browser window objects and screen positions are intentionally ephemeral and are not restored from persistence. This keeps startup deterministic and avoids popup-policy failures.
 
 Presentation persistence remains local-first: no layout action causes network access and no layout metadata is injected into the user's workspace.
+
+## Research Search companion service (PAH 0.8.4)
+
+Research Search remains a nested module owned by Reference Manager:
+
+```text
+PAH
+  └── References launcher
+        ↓
+Reference Manager hosted UI/service :8768
+        ↓ existing /api/research-search/launch
+Reference Manager/modules/paper_searcher
+        ↓
+Research Search :8770
+```
+
+PAH does not import or reimplement Paper Searcher application logic. `FullToolManager` only detects whether the nested module is installed, ensures the existing hosted Reference Manager is available, calls Reference Manager's existing launch endpoint, and returns the resulting loopback URL to the host frontend. Reference Manager therefore remains the process/service owner.
+
+The frontend registers `research_search` with the generic window-surface controller as a `companion` surface. Companion surfaces are window-only: their meaningful presentation states are `closed` and `detached`, and the controller supplies popup creation, focus-existing-window behavior, popup-block handling, manual-close detection, and shared window-state rendering. Research Search does not become a fifth top-level PAH work mode and does not reserve Workspace layout space.
+
+Missing nested-module state is reported through the same References launcher. This integration changes presentation/coordination only; the nested repository, its standalone operation, and its provider/search logic remain unchanged.
+
+
+## Optional Local Git service (PAH 0.8.5)
+
+Git is a host-owned workspace capability, not a module dependency and not a primary PAH work mode. `pah/core/git.py` binds to the active workspace and exposes an allowlist of local operations through `/api/git/...`: detection/init, status, diff, stage/unstage, commit, local history, existing-local-branch switching, and recursive submodule inspection.
+
+The local Git layer intentionally has no clone/fetch/pull/push/remote-management methods or HTTP routes. Opening a workspace never initializes Git automatically. A user may therefore operate PAH as a plain local directory, a local Git repository with no remotes, or—after the later remote-Git sprint—a repository with explicitly enabled remote actions.
+
+Presentation follows the flexible-workspace rules: `Git ▾` is a compact transient launcher. The full local Git surface opens in a modal dialog inside PAH or as a detachable `local` surface registered with the generic window controller. It never reserves a permanent Workspace column. The Git surface shows Changes/Diff/Commit/History/Branches/Submodules and clearly labels the Sprint 6 capability as **Local only**.
+
+Local Git operations act on the filesystem/repository on disk; unsaved PAH editor buffers are not implicitly staged or committed. Remote credentials, provider APIs, GitHub/Overleaf integration, and all network synchronization remain outside this sprint.
+
+
+## Explicit Remote Git layer (PAH 0.8.6)
+
+Sprint 7 keeps the local Git service host-owned but introduces a second, explicitly gated capability layer. `LocalGitService` starts in `local_only` mode and resets to that mode whenever a different PAH workspace is bound. Network-capable methods call `_require_remote_enabled()` before invoking Git, so the privacy boundary is enforced in the backend rather than only by frontend button state.
+
+```text
+PAH Git
+  ├── Local core (always available when Git is installed)
+  │     status / diff / stage / commit / history / local branches
+  │     remote configuration reads/writes / cached remote refs
+  │
+  └── Manual Remote (explicit session permission)
+        fetch / pull --ff-only / push / clone
+        recursive submodule update
+```
+
+No background fetch or synchronization loop exists. Listing, adding, or removing a remote changes only local repository configuration and does not require Manual Remote because those operations do not contact the target. Fetch/Pull/Push/Clone and both recursive submodule update modes require Manual Remote; even `git submodule update --init --recursive` is gated because Git may need to retrieve a missing recorded object.
+
+The Git presentation remains a secondary service. The former top-level `Git ▾` launcher is removed and its controls are nested under `Tools ▾ → Git`. The transient/detachable `/git` work surface remains registered with the generic window controller and adds a Remotes view for connectivity permission, remote configuration, explicit sync, and cloning. Provider-specific APIs are still outside the Git core; GitHub, GitLab, and Overleaf remain ordinary Git remotes at this layer.
+
+PAH never stores Git passwords, personal access tokens, or SSH private keys. Remote commands disable interactive terminal prompting; existing Git credential helpers or SSH agents may satisfy authentication, otherwise the operation fails visibly. Pull uses `--ff-only` so the PAH UI does not silently create merge commits or start a rebase.

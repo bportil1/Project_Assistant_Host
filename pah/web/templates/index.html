@@ -43,6 +43,8 @@
           <button type="button" data-service-tool="references" data-service-action="open">Open References</button>
           <button type="button" data-tool-detach="references">Open in New Window</button>
           <button type="button" data-tool-reload="references">Reload</button>
+          <div class="service-menu-separator" role="separator"></div>
+          <button id="referencesResearchSearch" type="button" data-service-tool="research_search" data-service-action="open"><span>Research Search</span><span id="researchSearchMenuStatus" class="service-menu-meta">Ready</span></button>
         </div>
       </div>
 
@@ -56,6 +58,18 @@
           <div class="service-menu-separator" role="separator"></div>
           <button id="toolsEnvironment" type="button"><span>Python Environment</span><span id="toolsEnvironmentStatus" class="service-menu-meta">system</span></button>
           <button id="toolsResetLayout" type="button" title="Restore default pane visibility and sizes"><span>Reset Workspace Layout</span><span class="service-menu-meta">Default</span></button>
+          <div class="service-menu-separator" role="separator"></div>
+          <details id="toolsGitGroup" class="service-menu-details">
+            <summary><span>Git</span><span id="gitMenuStatus" class="service-menu-meta">Local only</span></summary>
+            <div id="gitMenu" class="service-submenu">
+              <div class="service-menu-summary" aria-live="polite"><span id="gitMenuBranch">Not enabled</span><span id="gitMenuTracking" class="service-menu-meta">No remote sync</span></div>
+              <button id="gitOpenSurface" type="button"><span>Open Git</span><span class="service-menu-meta">Open</span></button>
+              <button id="gitOpenWindow" type="button"><span>Open in New Window</span><span class="service-menu-meta">Detach</span></button>
+              <div class="service-menu-separator" role="separator"></div>
+              <button id="gitInitRepository" type="button"><span>Enable Local Git…</span><span class="service-menu-meta">git init</span></button>
+              <button id="gitRefreshStatus" type="button"><span>Refresh Git Status</span><span class="service-menu-meta">Local</span></button>
+            </div>
+          </details>
         </div>
       </div>
     </nav>
@@ -348,6 +362,19 @@
     </div>
   </section>
 </div>
+
+<dialog id="gitDialog" class="git-host-dialog">
+  <div class="git-host-dialog-card">
+    <div class="dialog-heading">
+      <div><h3>Git</h3><span id="gitDialogStatus" class="small-muted">Local only</span></div>
+      <div class="dialog-actions compact">
+        <button id="gitDialogDetach" type="button">Open in New Window</button>
+        <button id="gitDialogClose" type="button" class="plain">×</button>
+      </div>
+    </div>
+    <iframe id="gitFrame" title="Local Git" src="about:blank"></iframe>
+  </div>
+</dialog>
 
 <dialog id="envDialog">
   <form method="dialog" class="dialog-card">

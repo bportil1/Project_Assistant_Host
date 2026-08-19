@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "project-assistant-host"
-version = "0.8.3"
+version = "0.8.6"
 description = "Local host workspace for modular Python project assistance"
 requires-python = ">=3.10"
 dependencies = ["Flask>=3.0,<4"]

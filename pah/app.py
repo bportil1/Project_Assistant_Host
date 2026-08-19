@@ -9,6 +9,7 @@ from flask import Flask, jsonify, render_template, request, send_file
 
 from .core.environments import EnvironmentError, EnvironmentManager
 from .core.filesystem import FileSystemError, FileSystemService
+from .core.git import GitError, LocalGitService
 from .core.terminal import TerminalError, TerminalManager
 from .core.workspace import WorkspaceError, WorkspaceManager
 from .full_tools import FullToolManager
@@ -42,6 +43,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     workspaces = WorkspaceManager(state_dir=state_dir)
     environments = EnvironmentManager(workspaces)
     terminals = TerminalManager()
+    git_service = LocalGitService(workspaces.root)
     analyzer = AnalyzerIntegration()
     documents = DocumentIntegration(state_dir=workspaces.state_dir / "document-engine")
     references = ReferenceIntegration(state_dir=workspaces.state_dir / "references")
@@ -93,6 +95,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     @app.errorhandler(FileSystemError)
     @app.errorhandler(EnvironmentError)
     @app.errorhandler(TerminalError)
+    @app.errorhandler(GitError)
     @app.errorhandler(AnalyzerIntegrationError)
     @app.errorhandler(DocumentIntegrationError)
     @app.errorhandler(CodeDocumentBridgeError)
@@ -120,6 +123,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         documents.bind(root)
         references.bind_workspace(root)
         full_tools.bind_workspace(root)
+        git_service.bind(root)
         return jsonify({
             "ok": True,
             "root": str(root),
@@ -128,7 +132,137 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             "documents": documents.status(),
             "references": references.status(),
             "full_tools": full_tools.status(),
+            "git": git_service.status(),
         })
+
+
+    @app.get("/git")
+    def git_workspace():
+        return render_template("git.html")
+
+    @app.get("/api/git/status")
+    def git_status():
+        return jsonify({"ok": True, **git_service.status()})
+
+    @app.post("/api/git/init")
+    def git_init():
+        return jsonify({"ok": True, **git_service.init()})
+
+    @app.get("/api/git/diff")
+    def git_diff():
+        staged = request.args.get("staged", "0").lower() in {"1", "true", "yes"}
+        path = request.args.get("path") or None
+        return jsonify({"ok": True, **git_service.diff(path=path, staged=staged)})
+
+    @app.post("/api/git/stage")
+    def git_stage():
+        payload = request.get_json(silent=True) or {}
+        return jsonify({"ok": True, **git_service.stage(payload.get("paths") or [])})
+
+    @app.post("/api/git/unstage")
+    def git_unstage():
+        payload = request.get_json(silent=True) or {}
+        return jsonify({"ok": True, **git_service.unstage(payload.get("paths") or [])})
+
+    @app.post("/api/git/commit")
+    def git_commit():
+        payload = request.get_json(silent=True) or {}
+        return jsonify({"ok": True, **git_service.commit(str(payload.get("message", "")))})
+
+    @app.get("/api/git/history")
+    def git_history():
+        limit = request.args.get("limit", "40")
+        try:
+            parsed_limit = int(limit)
+        except ValueError:
+            raise GitError("Git history limit must be an integer.")
+        return jsonify({"ok": True, "history": git_service.history(limit=parsed_limit)})
+
+    @app.get("/api/git/branches")
+    def git_branches():
+        return jsonify({"ok": True, **git_service.branches()})
+
+    @app.post("/api/git/branches/switch")
+    def git_switch_branch():
+        payload = request.get_json(silent=True) or {}
+        result = git_service.switch_branch(str(payload.get("name", "")))
+        # A branch switch may replace Python/document files on disk. Preserve
+        # dirty editor buffers client-side, but invalidate quick analysis so PAH
+        # never presents pre-switch analyzer results as current.
+        analyzer.mark_stale()
+        return jsonify({"ok": True, **result})
+
+    @app.post("/api/git/connectivity")
+    def git_connectivity():
+        payload = request.get_json(silent=True) or {}
+        return jsonify({"ok": True, **git_service.set_connectivity(str(payload.get("mode", "")))})
+
+    @app.get("/api/git/remotes")
+    def git_remotes():
+        status = git_service.status()
+        return jsonify({
+            "ok": True,
+            "remotes": status.get("remotes", []),
+            "tracking": status.get("tracking"),
+            "connectivity_mode": status.get("connectivity_mode"),
+            "local_only": status.get("local_only", True),
+            "remote_enabled": status.get("remote_enabled", False),
+        })
+
+    @app.post("/api/git/remotes")
+    def git_add_remote():
+        payload = request.get_json(silent=True) or {}
+        return jsonify({
+            "ok": True,
+            **git_service.add_remote(str(payload.get("name", "")), str(payload.get("url", ""))),
+        })
+
+    @app.delete("/api/git/remotes/<name>")
+    def git_remove_remote(name: str):
+        return jsonify({"ok": True, **git_service.remove_remote(name)})
+
+    @app.post("/api/git/fetch")
+    def git_fetch():
+        payload = request.get_json(silent=True) or {}
+        return jsonify({
+            "ok": True,
+            **git_service.fetch(payload.get("remote") or None, prune=bool(payload.get("prune", True))),
+        })
+
+    @app.post("/api/git/pull")
+    def git_pull():
+        payload = request.get_json(silent=True) or {}
+        result = git_service.pull(payload.get("remote") or None)
+        analyzer.mark_stale()
+        return jsonify({"ok": True, **result})
+
+    @app.post("/api/git/push")
+    def git_push():
+        payload = request.get_json(silent=True) or {}
+        return jsonify({
+            "ok": True,
+            **git_service.push(
+                payload.get("remote") or None,
+                set_upstream=bool(payload.get("set_upstream", False)),
+            ),
+        })
+
+    @app.post("/api/git/clone")
+    def git_clone():
+        payload = request.get_json(silent=True) or {}
+        result = git_service.clone(
+            str(payload.get("url", "")),
+            str(payload.get("destination", "")),
+            branch=str(payload.get("branch", "")) or None,
+        )
+        return jsonify({"ok": True, **result})
+
+    @app.post("/api/git/submodules/update")
+    def git_update_submodules():
+        payload = request.get_json(silent=True) or {}
+        result = git_service.update_submodules(str(payload.get("mode", "recorded")))
+        analyzer.mark_stale()
+        return jsonify({"ok": True, **result})
 
     @app.get("/api/tree")
     def get_tree():
@@ -408,6 +542,13 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         full_tools.bind_reference_library(ref_status.get("library_root") if ref_status.get("configured") else None)
         return jsonify({"ok": True, **full_tools.status()})
 
+    @app.post("/api/research-search/launch")
+    def research_search_launch():
+        try:
+            return jsonify({"ok": True, **full_tools.launch_research_search()})
+        except RuntimeError as exc:
+            return error_response(exc, 503)
+
     @app.post("/api/full-tools/return")
     def full_tools_return():
         payload = request.get_json(silent=True) or {}
@@ -651,11 +792,12 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.8.3",
+            "version": "0.8.6",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),
             "full_tools": full_tools.status(),
+            "git": git_service.status(),
         })
 
     return app

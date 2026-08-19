@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -153,7 +155,76 @@ class FullToolManager:
         tools["analysis"]["bound_workspace"] = str(self._workspace) if self._workspace else None
         tools["documents"]["bound_workspace"] = str(self._workspace) if self._workspace else None
         tools["references"]["library_root"] = str(self._reference_library) if self._reference_library else None
+        tools["research_search"] = self.research_search_status()
         return {"tools": tools}
+
+    # ------------------------------------------------------------------
+    # Reference Manager companion service: Research Search
+    # ------------------------------------------------------------------
+    def _research_search_module_root(self) -> Path | None:
+        try:
+            import reference_manager
+
+            return Path(reference_manager.__file__).resolve().parents[1] / "modules" / "paper_searcher"
+        except Exception:
+            return None
+
+    def research_search_status(self) -> dict[str, Any]:
+        module_root = self._research_search_module_root()
+        run_file = module_root / "run.py" if module_root is not None else None
+        available = bool(run_file and run_file.exists())
+        return {
+            "available": available,
+            "url": "http://127.0.0.1:8770/research-search" if available else None,
+            "error": None if available else (
+                "Research Search module is not installed under the Reference Manager nested modules directory."
+            ),
+            "owner": "references",
+            "window_only": True,
+        }
+
+    def launch_research_search(self) -> dict[str, Any]:
+        """Ask the hosted Reference Manager to launch its Research Search companion.
+
+        PAH intentionally does not own or reimplement the nested paper_searcher
+        process. The Reference Manager remains the service owner; PAH only
+        coordinates presentation and window lifecycle.
+        """
+        status = self.research_search_status()
+        if not status["available"]:
+            raise RuntimeError(status["error"] or "Research Search is unavailable.")
+
+        self._start_references()
+        if self._errors.get("references"):
+            raise RuntimeError(self._errors["references"] or "Reference Manager is unavailable.")
+
+        endpoint = self._servers["references"].url.rstrip("/") + "/api/research-search/launch"
+        request = urllib.request.Request(
+            endpoint,
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=6.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                payload = json.loads(exc.read().decode("utf-8"))
+                message = str(payload.get("error") or exc.reason)
+            except Exception:
+                message = str(exc.reason)
+            raise RuntimeError(message) from exc
+        except Exception as exc:
+            raise RuntimeError(f"Unable to launch Research Search through Reference Manager: {exc}") from exc
+
+        if payload.get("error"):
+            raise RuntimeError(str(payload["error"]))
+        return {
+            "url": str(payload.get("url") or status["url"]),
+            "already_running": bool(payload.get("already_running", False)),
+            "owner": "references",
+        }
 
     # ------------------------------------------------------------------
     # Analyzer full UI

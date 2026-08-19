@@ -1,5 +1,29 @@
 # PAH — Project Assistant Host
 
+## PAH 0.8.6 — Flexible Workspace Sprint 7: Explicit Remote Git
+
+Sprint 7 adds an explicit remote layer on top of the 0.8.5 local Git core while preserving **Local Only** as the default. Git is no longer a separate top-bar launcher; it now lives under **Tools ▾ → Git**, consistent with PAH's rule that secondary services should not consume permanent application chrome. The same Git work surface can still open transiently or in a detachable window.
+
+Every PAH session/workspace binding starts in **Local Only**. Remote-capable backend operations refuse to run until the user explicitly enables **Manual Remote**. Manual Remote does not cause background synchronization: network activity occurs only after an explicit Fetch, fast-forward-only Pull, Push, Clone, or recursive submodule-update action. Opening another workspace resets permission to Local Only.
+
+Remote configuration (list/add/remove remotes) edits or reads local Git configuration and does not itself contact a server. Credentials are never stored by PAH; Git credential helpers and SSH agents remain responsible for authentication. Sprint 7 also exposes cached remote refs and ahead/behind tracking after an explicit fetch, supports multiple remotes, and distinguishes recursive submodule updates to recorded commits from updates to tracked remote branches.
+
+## PAH 0.8.5 — Flexible Workspace Sprint 6: Optional Local Git
+
+PAH now provides an **optional Local Git** service without making Git a primary work mode or introducing remote connectivity. A compact `Git ▾` launcher reports local repository state and opens Git either as a transient PAH dialog or through the existing generic detachable-window controller. There is no permanent Git side panel and no automatic `git init`.
+
+Sprint 6 exposes only local operations: repository detection/init, working-tree status, diff, stage/unstage, local commits, local history, switching among existing local branches, and recursive submodule status. It deliberately exposes no clone/fetch/pull/push/remote-management routes. A normal directory remains a normal PAH workspace until the user explicitly chooses **Enable Local Git…**.
+
+The Git implementation lives under `pah/core/git.py`; Code Analyzer, Document Workbench, Reference Manager, and Research Search remain unchanged. Git credentials and remote-provider concepts are deferred to Sprint 7.
+
+## PAH 0.8.4 — Flexible Workspace Sprint 5: Research Search companion
+
+Research Search is now exposed by PAH as an optional secondary service under the **References** launcher rather than as another permanent top-level mode or panel. The nested `paper_searcher` repository remains owned by Reference Manager; PAH asks the hosted Reference Manager to launch its existing standalone Research Search service and then presents that service through the generic 0.8.2 window-surface controller.
+
+The References menu shows **Research Search** only as an on-demand action. Opening it creates/focuses one separate companion window; closing that window returns the PAH presentation state to `closed`. Research Search is intentionally window-only in this sprint, so there is no new docked pane consuming Workspace space. If the nested module is absent, PAH reports it as unavailable with the expected submodule location.
+
+No `paper_searcher` logic is copied into PAH, no module routes are merged into the host, and no permanent service panel is introduced. The existing local-first behavior of PAH is unchanged.
+
 ## PAH 0.8 — Flexible Workspace Sprint 1
 
 PAH 0.8 begins the flexible-workspace series by making every auxiliary pane in the native Workspace collapsible without destroying its state. The project tree and Project Tools context panel now collapse to narrow restore rails, while the terminal uses the same generic pane-state contract as those side panes. The editor automatically expands into reclaimed space.

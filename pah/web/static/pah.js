@@ -39,15 +39,19 @@
       selected: null,
     },
     mode: 'workspace',
+    git: {git_available: false, workspace: null, is_repository: false, repository_root: null, branch: null, detached: false, head: null, changes: [], staged_count: 0, unstaged_count: 0, untracked_count: 0, submodules: [], remotes: [], tracking: null, connectivity_mode: 'local_only', local_only: true, remote_enabled: false},
     fullTools: {
       analysis: {available: false, url: null, error: null},
       documents: {available: false, url: null, error: null},
       references: {available: false, url: null, error: null},
+      research_search: {available: false, url: null, error: null, owner: 'references', window_only: true},
     },
     surfaceWindows: {
       analysis: {popup: null},
       documents: {popup: null},
       references: {popup: null},
+      research_search: {popup: null},
+      git: {popup: null},
       terminal: {popup: null},
     },
     surfaceWindowWatch: null,
@@ -332,7 +336,10 @@
 
   function closeServiceMenus(exceptId = null) {
     document.querySelectorAll('.service-menu').forEach(menu => {
-      if (menu.id !== exceptId) setServiceMenuOpen(menu.id, false);
+      if (menu.id !== exceptId) {
+        setServiceMenuOpen(menu.id, false);
+        menu.querySelectorAll('details[open]').forEach(detail => detail.removeAttribute('open'));
+      }
     });
   }
 
@@ -342,6 +349,7 @@
     const willOpen = menu.classList.contains('hidden');
     closeServiceMenus(menuId);
     setServiceMenuOpen(menuId, willOpen);
+    if (willOpen && menuId === 'toolsMenu') refreshGitStatus().catch(() => {});
   }
   function functionLabel(id) {
     const item = state.analyzer.functions.find(row => row.id === id);
@@ -355,6 +363,8 @@
     analysis: {kind: 'hosted', title: 'Code Analyzer', width: 1220, height: 820},
     documents: {kind: 'hosted', title: 'Document Workbench', width: 1220, height: 820},
     references: {kind: 'hosted', title: 'Reference Manager', width: 1220, height: 820},
+    research_search: {kind: 'companion', title: 'Research Search', width: 1280, height: 900, dockable: false},
+    git: {kind: 'local', title: 'Git', width: 1180, height: 820, dockable: true, url: '/git', dialogId: 'gitDialog', frameId: 'gitFrame'},
     terminal: {kind: 'terminal', title: 'PAH Terminal', width: 980, height: 620},
   };
 
@@ -385,9 +395,11 @@
   }
 
   function surfacePresentationState(name) {
-    if (!surfaceConfig(name)) return 'closed';
+    const config = surfaceConfig(name);
+    if (!config) return 'closed';
     if (isSurfaceDetached(name)) return 'detached';
     if (name === 'terminal') return state.panes.terminal.collapsed ? 'collapsed' : 'docked';
+    if (config.kind === 'local') return $(config.dialogId)?.open ? 'docked' : 'closed';
     return state.mode === name ? 'docked' : 'closed';
   }
 
@@ -407,6 +419,42 @@
         detachButton.textContent = detached ? 'Focus Window' : 'Open in New Window';
         detachButton.disabled = !(state.fullTools[tool]?.available);
       }
+    }
+
+    const researchSearchInfo = state.fullTools.research_search || {};
+    const researchSearchDetached = surfacePresentationState('research_search') === 'detached';
+    const researchSearchButton = $('referencesResearchSearch');
+    const researchSearchStatus = $('researchSearchMenuStatus');
+    if (researchSearchButton) {
+      researchSearchButton.disabled = !researchSearchInfo.available;
+      const label = researchSearchButton.querySelector('span:first-child');
+      if (label) label.textContent = researchSearchDetached ? 'Focus Research Search' : 'Research Search';
+      researchSearchButton.title = researchSearchInfo.available
+        ? (researchSearchDetached ? 'Focus the existing Research Search window' : 'Open Research Search in a separate window')
+        : (researchSearchInfo.error || 'Research Search unavailable');
+    }
+    if (researchSearchStatus) {
+      researchSearchStatus.textContent = researchSearchDetached
+        ? 'Detached'
+        : (researchSearchInfo.available ? 'Open' : 'Unavailable');
+    }
+
+    const gitState = surfacePresentationState('git');
+    const gitOpen = $('gitOpenSurface');
+    const gitWindow = $('gitOpenWindow');
+    if (gitOpen) {
+      const label = gitOpen.querySelector('span:first-child');
+      const meta = gitOpen.querySelector('.service-menu-meta');
+      if (label) label.textContent = gitState === 'detached' ? 'Focus Git' : 'Open Git';
+      if (meta) meta.textContent = gitState === 'detached' ? 'Detached' : (gitState === 'docked' ? 'Open' : 'Open');
+      gitOpen.disabled = !state.workspace;
+    }
+    if (gitWindow) {
+      const label = gitWindow.querySelector('span:first-child');
+      const meta = gitWindow.querySelector('.service-menu-meta');
+      if (label) label.textContent = gitState === 'detached' ? 'Focus Git Window' : 'Open in New Window';
+      if (meta) meta.textContent = gitState === 'detached' ? 'Detached' : 'Detach';
+      gitWindow.disabled = !state.workspace;
     }
 
     const terminalIsDetached = surfacePresentationState('terminal') === 'detached';
@@ -433,12 +481,15 @@
     const config = surfaceConfig(tool);
     const title = config?.title || tool;
     popup.document.open();
-    popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PAH — ${title}</title><style>html,body{margin:0;height:100%;background:#111318;color:#d9dee7;font-family:Inter,system-ui,sans-serif}body{display:grid;grid-template-rows:36px minmax(0,1fr)}header{display:flex;align-items:center;gap:10px;padding:4px 8px;background:#171a21;border-bottom:1px solid #303642;font-size:12px}header strong{flex:0 0 auto}header span{flex:1;color:#8993a3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button{background:#252b35;color:#d9dee7;border:1px solid #303642;border-radius:5px;padding:4px 9px;cursor:pointer}button:hover{background:#303744}iframe{width:100%;height:100%;border:0;background:#fff}</style></head><body><header><strong>${title}</strong><span>Detached from PAH</span><button id="reattachButton">Reattach</button></header><iframe id="detachedFrame" title="${title}"></iframe></body></html>`);
+    const dockable = config?.dockable !== false;
+    const returnLabel = dockable ? 'Reattach' : 'Close';
+    const contextLabel = dockable ? 'Detached from PAH' : 'PAH companion service';
+    popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PAH — ${title}</title><style>html,body{margin:0;height:100%;background:#111318;color:#d9dee7;font-family:Inter,system-ui,sans-serif}body{display:grid;grid-template-rows:36px minmax(0,1fr)}header{display:flex;align-items:center;gap:10px;padding:4px 8px;background:#171a21;border-bottom:1px solid #303642;font-size:12px}header strong{flex:0 0 auto}header span{flex:1;color:#8993a3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button{background:#252b35;color:#d9dee7;border:1px solid #303642;border-radius:5px;padding:4px 9px;cursor:pointer}button:hover{background:#303744}iframe{width:100%;height:100%;border:0;background:#fff}</style></head><body><header><strong>${title}</strong><span>${contextLabel}</span><button id="reattachButton">${returnLabel}</button></header><iframe id="detachedFrame" title="${title}"></iframe></body></html>`);
     popup.document.close();
     const frame = popup.document.getElementById('detachedFrame');
     const separator = url.includes('?') ? '&' : '?';
     frame.src = `${url}${separator}pahDetached=${Date.now()}`;
-    popup.document.getElementById('reattachButton').onclick = () => reattachSurface(tool, {activate: true});
+    popup.document.getElementById('reattachButton').onclick = () => reattachSurface(tool, {activate: dockable});
     popup.focus();
   }
 
@@ -474,6 +525,45 @@
     return true;
   }
 
+  async function prepareCompanionSurface(name, popup) {
+    if (name !== 'research_search') return false;
+    try {
+      const data = await api('/api/research-search/launch', {method: 'POST', body: '{}'});
+      const url = data.url || state.fullTools.research_search?.url;
+      if (!url) throw new Error('Research Search did not provide a launch URL.');
+      state.fullTools.research_search = {
+        ...(state.fullTools.research_search || {}),
+        available: true,
+        url,
+        error: null,
+        owner: data.owner || 'references',
+        window_only: true,
+      };
+      state.surfaceWindows[name].popup = popup;
+      writeDetachedHostedShell(popup, name, url);
+      if (!data.already_running) toast('Research Search started');
+      return true;
+    } catch (error) {
+      popup.close();
+      toast(`Unable to launch Research Search: ${error.message}`, true);
+      return false;
+    }
+  }
+
+  async function prepareLocalSurface(name, popup) {
+    const config = surfaceConfig(name);
+    if (!config || config.kind !== 'local' || !state.workspace) {
+      popup.close();
+      if (!state.workspace) toast('Open a workspace first', true);
+      return false;
+    }
+    state.surfaceWindows[name].popup = popup;
+    const dialog = $(config.dialogId);
+    if (dialog?.open) dialog.close();
+    writeDetachedHostedShell(popup, name, config.url);
+    return true;
+  }
+
   async function prepareTerminalSurface(popup) {
     if (!state.workspace) {
       popup.close();
@@ -506,6 +596,8 @@
 
     let prepared = false;
     if (config.kind === 'hosted') prepared = await prepareHostedSurface(name, popup);
+    else if (config.kind === 'companion') prepared = await prepareCompanionSurface(name, popup);
+    else if (config.kind === 'local') prepared = await prepareLocalSurface(name, popup);
     else if (config.kind === 'terminal') prepared = await prepareTerminalSurface(popup);
     if (!prepared) return;
 
@@ -518,6 +610,19 @@
     if (!config) return;
     if (config.kind === 'hosted') {
       await setMode(name);
+      return;
+    }
+    if (config.kind === 'companion') {
+      await detachSurface(name);
+      return;
+    }
+    if (config.kind === 'local') {
+      if (!state.workspace) return toast('Open a workspace first', true);
+      const dialog = $(config.dialogId);
+      const frame = $(config.frameId);
+      if (frame && (!frame.src || frame.src.endsWith('about:blank'))) frame.src = `${config.url}?pah=${Date.now()}`;
+      if (dialog && !dialog.open) dialog.showModal();
+      renderWindowSurfaceState();
       return;
     }
     if (name === 'terminal') {
@@ -580,7 +685,9 @@
       await setMode('workspace');
       return;
     }
-    if (detached) {
+    const config = surfaceConfig(name);
+    if (!config) return;
+    if (detached || config.kind === 'companion') {
       await detachSurface(name);
       return;
     }
@@ -627,6 +734,9 @@
         }
       }
     }
+    const researchSearchInfo = state.fullTools.research_search || {};
+    const researchSearchAction = $('referencesResearchSearch');
+    if (researchSearchAction) researchSearchAction.disabled = !researchSearchInfo.available;
     renderWindowSurfaceState();
   }
 
@@ -642,12 +752,99 @@
       }
       if (reloadActive && state.mode !== 'workspace' && !isSurfaceDetached(state.mode)) loadToolFrame(state.mode, true);
     } catch (error) {
-      for (const tool of ['analysis', 'documents', 'references']) {
+      for (const tool of ['analysis', 'documents', 'references', 'research_search']) {
         state.fullTools[tool] = {available: false, url: null, error: error.message};
       }
       renderFullToolStatus();
     }
   }
+
+  function renderGitLauncher() {
+    const info = state.git || {};
+    const branch = $('gitMenuBranch');
+    const status = $('gitMenuStatus');
+    const tracking = $('gitMenuTracking');
+    const init = $('gitInitRepository');
+    if (branch) {
+      if (!state.workspace) branch.textContent = 'No workspace';
+      else if (!info.git_available) branch.textContent = 'Git unavailable';
+      else if (!info.is_repository) branch.textContent = 'Not enabled';
+      else branch.textContent = info.branch || (info.detached ? 'Detached HEAD' : 'Local repository');
+    }
+    if (status) {
+      if (!info.git_available) status.textContent = 'Unavailable';
+      else status.textContent = info.remote_enabled ? 'Manual remote' : 'Local only';
+    }
+    if (tracking) {
+      const track = info.tracking || null;
+      if (track?.upstream) {
+        const ahead = Number.isInteger(track.ahead) ? track.ahead : '?';
+        const behind = Number.isInteger(track.behind) ? track.behind : '?';
+        tracking.textContent = `${track.upstream} · ↑${ahead} ↓${behind}`;
+      } else {
+        const count = (info.remotes || []).length;
+        tracking.textContent = count ? `${count} remote${count === 1 ? '' : 's'}` : 'No remote configured';
+      }
+    }
+    if (init) {
+      init.disabled = !state.workspace || !info.git_available || info.is_repository;
+      const meta = init.querySelector('.service-menu-meta');
+      if (meta) meta.textContent = info.is_repository ? 'Enabled' : 'git init';
+    }
+    $('toolsGitGroup')?.classList.toggle('unavailable', Boolean(state.workspace && !info.git_available));
+    const dialogStatus = $('gitDialogStatus');
+    if (dialogStatus) {
+      const mode = info.remote_enabled ? 'manual remote' : 'local only';
+      dialogStatus.textContent = info.is_repository
+        ? `${info.branch || 'local'} · ${(info.changes || []).length} changes · ${mode}`
+        : mode;
+    }
+    renderWindowSurfaceState();
+  }
+
+  async function refreshGitStatus() {
+    try {
+      const data = await api('/api/git/status');
+      state.git = data;
+    } catch (error) {
+      state.git = {...state.git, git_available: false, is_repository: false, error: error.message};
+    }
+    renderGitLauncher();
+    return state.git;
+  }
+
+  async function enableLocalGit() {
+    closeServiceMenus();
+    if (!state.workspace) return toast('Open a workspace first', true);
+    if (!window.confirm('Enable Local Git for this workspace? This creates a local .git repository only and does not configure or contact a remote.')) return;
+    try {
+      const data = await api('/api/git/init', {method: 'POST', body: '{}'});
+      state.git = data;
+      renderGitLauncher();
+      toast('Local Git enabled for this workspace');
+      await openWindowSurface('git');
+      const frame = $('gitFrame');
+      if (frame) frame.src = `/git?pah=${Date.now()}`;
+    } catch (error) {
+      toast(error.message, true);
+    }
+  }
+
+  window._pahGitHost = {
+    hasDirtyBuffers: () => state.tabs.some(tab => tab.dirty),
+    statusChanged: () => refreshGitStatus(),
+    worktreeChanged: async () => {
+      await refreshTree().catch(() => {});
+      await refreshCleanTabsFromDisk();
+      await refreshAnalyzerStatus().catch(() => {});
+      await refreshDocumentStatus().catch(() => {});
+      await refreshReferenceStatus().catch(() => {});
+      await refreshGitStatus().catch(() => {});
+    },
+    openWorkspacePath: async path => {
+      await openWorkspace(path);
+    },
+  };
 
   function loadToolFrame(tool, force = false) {
     if (isSurfaceDetached(tool)) return false;
@@ -721,6 +918,7 @@
   async function loadWorkspaceInfo() {
     const data = await api('/api/workspace');
     state.workspace = data.root;
+    if (data.git) state.git = data.git;
     $('workspacePath').value = data.root || '';
 
     const recent = $('recentWorkspaces');
@@ -742,12 +940,14 @@
     await refreshDocumentStatus();
     await refreshReferenceStatus();
     await refreshFullTools({reloadActive: Boolean(data.root)});
+    await refreshGitStatus();
   }
 
   async function openWorkspace(path) {
     if (state.tabs.some(tab => tab.dirty) && !confirm('Open another workspace and discard unsaved editor changes?')) return;
     const data = await api('/api/workspace/open', {method: 'POST', body: JSON.stringify({path})});
     state.workspace = data.root;
+    if (data.git) state.git = data.git;
     state.tabs = [];
     state.active = null;
     state.selectedTree = null;
@@ -2698,6 +2898,25 @@
     detachSurface('terminal').catch(error => toast(error.message, true));
   };
   $('toolsResetLayout').onclick = resetWorkspaceLayout;
+  $('gitOpenSurface').onclick = () => {
+    closeServiceMenus();
+    openWindowSurface('git').catch(error => toast(error.message, true));
+  };
+  $('gitOpenWindow').onclick = () => {
+    closeServiceMenus();
+    detachSurface('git').catch(error => toast(error.message, true));
+  };
+  $('gitInitRepository').onclick = () => enableLocalGit().catch(error => toast(error.message, true));
+  $('gitRefreshStatus').onclick = () => {
+    closeServiceMenus();
+    refreshGitStatus().catch(error => toast(error.message, true));
+  };
+  $('gitDialogDetach').onclick = () => detachSurface('git').catch(error => toast(error.message, true));
+  $('gitDialogClose').onclick = () => {
+    $('gitDialog')?.close();
+    renderWindowSurfaceState();
+  };
+  $('gitDialog')?.addEventListener('close', renderWindowSurfaceState);
   $('createEnv').onclick = () => changeEnvironment('create');
   $('selectEnv').onclick = () => changeEnvironment('select');
   $('systemEnv').onclick = () => changeEnvironment('system');
@@ -2764,7 +2983,7 @@
     }
   });
   window.addEventListener('unload', () => {
-    for (const key of ['analysis', 'documents', 'references', 'terminal']) {
+    for (const key of ['analysis', 'documents', 'references', 'git', 'terminal']) {
       const popup = surfaceWindow(key);
       if (popup) popup.close();
     }
@@ -2775,6 +2994,7 @@
   resetReferencesView();
   loadLayoutPreferences();
   renderWorkspacePanes();
+  renderGitLauncher();
   applyLayoutSizes();
   window.addEventListener('resize', applyLayoutSizes);
   (async () => {

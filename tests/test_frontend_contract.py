@@ -137,11 +137,11 @@ def test_pah08_collapsible_workspace_panes_are_generic_and_wired():
     assert "setPaneCollapsed('terminal', false" in js
 
 
-def test_pah081_version_is_reported():
+def test_pah_current_version_is_reported():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
-    assert 'version = "0.8.3"' in pyproject
-    assert '"version": "0.8.3"' in app
+    assert 'version = "0.8.6"' in pyproject
+    assert '"version": "0.8.6"' in app
 
 
 def test_pah081_compact_service_launchers_are_wired():
@@ -278,6 +278,7 @@ def test_pah083_layout_shortcuts_and_detached_windows_remain_ephemeral():
     assert "screenX" not in persistence_block
     assert "screenY" not in persistence_block
 
+
 def test_pah083_aesthetic_hotfix_keeps_tool_heading_single_line_and_terminal_clipped():
     css = (ROOT / "pah" / "web" / "static" / "pah.css").read_text(encoding="utf-8")
 
@@ -287,3 +288,98 @@ def test_pah083_aesthetic_hotfix_keeps_tool_heading_single_line_and_terminal_cli
     assert "text-overflow: ellipsis;" in css
     assert ".terminal-panel.collapsed .terminal-output" in css
     assert ".terminal-panel.collapsed .terminal-input-row { display: none; }" in css
+
+
+def test_pah084_research_search_is_optional_companion_surface_under_references():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
+    full_tools = (ROOT / "pah" / "full_tools.py").read_text(encoding="utf-8")
+
+    assert 'id="referencesResearchSearch"' in html
+    assert 'data-service-tool="research_search" data-service-action="open"' in html
+    assert 'data-mode="research_search"' not in html
+    assert "research_search: {kind: 'companion'" in js
+    assert "dockable: false" in js
+    assert "async function prepareCompanionSurface" in js
+    assert "config.kind === 'companion'" in js
+    assert '"/api/research-search/launch"' in app
+    assert "def research_search_status" in full_tools
+    assert "def launch_research_search" in full_tools
+    assert '"owner": "references"' in full_tools
+    assert '"window_only": True' in full_tools
+
+
+def test_pah084_research_search_uses_existing_reference_manager_launch_contract():
+    full_tools = (ROOT / "pah" / "full_tools.py").read_text(encoding="utf-8")
+    reference_route = (
+        ROOT / "modules" / "reference_manager" / "reference_manager" / "web" / "routes" / "research_search_routes.py"
+    ).read_text(encoding="utf-8")
+
+    assert '/api/research-search/launch' in reference_route
+    assert 'self._servers["references"].url.rstrip("/") + "/api/research-search/launch"' in full_tools
+    assert 'modules" / "paper_searcher"' in full_tools
+
+
+def test_pah085_local_git_remains_compact_optional_and_detachable():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    git_html = (ROOT / "pah" / "web" / "templates" / "git.html").read_text(encoding="utf-8")
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
+    core = (ROOT / "pah" / "core" / "git.py").read_text(encoding="utf-8")
+
+    assert 'id="toolsGitGroup"' in html
+    assert 'id="gitMenu"' in html
+    assert 'id="gitMenuToggle"' not in html
+    assert 'class="mode-launcher git-launcher"' not in html
+    assert 'id="gitDialog"' in html
+    assert 'id="gitFrame"' in html
+    assert 'data-mode="git"' not in html
+    assert "git: {kind: 'local'" in js
+    assert "async function refreshGitStatus" in js
+    assert "async function enableLocalGit" in js
+    assert "openWindowSurface('git')" in js
+    assert "detachSurface('git')" in js
+    assert 'LOCAL ONLY' in git_html
+    assert '/api/git/status' in app
+    assert '/api/git/init' in app
+    assert 'class LocalGitService' in core
+
+
+def test_pah086_remote_git_is_explicit_backend_guarded_and_nested_under_tools():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    git_html = (ROOT / "pah" / "web" / "templates" / "git.html").read_text(encoding="utf-8")
+    git_js = (ROOT / "pah" / "web" / "static" / "git.js").read_text(encoding="utf-8")
+    app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
+    core = (ROOT / "pah" / "core" / "git.py").read_text(encoding="utf-8")
+
+    assert '<details id="toolsGitGroup"' in html
+    assert '<summary><span>Git</span>' in html
+    assert 'id="gitMenuToggle"' not in html
+    assert 'data-git-tab="remotes"' in git_html
+    assert 'id="gitEnableRemote"' in git_html
+    assert 'id="gitDisableRemote"' in git_html
+    assert "badge.textContent = remoteEnabled ? 'MANUAL REMOTE' : 'LOCAL ONLY'" in git_js
+    assert "setConnectivity('manual_remote')" in git_js
+    assert "setConnectivity('local_only')" in git_js
+    assert "Pull · FF only" in git_html
+    assert "Update Tracked Branches" in git_html
+
+    for route in [
+        "/api/git/connectivity",
+        "/api/git/remotes",
+        "/api/git/fetch",
+        "/api/git/pull",
+        "/api/git/push",
+        "/api/git/clone",
+        "/api/git/submodules/update",
+    ]:
+        assert route in app
+
+    assert 'CONNECTIVITY_LOCAL = "local_only"' in core
+    assert 'CONNECTIVITY_REMOTE = "manual_remote"' in core
+    assert "def _require_remote_enabled" in core
+    assert "self._require_remote_enabled()" in core
+    assert '["pull", "--ff-only"' in core
+    assert '["submodule", "update", "--init", "--recursive", "--remote", "--merge"]' in core
+    assert "self._connectivity_mode = self.CONNECTIVITY_LOCAL" in core
