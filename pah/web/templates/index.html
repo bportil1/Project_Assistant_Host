@@ -33,6 +33,8 @@
           <button type="button" data-service-tool="documents" data-service-action="open">Open Documents</button>
           <button type="button" data-tool-detach="documents">Open in New Window</button>
           <button type="button" data-tool-reload="documents">Reload</button>
+          <div class="service-menu-separator" role="separator"></div>
+          <button id="documentsOverleafImport" type="button"><span>Import Overleaf Project…</span><span class="service-menu-meta">ZIP / Git</span></button>
         </div>
       </div>
 
@@ -373,6 +375,56 @@
       </div>
     </div>
     <iframe id="gitFrame" title="Local Git" src="about:blank"></iframe>
+  </div>
+</dialog>
+
+<dialog id="overleafDialog" class="overleaf-dialog">
+  <div class="overleaf-dialog-card">
+    <div class="dialog-heading">
+      <div>
+        <h3>Import Overleaf Project</h3>
+        <span class="small-muted">Local ZIP or explicit Git-backed clone</span>
+      </div>
+      <button id="overleafDialogClose" type="button" class="plain">×</button>
+    </div>
+
+    <div class="overleaf-import-grid">
+      <section class="overleaf-import-section">
+        <div class="overleaf-section-heading"><strong>Source ZIP</strong><span class="overleaf-local-badge">LOCAL ONLY</span></div>
+        <p>Import a downloaded Overleaf source ZIP into a new local PAH project. This path does not initialize Git or contact any remote service.</p>
+        <label>ZIP archive
+          <input id="overleafZipFile" type="file" accept=".zip,application/zip">
+        </label>
+        <label>Destination directory
+          <input id="overleafZipDestination" type="text" placeholder="/path/to/new/project" spellcheck="false">
+        </label>
+        <div class="dialog-actions compact"><button id="overleafImportZip" type="button">Import ZIP</button></div>
+      </section>
+
+      <section class="overleaf-import-section">
+        <div class="overleaf-section-heading"><strong>Git-backed project</strong><span id="overleafGitConnectivity" class="overleaf-remote-badge">LOCAL ONLY</span></div>
+        <p>Clone through PAH's existing Git service. Network access stays blocked until Manual Remote is explicitly enabled for this workspace session.</p>
+        <label>Overleaf Git URL
+          <input id="overleafGitUrl" type="text" placeholder="https://git.overleaf.com/..." spellcheck="false">
+        </label>
+        <label>Destination directory
+          <input id="overleafGitDestination" type="text" placeholder="/path/to/new/project" spellcheck="false">
+        </label>
+        <label>Branch <span class="small-muted">optional</span>
+          <input id="overleafGitBranch" type="text" placeholder="main" spellcheck="false">
+        </label>
+        <div class="dialog-actions compact">
+          <button id="overleafEnableRemote" type="button">Enable Manual Remote</button>
+          <button id="overleafCloneGit" type="button">Clone Project</button>
+        </div>
+      </section>
+    </div>
+
+    <section id="overleafImportResult" class="overleaf-result hidden" aria-live="polite">
+      <div class="overleaf-result-heading"><strong>Imported project</strong><span id="overleafImportMode" class="service-menu-meta"></span></div>
+      <div id="overleafImportSummary" class="overleaf-summary"></div>
+      <div class="dialog-actions compact"><button id="overleafOpenProject" type="button">Open Project in PAH</button></div>
+    </section>
   </div>
 </dialog>
 

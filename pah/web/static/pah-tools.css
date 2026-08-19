@@ -310,3 +310,136 @@ button.result-row:hover,
 }
 .service-submenu .service-menu-summary { margin-bottom: 2px; }
 .tools-menu { min-width: 265px; }
+
+/* PAH 0.8.7 Sprint 8: Overleaf import remains a transient Documents service. */
+.overleaf-dialog {
+  width: min(980px, calc(100vw - 40px));
+  max-width: 980px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+.overleaf-dialog::backdrop { background: rgb(7 20 30 / .58); }
+.overleaf-dialog-card {
+  display: grid;
+  gap: 0;
+  max-height: min(780px, calc(100vh - 48px));
+  overflow: auto;
+  background: var(--pah-surface-1, #fff);
+  border: 1px solid var(--pah-border-strong, #7690a0);
+  border-top: 3px solid var(--pah-sky-400, #45b9e6);
+  box-shadow: 0 18px 42px rgb(15 43 63 / .32);
+}
+.overleaf-dialog-card > .dialog-heading {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--pah-navy-900, #12344b);
+  color: #fff;
+  border-bottom: 2px solid var(--pah-sky-300, #72caec);
+}
+.overleaf-dialog-card > .dialog-heading h3 { color: #fff; }
+.overleaf-dialog-card > .dialog-heading .small-muted { color: rgb(255 255 255 / .7); }
+.overleaf-import-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  background: var(--pah-page, #e8eff3);
+}
+.overleaf-import-section {
+  min-width: 0;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--pah-border, #bfd0d9);
+  box-shadow: var(--pah-shadow-sm, 0 1px 2px rgb(15 43 63 / .12));
+}
+.overleaf-section-heading,
+.overleaf-result-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: -10px -10px 9px;
+  padding: 6px 8px;
+  background: var(--pah-navy-900, #12344b);
+  color: #fff;
+  border-bottom: 2px solid var(--pah-sky-300, #72caec);
+  font-size: 10px;
+  letter-spacing: .045em;
+  text-transform: uppercase;
+}
+.overleaf-import-section p {
+  margin: 0 0 10px;
+  color: var(--pah-muted, #657985);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.overleaf-import-section label {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  color: var(--pah-muted, #657985);
+  font-size: 10px;
+  font-weight: 750;
+}
+.overleaf-import-section input[type="text"],
+.overleaf-import-section input[type="file"] {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.overleaf-local-badge,
+.overleaf-remote-badge {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border: 1px solid rgb(255 255 255 / .38);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .06em;
+}
+.overleaf-remote-badge.remote { color: #fff1bf; border-color: rgb(255 224 128 / .58); }
+.overleaf-result {
+  margin: 0 8px 8px;
+  border: 1px solid var(--pah-border, #bfd0d9);
+  background: #fff;
+}
+.overleaf-result.hidden { display: none; }
+.overleaf-result-heading { margin: 0; }
+.overleaf-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(90px, 1fr));
+  gap: 1px;
+  padding: 1px;
+  background: var(--pah-border, #bfd0d9);
+}
+.overleaf-summary > div {
+  min-width: 0;
+  padding: 7px 8px;
+  background: #fff;
+}
+.overleaf-summary .wide { grid-column: 1 / -1; }
+.overleaf-summary span {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--pah-muted, #657985);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+.overleaf-summary strong,
+.overleaf-summary code {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pah-navy-900, #12344b);
+  font-size: 10px;
+}
+.overleaf-result > .dialog-actions { padding: 8px; border-top: 1px solid var(--pah-border, #bfd0d9); }
+@media (max-width: 760px) {
+  .overleaf-import-grid { grid-template-columns: 1fr; }
+  .overleaf-summary { grid-template-columns: 1fr 1fr; }
+}

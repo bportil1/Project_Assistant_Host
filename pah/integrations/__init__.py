@@ -23,6 +23,7 @@ from .documentation_scaffold import (
 )
 from .artifact_links import ArtifactLinkIndex
 from .diagram_document import DiagramDocumentBridgeError, diagram_document_snippet
+from .overleaf import OverleafImportError, OverleafImportService
 
 __all__ = [
     "AnalysisDiagramBridgeError",
@@ -37,6 +38,8 @@ __all__ = [
     "ReferenceDocumentBridgeError",
     "ReferenceIntegration",
     "ReferenceIntegrationError",
+    "OverleafImportError",
+    "OverleafImportService",
     "code_document_snippet",
     "diagram_document_snippet",
     "entity_dependency_diagram",

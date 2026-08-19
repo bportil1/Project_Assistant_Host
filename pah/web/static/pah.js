@@ -40,6 +40,7 @@
     },
     mode: 'workspace',
     git: {git_available: false, workspace: null, is_repository: false, repository_root: null, branch: null, detached: false, head: null, changes: [], staged_count: 0, unstaged_count: 0, untracked_count: 0, submodules: [], remotes: [], tracking: null, connectivity_mode: 'local_only', local_only: true, remote_enabled: false},
+    overleaf: {lastImport: null},
     fullTools: {
       analysis: {available: false, url: null, error: null},
       documents: {available: false, url: null, error: null},
@@ -73,6 +74,16 @@
       headers: {'Content-Type': 'application/json', ...(options.headers || {})},
       ...options,
     });
+    let data = {};
+    try { data = await response.json(); } catch (_) {}
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || `${response.status} ${response.statusText}`);
+    }
+    return data;
+  }
+
+  async function apiForm(url, formData) {
+    const response = await fetch(url, {method: 'POST', body: formData});
     let data = {};
     try { data = await response.json(); } catch (_) {}
     if (!response.ok || data.ok === false) {
@@ -810,6 +821,7 @@
       state.git = {...state.git, git_available: false, is_repository: false, error: error.message};
     }
     renderGitLauncher();
+    renderOverleafConnectivity();
     return state.git;
   }
 
@@ -845,6 +857,133 @@
       await openWorkspace(path);
     },
   };
+
+  // ---------------------------------------------------------------------------
+  // Overleaf project import (Documents-side convenience)
+  // ---------------------------------------------------------------------------
+  function renderOverleafConnectivity() {
+    const badge = $('overleafGitConnectivity');
+    const enable = $('overleafEnableRemote');
+    const clone = $('overleafCloneGit');
+    const available = state.git?.git_available !== false;
+    const enabled = available && Boolean(state.git?.remote_enabled);
+    if (badge) {
+      badge.textContent = available ? (enabled ? 'MANUAL REMOTE' : 'LOCAL ONLY') : 'GIT UNAVAILABLE';
+      badge.classList.toggle('remote', enabled);
+    }
+    if (enable) {
+      enable.textContent = enabled ? 'Manual Remote Enabled' : 'Enable Manual Remote';
+      enable.disabled = !available || enabled;
+    }
+    if (clone) clone.disabled = !available || !enabled;
+  }
+
+  async function openOverleafDialog() {
+    closeServiceMenus();
+    await refreshGitStatus();
+    renderOverleafConnectivity();
+    $('overleafDialog')?.showModal();
+  }
+
+  async function enableOverleafManualRemote() {
+    if (state.git?.remote_enabled) return;
+    const ok = window.confirm('Enable Manual Remote Git for this PAH session? This permits the Overleaf Git clone only when you explicitly click Clone Project. Credentials remain with Git/your credential helper.');
+    if (!ok) return;
+    const data = await api('/api/git/connectivity', {method: 'POST', body: JSON.stringify({mode: 'manual_remote'})});
+    state.git = {...state.git, ...data};
+    renderGitLauncher();
+    renderOverleafConnectivity();
+    toast('Manual Remote enabled for this workspace session.');
+  }
+
+  function appendOverleafSummaryCell(holder, label, value, {wide = false, code = false} = {}) {
+    const cell = document.createElement('div');
+    if (wide) cell.className = 'wide';
+    const caption = document.createElement('span');
+    caption.textContent = label;
+    const content = document.createElement(code ? 'code' : 'strong');
+    content.textContent = String(value ?? '—');
+    content.title = content.textContent;
+    cell.append(caption, content);
+    holder.appendChild(cell);
+  }
+
+  function renderOverleafImportResult(data) {
+    state.overleaf.lastImport = data;
+    const result = $('overleafImportResult');
+    const holder = $('overleafImportSummary');
+    holder.replaceChildren();
+    const project = data.project || {};
+    const counts = project.counts || {};
+    appendOverleafSummaryCell(holder, 'TeX files', counts.tex || 0);
+    appendOverleafSummaryCell(holder, 'BibTeX files', counts.bib || 0);
+    appendOverleafSummaryCell(holder, 'Figures', counts.figures || 0);
+    appendOverleafSummaryCell(holder, 'Support files', counts.support || 0);
+    appendOverleafSummaryCell(holder, 'Likely main document', project.likely_main || 'Not detected', {wide: true, code: true});
+    appendOverleafSummaryCell(holder, 'Local project directory', data.destination || project.root || '—', {wide: true, code: true});
+    if ((project.bib_files || []).length) {
+      appendOverleafSummaryCell(holder, 'Detected bibliography', project.bib_files.join(', '), {wide: true, code: true});
+    }
+    $('overleafImportMode').textContent = data.acquisition_mode === 'git' ? 'Git-backed' : 'Local ZIP';
+    result.classList.remove('hidden');
+  }
+
+  async function importOverleafZip() {
+    const input = $('overleafZipFile');
+    const file = input?.files?.[0];
+    const destination = $('overleafZipDestination').value.trim();
+    if (!file) return toast('Choose an Overleaf source ZIP.', true);
+    if (!destination) return toast('Choose a destination directory.', true);
+    const button = $('overleafImportZip');
+    button.disabled = true;
+    button.textContent = 'Importing…';
+    try {
+      const form = new FormData();
+      form.append('archive', file, file.name);
+      form.append('destination', destination);
+      const data = await apiForm('/api/overleaf/import-zip', form);
+      renderOverleafImportResult(data);
+      toast('Overleaf source ZIP imported locally.');
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Import ZIP';
+    }
+  }
+
+  async function cloneOverleafGit() {
+    if (!state.git?.remote_enabled) return toast('Enable Manual Remote before cloning an Overleaf Git project.', true);
+    const url = $('overleafGitUrl').value.trim();
+    const destination = $('overleafGitDestination').value.trim();
+    const branch = $('overleafGitBranch').value.trim();
+    if (!url || !destination) return toast('Enter the Overleaf Git URL and destination directory.', true);
+    if (!window.confirm(`Clone the Overleaf Git project into ${destination}? This is an explicit network-capable Git operation.`)) return;
+    const button = $('overleafCloneGit');
+    button.disabled = true;
+    button.textContent = 'Cloning…';
+    try {
+      const data = await api('/api/overleaf/clone', {
+        method: 'POST',
+        body: JSON.stringify({url, destination, branch}),
+      });
+      renderOverleafImportResult(data);
+      toast('Overleaf Git project cloned.');
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      renderOverleafConnectivity();
+      button.textContent = 'Clone Project';
+    }
+  }
+
+  async function openImportedOverleafProject() {
+    const destination = state.overleaf.lastImport?.destination;
+    if (!destination) return;
+    $('overleafDialog')?.close();
+    await openWorkspace(destination);
+    toast('Imported project opened in PAH.');
+  }
 
   function loadToolFrame(tool, force = false) {
     if (isSurfaceDetached(tool)) return false;
@@ -2889,6 +3028,13 @@
     });
   });
 
+  $('documentsOverleafImport').onclick = () => openOverleafDialog().catch(error => toast(error.message, true));
+  $('overleafDialogClose').onclick = () => $('overleafDialog')?.close();
+  $('overleafImportZip').onclick = () => importOverleafZip();
+  $('overleafEnableRemote').onclick = () => enableOverleafManualRemote().catch(error => toast(error.message, true));
+  $('overleafCloneGit').onclick = () => cloneOverleafGit();
+  $('overleafOpenProject').onclick = () => openImportedOverleafProject().catch(error => toast(error.message, true));
+
   $('toolsEnvironment').onclick = () => {
     closeServiceMenus();
     openEnvironmentDialog();
@@ -2995,6 +3141,7 @@
   loadLayoutPreferences();
   renderWorkspacePanes();
   renderGitLauncher();
+  renderOverleafConnectivity();
   applyLayoutSizes();
   window.addEventListener('resize', applyLayoutSizes);
   (async () => {

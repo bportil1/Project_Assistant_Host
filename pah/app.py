@@ -23,6 +23,8 @@ from .integrations import (
     DocumentIntegrationError,
     DiagramDocumentBridgeError,
     DocumentationScaffoldError,
+    OverleafImportError,
+    OverleafImportService,
     ReferenceDocumentBridgeError,
     ReferenceIntegration,
     ReferenceIntegrationError,
@@ -44,6 +46,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     environments = EnvironmentManager(workspaces)
     terminals = TerminalManager()
     git_service = LocalGitService(workspaces.root)
+    overleaf = OverleafImportService()
     analyzer = AnalyzerIntegration()
     documents = DocumentIntegration(state_dir=workspaces.state_dir / "document-engine")
     references = ReferenceIntegration(state_dir=workspaces.state_dir / "references")
@@ -96,6 +99,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     @app.errorhandler(EnvironmentError)
     @app.errorhandler(TerminalError)
     @app.errorhandler(GitError)
+    @app.errorhandler(OverleafImportError)
     @app.errorhandler(AnalyzerIntegrationError)
     @app.errorhandler(DocumentIntegrationError)
     @app.errorhandler(CodeDocumentBridgeError)
@@ -263,6 +267,32 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         result = git_service.update_submodules(str(payload.get("mode", "recorded")))
         analyzer.mark_stale()
         return jsonify({"ok": True, **result})
+
+    @app.post("/api/overleaf/import-zip")
+    def overleaf_import_zip():
+        archive = request.files.get("archive")
+        if archive is None or not archive.filename:
+            raise OverleafImportError("Choose an Overleaf source ZIP to import.")
+        destination = request.form.get("destination", "")
+        result = overleaf.import_zip(archive.stream, destination, filename=archive.filename)
+        return jsonify({"ok": True, **result, **git_service.connectivity()})
+
+    @app.post("/api/overleaf/clone")
+    def overleaf_clone():
+        payload = request.get_json(silent=True) or {}
+        cloned = git_service.clone(
+            str(payload.get("url", "")),
+            str(payload.get("destination", "")),
+            branch=str(payload.get("branch", "")) or None,
+        )
+        project = overleaf.inspect_project(cloned["destination"])
+        return jsonify({
+            "ok": True,
+            "acquisition_mode": "git",
+            **cloned,
+            "project": project,
+            **git_service.connectivity(),
+        })
 
     @app.get("/api/tree")
     def get_tree():
@@ -792,7 +822,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.8.6",
+            "version": "0.8.7",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),
