@@ -188,3 +188,38 @@ Visual identity remains a presentation concern. The host retains `pah/web/static
 Standalone/detached services cannot inherit CSS through their iframe/window boundary, so each independently runnable module carries a synchronized copy of the kit's `pah-module-theme.css` plus a narrow `pah-compat.css` adapter for its existing markup. The Code Analyzer inlines these styles with its existing report CSS; Document Workbench, Reference Manager, and Research Search load them from their own static roots. This intentionally duplicates a small presentation asset so every module remains independently runnable.
 
 The visual layer may add semantic classes/data attributes such as `pah-module` and `pah-tool-nav`, but it must not rename existing IDs, routes, APIs, or JavaScript contracts. Layout ownership, detach/reattach behavior, pane collapse behavior, and module boundaries remain unchanged.
+
+
+## Flexible workspace pane contract (PAH 0.8 Sprint 1)
+
+The native Workspace treats its auxiliary surfaces as presentation panes rather than permanent layout requirements. `project`, `context`, and `terminal` use one host-side pane-state contract with `expanded`/`collapsed` presentation state. Collapsing changes only DOM/layout presentation; it does not clear selected files, analysis/reference/document context, open editor tabs, or the terminal PTY.
+
+The project and context panes collapse to narrow restore rails, and the editor grid expands into the released width. The terminal keeps its existing live PTY while collapsed and routes its existing detach/reattach behavior through the same pane-state helper. No pane state is persisted across browser sessions in Sprint 1; persistence is reserved for the later layout-persistence sprint.
+
+## Compact service launcher (PAH 0.8 Sprint 2)
+
+PAH no longer treats every secondary action as permanent top-bar or full-tool chrome. Workspace remains a direct mode, while Analysis, Documents, and References use compact split launchers: the primary button opens/focuses the tool and the adjacent menu exposes alternate presentation actions such as opening/focusing a detached window and reloading the hosted view.
+
+Host-owned secondary workspace capabilities are grouped under `Tools`: Project Tree, Project Tools, Terminal, detached Terminal Window, and Python Environment. Pane entries route through the same pane-state contract introduced in Sprint 1, so launcher actions do not create duplicate state or separate sessions. Terminal Window continues to transfer the existing PTY rather than starting a second shell.
+
+Launcher menus are transient presentation surfaces. They close on selection, outside click, or Escape, and do not reserve workspace width. Full-tool status strips retain status/binding information but no longer duplicate Detach/Reload controls that are already available from the launcher. This keeps the editor/work area visually dominant while preserving one-click access to core modes.
+
+
+## Generic dock/detach controller (PAH 0.8 Sprint 3)
+
+PAH 0.8.2 replaces the earlier per-tool popup lifecycle with a single window-surface controller in the host frontend. The controller owns popup references, detached-state detection, focus behavior, popup creation, reattachment, manual-window-close detection, and the shared watcher.
+
+Registered surfaces currently include `analysis`, `documents`, `references`, and `terminal`. Analysis/Documents/References use the hosted-tool adapter and therefore continue to reuse their existing PAH-managed loopback servers. Terminal uses a PTY adapter: detaching transfers polling to the popup and reattaching resumes docked polling against the same terminal id.
+
+Presentation state is normalized as `closed`, `docked`, `collapsed`, or `detached` where meaningful. Tool-specific code is limited to adapters for content/lifecycle differences; it no longer owns generic window bookkeeping. This is intentionally a presentation architecture only: module APIs, routes, workspace binding, terminal APIs, and submodule ownership are unchanged.
+
+
+## Persistent workspace presentation state (PAH 0.8.3)
+
+Sprint 4 keeps workspace presentation state entirely in the host frontend. `localStorage` key `pah.workspace.layout.v1` records only pane collapse flags, Project/Project Tools widths, Terminal height, and the last normal work mode. It does not store repository contents, credentials, remote configuration, terminal output, or detached-window handles. If browser storage is disabled/corrupt, PAH silently falls back to built-in layout defaults.
+
+The three resizable panes use the existing pane-state contract rather than introducing another layout system. Project Tree and Project Tools retain collapsed rails; Terminal retains the same PTY lifecycle. Resize handles only mutate CSS custom properties (`--project-pane-width`, `--context-pane-width`, `--terminal-pane-height`) and persist the resulting numeric preferences on pointer release.
+
+Detached surfaces remain owned by the PAH 0.8.2 window-surface controller. Their browser window objects and screen positions are intentionally ephemeral and are not restored from persistence. This keeps startup deterministic and avoids popup-policy failures.
+
+Presentation persistence remains local-first: no layout action causes network access and no layout metadata is injected into the user's workspace.

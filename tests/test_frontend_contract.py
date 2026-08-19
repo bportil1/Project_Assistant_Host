@@ -71,23 +71,23 @@ def test_pah07_detachable_tool_controls_exist_and_are_wired():
     for tool in ["analysis", "documents", "references"]:
         assert f'data-tool-detach="{tool}"' in html
     assert 'id="terminalDetach"' in html
+    # Detach behavior is now routed through the generic window-surface controller.
     for function_name in [
-        "detachTool",
-        "reattachTool",
-        "detachTerminal",
-        "reattachTerminal",
+        "detachSurface",
+        "reattachSurface",
         "pollDetachedTerminal",
     ]:
         assert f"function {function_name}" in js or f"async function {function_name}" in js
-    assert "isToolDetached(mode)" in js
-    assert "state.terminalDetached" in js
+    assert "isSurfaceDetached(mode)" in js
+    assert "isSurfaceDetached('terminal')" in js
 
 
-def test_pah071_version_is_reported():
+def test_pah_reported_versions_match():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
-    assert 'version = "0.7.1"' in pyproject
-    assert '"version": "0.7.1"' in app
+    version_line = next(line for line in pyproject.splitlines() if line.startswith("version = "))
+    version = version_line.split('"', 2)[1]
+    assert f'"version": "{version}"' in app
 
 
 def test_pah071_visual_identity_stylesheets_are_loaded_after_legacy_css():
@@ -113,3 +113,177 @@ def test_pah071_standalone_modules_load_shared_visual_identity():
         assert "pah-module-theme.css" in html
         assert "pah-compat.css" in html
         assert 'class="pah-module"' in html
+
+
+def test_pah08_collapsible_workspace_panes_are_generic_and_wired():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    css = (ROOT / "pah" / "web" / "static" / "pah.css").read_text(encoding="utf-8")
+
+    for pane_id, toggle_id in [
+        ("projectPane", "projectPaneToggle"),
+        ("contextPane", "contextPaneToggle"),
+        ("terminalPanel", "terminalToggle"),
+    ]:
+        assert f'id="{pane_id}"' in html
+        assert f'id="{toggle_id}"' in html
+
+    for function_name in ["renderPaneState", "setPaneCollapsed", "togglePane", "renderWorkspacePanes"]:
+        assert f"function {function_name}" in js
+
+    assert "project-pane-collapsed" in css
+    assert "context-pane-collapsed" in css
+    assert "setPaneCollapsed('terminal', true" in js
+    assert "setPaneCollapsed('terminal', false" in js
+
+
+def test_pah081_version_is_reported():
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
+    assert 'version = "0.8.3"' in pyproject
+    assert '"version": "0.8.3"' in app
+
+
+def test_pah081_compact_service_launchers_are_wired():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    css = (ROOT / "pah" / "web" / "static" / "pah.css").read_text(encoding="utf-8")
+
+    for menu_id in ["analysisMenu", "documentsMenu", "referencesMenu", "toolsMenu"]:
+        assert f'id="{menu_id}"' in html
+        assert f'data-menu-toggle="{menu_id}"' in html
+
+    for tool in ["analysis", "documents", "references"]:
+        assert f'data-service-tool="{tool}" data-service-action="open"' in html
+        assert f'data-tool-detach="{tool}"' in html
+        assert f'data-tool-reload="{tool}"' in html
+
+    for pane in ["project", "context", "terminal"]:
+        assert f'data-pane-target="{pane}"' in html
+        assert f'data-pane-indicator="{pane}"' in html
+
+    for element_id in ["toolsMenuToggle", "toolsTerminalWindow", "toolsEnvironment", "toolsEnvironmentStatus"]:
+        assert f'id="{element_id}"' in html
+
+    assert 'id="envButton"' not in html
+    assert "function closeServiceMenus" in js
+    assert "function toggleServiceMenu" in js
+    assert "async function reloadTool" in js
+    assert "[data-pane-target]" in js
+    assert ".service-menu" in css
+    assert ".service-menu.hidden" in css
+
+
+def test_pah081_full_tool_status_strips_do_not_duplicate_launcher_actions():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    for mode_id in ["analysisMode", "documentsMode", "referencesMode"]:
+        start = html.index(f'id="{mode_id}"')
+        end = html.index('</section>', start)
+        section = html[start:end]
+        assert 'data-tool-detach=' not in section
+        assert 'data-tool-reload=' not in section
+
+
+def test_pah082_generic_window_surface_controller_replaces_tool_specific_detach_state():
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+
+    for surface in ["analysis", "documents", "references", "terminal"]:
+        assert f"{surface}: {{kind:" in js
+
+    for contract in [
+        "const windowSurfaceConfig",
+        "function surfaceWindow",
+        "function isSurfaceDetached",
+        "function surfacePresentationState",
+        "async function openWindowSurface",
+        "async function detachSurface",
+        "async function reattachSurface",
+        "async function handleSurfaceWindowClosed",
+        "function ensureWindowSurfaceWatch",
+    ]:
+        assert contract in js
+
+    assert "if (name === 'workspace')" in js
+    assert "await setMode('workspace');" in js
+
+    for legacy in [
+        "detachedWindows",
+        "detachedWatch",
+        "terminalDetached",
+        "function detachTool",
+        "function reattachTool",
+        "function detachTerminal",
+        "function reattachTerminal",
+    ]:
+        assert legacy not in js
+
+
+def test_pah082_terminal_uses_shared_window_controller_but_preserves_single_pty_transfer():
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+
+    assert "if (!isSurfaceDetached('terminal')) state.terminalPoll = setInterval(pollTerminal, 300);" in js
+    assert "if (!state.terminalId || isSurfaceDetached('terminal')) return;" in js
+    assert "popup._pahTerminalPoll" in js
+    assert "state.terminalPoll = state.terminalId ? setInterval(pollTerminal, 300) : null;" in js
+    assert "writeDetachedTerminalShell(popup)" in js
+
+
+def test_pah083_layout_preferences_are_local_persistent_and_resizable():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    css = (ROOT / "pah" / "web" / "static" / "pah.css").read_text(encoding="utf-8")
+
+    for handle_id, pane in [
+        ("projectPaneResize", "project"),
+        ("contextPaneResize", "context"),
+        ("terminalPaneResize", "terminal"),
+    ]:
+        assert f'id="{handle_id}"' in html
+        assert f'data-resize-pane="{pane}"' in html
+
+    assert 'id="toolsResetLayout"' in html
+    assert "const LAYOUT_STORAGE_KEY = 'pah.workspace.layout.v1'" in js
+    for function_name in [
+        "loadLayoutPreferences",
+        "persistLayoutPreferences",
+        "setLayoutPaneSize",
+        "applyLayoutSizes",
+        "beginPaneResize",
+        "resetWorkspaceLayout",
+        "restoreLastMode",
+    ]:
+        assert f"function {function_name}" in js or f"async function {function_name}" in js
+
+    assert "window.localStorage.setItem(LAYOUT_STORAGE_KEY" in js
+    assert "--project-pane-expanded-width" in css
+    assert "--context-pane-expanded-width" in css
+    assert ".workspace-layout.project-pane-collapsed { --project-pane-width: 34px; }" in css
+    assert ".workspace-layout.context-pane-collapsed { --context-pane-width: 34px; }" in css
+    assert "--terminal-pane-height" in css
+    assert ".pane-resize-handle" in css
+
+
+def test_pah083_layout_shortcuts_and_detached_windows_remain_ephemeral():
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+
+    for code in ["KeyP", "KeyO", "KeyK", "KeyE"]:
+        assert f"event.code === '{code}'" in js
+    assert "event.ctrlKey && event.altKey" in js
+    assert "focusWorkspaceEditor" in js
+
+    start = js.index("function persistLayoutPreferences()")
+    end = js.index("function effectiveLayoutMax", start)
+    persistence_block = js[start:end]
+    assert "surfaceWindows" not in persistence_block
+    assert "screenX" not in persistence_block
+    assert "screenY" not in persistence_block
+
+def test_pah083_aesthetic_hotfix_keeps_tool_heading_single_line_and_terminal_clipped():
+    css = (ROOT / "pah" / "web" / "static" / "pah.css").read_text(encoding="utf-8")
+
+    assert ".analysis-heading > div:first-child" in css
+    assert "flex-wrap: nowrap;" in css
+    assert ".analysis-heading .badge" in css
+    assert "text-overflow: ellipsis;" in css
+    assert ".terminal-panel.collapsed .terminal-output" in css
+    assert ".terminal-panel.collapsed .terminal-input-row { display: none; }" in css

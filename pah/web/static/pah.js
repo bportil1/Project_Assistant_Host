@@ -44,9 +44,24 @@
       documents: {available: false, url: null, error: null},
       references: {available: false, url: null, error: null},
     },
-    detachedWindows: {analysis: null, documents: null, references: null, terminal: null},
-    detachedWatch: null,
-    terminalDetached: false,
+    surfaceWindows: {
+      analysis: {popup: null},
+      documents: {popup: null},
+      references: {popup: null},
+      terminal: {popup: null},
+    },
+    surfaceWindowWatch: null,
+    panes: {
+      project: {collapsed: false},
+      context: {collapsed: false},
+      terminal: {collapsed: false},
+    },
+    layout: {
+      projectWidth: 265,
+      contextWidth: 360,
+      terminalHeight: 250,
+      lastMode: 'workspace',
+    },
   };
 
   async function api(url, options = {}) {
@@ -80,14 +95,269 @@
   }
   function setText(id, text) { $(id).textContent = text; }
   function clearElement(id) { $(id).replaceChildren(); }
+
+  // ---------------------------------------------------------------------------
+  // Local workspace-layout preferences
+  // ---------------------------------------------------------------------------
+  const LAYOUT_STORAGE_KEY = 'pah.workspace.layout.v1';
+  const layoutDefaults = Object.freeze({
+    projectWidth: 265,
+    contextWidth: 360,
+    terminalHeight: 250,
+    lastMode: 'workspace',
+  });
+  const layoutSizeConfig = Object.freeze({
+    project: {stateKey: 'projectWidth', targetId: 'workspaceMode', cssVar: '--project-pane-expanded-width', min: 180, max: 480},
+    context: {stateKey: 'contextWidth', targetId: 'workspaceMode', cssVar: '--context-pane-expanded-width', min: 260, max: 560},
+    terminal: {stateKey: 'terminalHeight', targetId: 'app', cssVar: '--terminal-pane-height', min: 120, max: 520},
+  });
+
+  function clampNumber(value, min, max) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return min;
+    return Math.min(max, Math.max(min, number));
+  }
+
+  function loadLayoutPreferences() {
+    let saved = null;
+    try {
+      saved = JSON.parse(window.localStorage.getItem(LAYOUT_STORAGE_KEY) || 'null');
+    } catch (_) {
+      saved = null;
+    }
+    if (!saved || typeof saved !== 'object') return;
+
+    for (const name of Object.keys(state.panes)) {
+      if (typeof saved.panes?.[name] === 'boolean') state.panes[name].collapsed = saved.panes[name];
+    }
+    for (const [name, config] of Object.entries(layoutSizeConfig)) {
+      const savedValue = saved.sizes?.[config.stateKey];
+      if (Number.isFinite(Number(savedValue))) {
+        state.layout[config.stateKey] = clampNumber(savedValue, config.min, config.max);
+      }
+    }
+    if (['workspace', 'analysis', 'documents', 'references'].includes(saved.lastMode)) {
+      state.layout.lastMode = saved.lastMode;
+    }
+  }
+
+  function persistLayoutPreferences() {
+    const payload = {
+      version: 1,
+      panes: Object.fromEntries(Object.entries(state.panes).map(([name, pane]) => [name, Boolean(pane.collapsed)])),
+      sizes: {
+        projectWidth: Math.round(state.layout.projectWidth),
+        contextWidth: Math.round(state.layout.contextWidth),
+        terminalHeight: Math.round(state.layout.terminalHeight),
+      },
+      lastMode: state.layout.lastMode,
+    };
+    try {
+      window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(payload));
+    } catch (_) {
+      // Layout persistence is a convenience only; PAH must remain usable when
+      // browser storage is disabled or unavailable.
+    }
+  }
+
+  function effectiveLayoutMax(name, config) {
+    if (name === 'terminal') return Math.min(config.max, Math.max(config.min, window.innerHeight - 180));
+    const width = $('workspaceMode')?.getBoundingClientRect().width || window.innerWidth;
+    const minimumEditor = window.innerWidth <= 850 ? 300 : (window.innerWidth <= 1150 ? 330 : 360);
+    const otherName = name === 'project' ? 'context' : 'project';
+    const otherConfig = layoutSizeConfig[otherName];
+    const otherPanel = $(paneConfig?.[otherName]?.panelId);
+    const otherHiddenByCss = otherPanel ? window.getComputedStyle(otherPanel).display === 'none' : false;
+    const otherWidth = (state.panes[otherName].collapsed || otherHiddenByCss)
+      ? 34
+      : Number(state.layout[otherConfig.stateKey] || layoutDefaults[otherConfig.stateKey]);
+    return Math.min(config.max, Math.max(config.min, width - otherWidth - minimumEditor));
+  }
+
+  function setLayoutPaneSize(name, value, {persist = false} = {}) {
+    const config = layoutSizeConfig[name];
+    if (!config) return;
+    const max = effectiveLayoutMax(name, config);
+    const size = clampNumber(value, config.min, max);
+    state.layout[config.stateKey] = size;
+    $(config.targetId)?.style.setProperty(config.cssVar, `${Math.round(size)}px`);
+    if (persist) persistLayoutPreferences();
+  }
+
+  function applyLayoutSizes() {
+    for (const [name, config] of Object.entries(layoutSizeConfig)) {
+      setLayoutPaneSize(name, state.layout[config.stateKey], {persist: false});
+    }
+  }
+
+  function beginPaneResize(name, event) {
+    const config = layoutSizeConfig[name];
+    if (!config || state.panes[name]?.collapsed) return;
+    if (name === 'terminal' && isSurfaceDetached('terminal')) return;
+    event.preventDefault();
+
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startSize = Number(state.layout[config.stateKey]);
+    const cursorClass = name === 'terminal' ? 'pane-resizing-row' : 'pane-resizing-column';
+    document.body.classList.add(cursorClass);
+
+    const onMove = moveEvent => {
+      let delta = 0;
+      if (name === 'project') delta = moveEvent.clientX - startX;
+      else if (name === 'context') delta = startX - moveEvent.clientX;
+      else delta = startY - moveEvent.clientY;
+      setLayoutPaneSize(name, startSize + delta, {persist: false});
+    };
+    const onUp = () => {
+      document.body.classList.remove(cursorClass);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      persistLayoutPreferences();
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, {once: true});
+  }
+
+  function resetWorkspaceLayout() {
+    state.layout.projectWidth = layoutDefaults.projectWidth;
+    state.layout.contextWidth = layoutDefaults.contextWidth;
+    state.layout.terminalHeight = layoutDefaults.terminalHeight;
+    for (const pane of Object.values(state.panes)) pane.collapsed = false;
+    renderWorkspacePanes();
+    applyLayoutSizes();
+    persistLayoutPreferences();
+    closeServiceMenus();
+    toast('Workspace layout reset');
+  }
+
+  async function focusWorkspaceEditor() {
+    if (state.mode !== 'workspace') await setMode('workspace');
+    const tab = activeTab();
+    if (tab) editor.focus();
+    else $('workspacePath')?.focus();
+  }
+
+  async function restoreLastMode() {
+    const mode = state.layout.lastMode;
+    if (mode === 'workspace' || !state.workspace) return;
+    await setMode(mode);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Flexible workspace pane state
+  // ---------------------------------------------------------------------------
+  const paneConfig = {
+    project: {
+      panelId: 'projectPane',
+      toggleId: 'projectPaneToggle',
+      layoutId: 'workspaceMode',
+      layoutClass: 'project-pane-collapsed',
+      expandedText: '‹',
+      collapsedText: '›',
+      expandedTitle: 'Collapse project tree',
+      collapsedTitle: 'Show project tree',
+    },
+    context: {
+      panelId: 'contextPane',
+      toggleId: 'contextPaneToggle',
+      layoutId: 'workspaceMode',
+      layoutClass: 'context-pane-collapsed',
+      expandedText: '›',
+      collapsedText: '‹',
+      expandedTitle: 'Collapse project tools',
+      collapsedTitle: 'Show project tools',
+    },
+    terminal: {
+      panelId: 'terminalPanel',
+      toggleId: 'terminalToggle',
+      layoutId: 'app',
+      layoutClass: 'terminal-collapsed',
+      expandedText: 'Hide',
+      collapsedText: 'Show',
+      expandedTitle: 'Collapse terminal',
+      collapsedTitle: 'Show terminal',
+    },
+  };
+
+  function renderPaneState(name) {
+    const config = paneConfig[name];
+    const pane = state.panes[name];
+    if (!config || !pane) return;
+    const panel = $(config.panelId);
+    const toggle = $(config.toggleId);
+    const layout = $(config.layoutId);
+    if (panel) panel.classList.toggle('collapsed', pane.collapsed);
+    if (layout && config.layoutClass) layout.classList.toggle(config.layoutClass, pane.collapsed);
+    if (toggle) {
+      toggle.textContent = pane.collapsed ? config.collapsedText : config.expandedText;
+      toggle.title = pane.collapsed ? config.collapsedTitle : config.expandedTitle;
+      toggle.setAttribute('aria-expanded', String(!pane.collapsed));
+    }
+    const indicator = document.querySelector(`[data-pane-indicator="${name}"]`);
+    if (indicator) {
+      indicator.textContent = (name === 'terminal' && isSurfaceDetached('terminal')) ? 'Detached' : (pane.collapsed ? 'Collapsed' : 'Shown');
+    }
+  }
+
+  function setPaneCollapsed(name, collapsed, {persist = true} = {}) {
+    if (!state.panes[name]) return;
+    state.panes[name].collapsed = Boolean(collapsed);
+    renderPaneState(name);
+    if (persist) persistLayoutPreferences();
+  }
+
+  function togglePane(name) {
+    if (!state.panes[name]) return;
+    setPaneCollapsed(name, !state.panes[name].collapsed);
+  }
+
+  function renderWorkspacePanes() {
+    for (const name of Object.keys(paneConfig)) renderPaneState(name);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Compact service/tool launcher menus
+  // ---------------------------------------------------------------------------
+  function setServiceMenuOpen(menuId, open) {
+    const menu = $(menuId);
+    if (!menu) return;
+    menu.classList.toggle('hidden', !open);
+    const toggle = document.querySelector(`[data-menu-toggle="${menuId}"]`);
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', String(open));
+      toggle.classList.toggle('menu-open', open);
+    }
+  }
+
+  function closeServiceMenus(exceptId = null) {
+    document.querySelectorAll('.service-menu').forEach(menu => {
+      if (menu.id !== exceptId) setServiceMenuOpen(menu.id, false);
+    });
+  }
+
+  function toggleServiceMenu(menuId) {
+    const menu = $(menuId);
+    if (!menu) return;
+    const willOpen = menu.classList.contains('hidden');
+    closeServiceMenus(menuId);
+    setServiceMenuOpen(menuId, willOpen);
+  }
   function functionLabel(id) {
     const item = state.analyzer.functions.find(row => row.id === id);
     return item ? (item.qualified_name || item.name) : id;
   }
 
   // ---------------------------------------------------------------------------
-  // PAH 0.6 full module workspaces
+  // Generic dock / detach window controller
   // ---------------------------------------------------------------------------
+  const windowSurfaceConfig = {
+    analysis: {kind: 'hosted', title: 'Code Analyzer', width: 1220, height: 820},
+    documents: {kind: 'hosted', title: 'Document Workbench', width: 1220, height: 820},
+    references: {kind: 'hosted', title: 'Reference Manager', width: 1220, height: 820},
+    terminal: {kind: 'terminal', title: 'PAH Terminal', width: 980, height: 620},
+  };
+
   function toolFrameId(tool) {
     return `${tool}ToolFrame`;
   }
@@ -96,33 +366,61 @@
     return `${tool}ToolStatus`;
   }
 
-  function detachedWindow(tool) {
-    const popup = state.detachedWindows[tool];
+  function surfaceConfig(name) {
+    return windowSurfaceConfig[name] || null;
+  }
+
+  function rawSurfaceWindow(name) {
+    return state.surfaceWindows[name]?.popup || null;
+  }
+
+  function surfaceWindow(name) {
+    const popup = rawSurfaceWindow(name);
     if (!popup || popup.closed) return null;
     return popup;
   }
 
-  function isToolDetached(tool) {
-    return Boolean(detachedWindow(tool));
+  function isSurfaceDetached(name) {
+    return Boolean(surfaceWindow(name));
   }
 
-  function renderDetachedState() {
+  function surfacePresentationState(name) {
+    if (!surfaceConfig(name)) return 'closed';
+    if (isSurfaceDetached(name)) return 'detached';
+    if (name === 'terminal') return state.panes.terminal.collapsed ? 'collapsed' : 'docked';
+    return state.mode === name ? 'docked' : 'closed';
+  }
+
+  function renderWindowSurfaceState() {
     for (const tool of ['analysis', 'documents', 'references']) {
-      const detached = isToolDetached(tool);
+      const detached = surfacePresentationState(tool) === 'detached';
       const modeButton = document.querySelector(`.mode-button[data-mode="${tool}"]`);
       if (modeButton) {
         modeButton.classList.toggle('detached', detached);
-        if (detached) modeButton.title = `Focus detached ${tool} window`;
+        const info = state.fullTools[tool] || {};
+        modeButton.title = detached
+          ? `Focus detached ${tool} window`
+          : (info.available ? `Open full ${tool} workspace` : (info.error || `${tool} module unavailable`));
       }
       const detachButton = document.querySelector(`[data-tool-detach="${tool}"]`);
       if (detachButton) {
-        detachButton.textContent = detached ? 'Focus window' : 'Detach';
+        detachButton.textContent = detached ? 'Focus Window' : 'Open in New Window';
         detachButton.disabled = !(state.fullTools[tool]?.available);
       }
     }
+
+    const terminalIsDetached = surfacePresentationState('terminal') === 'detached';
     const terminalButton = $('terminalDetach');
-    if (terminalButton) terminalButton.textContent = state.terminalDetached ? 'Focus window' : 'Detach';
-    $('terminalPanel')?.classList.toggle('detached', state.terminalDetached);
+    if (terminalButton) terminalButton.textContent = terminalIsDetached ? 'Focus window' : 'Detach';
+    const terminalWindowButton = $('toolsTerminalWindow');
+    if (terminalWindowButton) {
+      const label = terminalWindowButton.querySelector('span:first-child');
+      const meta = terminalWindowButton.querySelector('.service-menu-meta');
+      if (label) label.textContent = terminalIsDetached ? 'Focus Terminal Window' : 'Terminal Window';
+      if (meta) meta.textContent = terminalIsDetached ? 'Detached' : 'Open';
+    }
+    $('terminalPanel')?.classList.toggle('detached', terminalIsDetached);
+    renderPaneState('terminal');
   }
 
   function popupFeatures(width = 1220, height = 820) {
@@ -131,15 +429,16 @@
     return `popup=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`;
   }
 
-  function writeDetachedToolShell(popup, tool, url) {
-    const title = {analysis: 'Code Analyzer', documents: 'Document Workbench', references: 'Reference Manager'}[tool] || tool;
+  function writeDetachedHostedShell(popup, tool, url) {
+    const config = surfaceConfig(tool);
+    const title = config?.title || tool;
     popup.document.open();
     popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PAH — ${title}</title><style>html,body{margin:0;height:100%;background:#111318;color:#d9dee7;font-family:Inter,system-ui,sans-serif}body{display:grid;grid-template-rows:36px minmax(0,1fr)}header{display:flex;align-items:center;gap:10px;padding:4px 8px;background:#171a21;border-bottom:1px solid #303642;font-size:12px}header strong{flex:0 0 auto}header span{flex:1;color:#8993a3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button{background:#252b35;color:#d9dee7;border:1px solid #303642;border-radius:5px;padding:4px 9px;cursor:pointer}button:hover{background:#303744}iframe{width:100%;height:100%;border:0;background:#fff}</style></head><body><header><strong>${title}</strong><span>Detached from PAH</span><button id="reattachButton">Reattach</button></header><iframe id="detachedFrame" title="${title}"></iframe></body></html>`);
     popup.document.close();
     const frame = popup.document.getElementById('detachedFrame');
     const separator = url.includes('?') ? '&' : '?';
     frame.src = `${url}${separator}pahDetached=${Date.now()}`;
-    popup.document.getElementById('reattachButton').onclick = () => reattachTool(tool, true);
+    popup.document.getElementById('reattachButton').onclick = () => reattachSurface(tool, {activate: true});
     popup.focus();
   }
 
@@ -156,77 +455,152 @@
     await refreshReferenceStatus().catch(() => {});
   }
 
-  async function detachTool(tool) {
-    const existing = detachedWindow(tool);
-    if (existing) { existing.focus(); return; }
-
-    // Open synchronously from the click event so browser popup blocking does not
-    // turn a normal detach action into a silent failure.
-    const popup = window.open('', `pah-detached-${tool}`, popupFeatures());
-    if (!popup) {
-      toast('The browser blocked the detached window. Allow popups for this local PAH site.', true);
-      return;
-    }
-    popup.document.title = 'PAH — Preparing detached tool';
-
+  async function prepareHostedSurface(name, popup) {
     await refreshFullTools();
-    const info = state.fullTools[tool];
+    const info = state.fullTools[name];
     if (!info?.available || !info.url) {
       popup.close();
-      toast(info?.error || `${tool} module is unavailable.`, true);
-      return;
+      toast(info?.error || `${name} module is unavailable.`, true);
+      return false;
     }
-
-    state.detachedWindows[tool] = popup;
-    writeDetachedToolShell(popup, tool, info.url);
-    const frame = $(toolFrameId(tool));
+    state.surfaceWindows[name].popup = popup;
+    writeDetachedHostedShell(popup, name, info.url);
+    const frame = $(toolFrameId(name));
     if (frame) {
       frame.src = 'about:blank';
       delete frame.dataset.toolUrl;
     }
-    renderDetachedState();
-    ensureDetachedWatch();
-
-    if (state.mode === tool) await setMode('workspace');
+    if (state.mode === name) await setMode('workspace');
+    return true;
   }
 
-  async function reattachTool(tool, activate = false) {
-    const popup = detachedWindow(tool);
-    state.detachedWindows[tool] = null;
-    if (popup && !popup.closed) popup.close();
-    renderDetachedState();
-    await syncReturnedTool(tool);
-    if (activate) await setMode(tool);
+  async function prepareTerminalSurface(popup) {
+    if (!state.workspace) {
+      popup.close();
+      toast('Open a workspace first', true);
+      return false;
+    }
+    if (!state.terminalId) await startTerminal();
+    state.surfaceWindows.terminal.popup = popup;
+    clearInterval(state.terminalPoll);
+    state.terminalPoll = null;
+    writeDetachedTerminalShell(popup);
+    setPaneCollapsed('terminal', true, {persist: false});
+    return true;
   }
 
-  async function handleDetachedWindowClosed(tool) {
-    if (state.detachedWindows[tool] && state.detachedWindows[tool].closed) {
-      state.detachedWindows[tool] = null;
-      renderDetachedState();
-      await syncReturnedTool(tool);
+  async function detachSurface(name) {
+    const config = surfaceConfig(name);
+    if (!config) return;
+    const existing = surfaceWindow(name);
+    if (existing) { existing.focus(); return; }
+
+    // Open synchronously from the click event so browser popup blocking does not
+    // turn a normal detach action into a silent failure.
+    const popup = window.open('', `pah-detached-${name}`, popupFeatures(config.width, config.height));
+    if (!popup) {
+      toast('The browser blocked the detached window. Allow popups for this local PAH site.', true);
+      return;
+    }
+    popup.document.title = `PAH — Preparing ${config.title}`;
+
+    let prepared = false;
+    if (config.kind === 'hosted') prepared = await prepareHostedSurface(name, popup);
+    else if (config.kind === 'terminal') prepared = await prepareTerminalSurface(popup);
+    if (!prepared) return;
+
+    renderWindowSurfaceState();
+    ensureWindowSurfaceWatch();
+  }
+
+  async function activateDockedSurface(name) {
+    const config = surfaceConfig(name);
+    if (!config) return;
+    if (config.kind === 'hosted') {
+      await setMode(name);
+      return;
+    }
+    if (name === 'terminal') {
+      setPaneCollapsed('terminal', false);
+      $('terminalInput')?.focus();
     }
   }
 
-  function ensureDetachedWatch() {
-    if (state.detachedWatch) return;
-    state.detachedWatch = window.setInterval(() => {
-      for (const tool of ['analysis', 'documents', 'references']) {
-        handleDetachedWindowClosed(tool).catch(() => {});
-      }
-      if (state.terminalDetached && (!state.detachedWindows.terminal || state.detachedWindows.terminal.closed)) {
-        handleDetachedTerminalClosed(false);
+  async function reattachSurface(name, {activate = true, expand = true, closeWindow = true} = {}) {
+    const config = surfaceConfig(name);
+    if (!config) return;
+    const popup = rawSurfaceWindow(name);
+
+    if (config.kind === 'terminal') {
+      if (popup && popup._pahTerminalPoll) popup.clearInterval(popup._pahTerminalPoll);
+      clearInterval(state.terminalPoll);
+      state.terminalPoll = state.terminalId ? setInterval(pollTerminal, 300) : null;
+      if (expand) setPaneCollapsed('terminal', false, {persist: false});
+    }
+
+    state.surfaceWindows[name].popup = null;
+    if (closeWindow && popup && !popup.closed) popup.close();
+    renderWindowSurfaceState();
+
+    if (config.kind === 'hosted') await syncReturnedTool(name);
+    if (activate) await activateDockedSurface(name);
+  }
+
+  async function handleSurfaceWindowClosed(name) {
+    const popup = rawSurfaceWindow(name);
+    if (!popup || !popup.closed) return;
+    await reattachSurface(name, {activate: false, expand: false, closeWindow: false});
+  }
+
+  function ensureWindowSurfaceWatch() {
+    if (state.surfaceWindowWatch) return;
+    state.surfaceWindowWatch = window.setInterval(() => {
+      for (const name of Object.keys(windowSurfaceConfig)) {
+        handleSurfaceWindowClosed(name).catch(() => {});
       }
     }, 700);
   }
 
-  function refreshDetachedToolWindow(tool) {
-    const popup = detachedWindow(tool);
-    const info = state.fullTools[tool];
+  function refreshDetachedSurface(name) {
+    const popup = surfaceWindow(name);
+    const info = state.fullTools[name];
     if (!popup || !info?.available || !info.url) return;
     const frame = popup.document.getElementById('detachedFrame');
     if (!frame) return;
     const separator = info.url.includes('?') ? '&' : '?';
     frame.src = `${info.url}${separator}pahDetached=${Date.now()}`;
+  }
+
+  async function openWindowSurface(name, {detached = false} = {}) {
+    closeServiceMenus();
+    // Workspace is a normal docked PAH mode, not a detachable service surface.
+    // Route it directly through setMode so the Workspace button always returns
+    // from Analysis/Documents/References to the editor workspace.
+    if (name === 'workspace') {
+      await setMode('workspace');
+      return;
+    }
+    if (detached) {
+      await detachSurface(name);
+      return;
+    }
+    if (isSurfaceDetached(name)) {
+      surfaceWindow(name)?.focus();
+      return;
+    }
+    await activateDockedSurface(name);
+  }
+
+  async function reloadTool(tool) {
+    closeServiceMenus();
+    await refreshFullTools();
+    const info = state.fullTools[tool];
+    if (!info?.available || !info.url) {
+      toast(info?.error || `${tool} module is unavailable.`, true);
+      return;
+    }
+    if (isSurfaceDetached(tool)) refreshDetachedSurface(tool);
+    else loadToolFrame(tool, true);
   }
 
   function renderFullToolStatus() {
@@ -237,6 +611,9 @@
         button.classList.toggle('unavailable', !info.available);
         button.title = info.available ? `Open full ${tool} workspace` : (info.error || `${tool} module unavailable`);
       }
+      document.querySelectorAll(`[data-service-tool="${tool}"], [data-tool-detach="${tool}"], [data-tool-reload="${tool}"]`).forEach(action => {
+        action.disabled = !info.available;
+      });
       const status = $(toolStatusId(tool));
       if (status) {
         if (info.available) {
@@ -244,13 +621,13 @@
           else if (tool === 'documents' && info.bound_workspace) status.textContent = info.bound_workspace;
           else if (tool === 'references' && info.library_root) status.textContent = info.library_root;
           else status.textContent = 'Ready';
-          if (isToolDetached(tool)) status.textContent += ' · detached';
+          if (isSurfaceDetached(tool)) status.textContent += ' · detached';
         } else {
           status.textContent = info.error || 'Module unavailable';
         }
       }
     }
-    renderDetachedState();
+    renderWindowSurfaceState();
   }
 
   async function refreshFullTools({reloadActive = false} = {}) {
@@ -260,10 +637,10 @@
       renderFullToolStatus();
       if (reloadActive) {
         for (const tool of ['analysis', 'documents', 'references']) {
-          if (isToolDetached(tool)) refreshDetachedToolWindow(tool);
+          if (isSurfaceDetached(tool)) refreshDetachedSurface(tool);
         }
       }
-      if (reloadActive && state.mode !== 'workspace' && !isToolDetached(state.mode)) loadToolFrame(state.mode, true);
+      if (reloadActive && state.mode !== 'workspace' && !isSurfaceDetached(state.mode)) loadToolFrame(state.mode, true);
     } catch (error) {
       for (const tool of ['analysis', 'documents', 'references']) {
         state.fullTools[tool] = {available: false, url: null, error: error.message};
@@ -273,7 +650,7 @@
   }
 
   function loadToolFrame(tool, force = false) {
-    if (isToolDetached(tool)) return false;
+    if (isSurfaceDetached(tool)) return false;
     const info = state.fullTools[tool];
     const frame = $(toolFrameId(tool));
     if (!frame || !info?.available || !info.url) return false;
@@ -307,8 +684,9 @@
 
   async function setMode(mode) {
     if (!['workspace', 'analysis', 'documents', 'references'].includes(mode)) return;
-    if (mode !== 'workspace' && isToolDetached(mode)) {
-      detachedWindow(mode).focus();
+    closeServiceMenus();
+    if (mode !== 'workspace' && isSurfaceDetached(mode)) {
+      surfaceWindow(mode).focus();
       return;
     }
     const previousMode = state.mode;
@@ -325,6 +703,8 @@
       loadToolFrame(mode);
     }
     state.mode = mode;
+    state.layout.lastMode = mode;
+    persistLayoutPreferences();
     document.querySelectorAll('.mode-button').forEach(button => {
       button.classList.toggle('active', button.dataset.mode === mode);
     });
@@ -658,11 +1038,11 @@
     state.terminalId = data.id;
     setText('terminalOutput', '');
     clearInterval(state.terminalPoll);
-    if (!state.terminalDetached) state.terminalPoll = setInterval(pollTerminal, 300);
+    if (!isSurfaceDetached('terminal')) state.terminalPoll = setInterval(pollTerminal, 300);
   }
 
   async function pollTerminal() {
-    if (!state.terminalId || state.terminalDetached) return;
+    if (!state.terminalId || isSurfaceDetached('terminal')) return;
     try {
       const data = await api(`/api/terminal/read?id=${encodeURIComponent(state.terminalId)}`);
       if (data.output) {
@@ -723,7 +1103,7 @@
     popup.document.getElementById('restart').onclick = async () => {
       try { await restartTerminal(); out.textContent = ''; } catch (error) { toast(error.message, true); }
     };
-    popup.document.getElementById('reattach').onclick = () => reattachTerminal(true);
+    popup.document.getElementById('reattach').onclick = () => reattachSurface('terminal', {activate: true, expand: true});
     popup._pahTerminalPoll = popup.setInterval(async () => {
       const data = await pollDetachedTerminal();
       if (data.output) {
@@ -734,59 +1114,6 @@
     popup.focus();
   }
 
-  async function detachTerminal() {
-    const existing = detachedWindow('terminal');
-    if (existing) { existing.focus(); return; }
-    if (!state.workspace) return toast('Open a workspace first', true);
-    const popup = window.open('', 'pah-detached-terminal', popupFeatures(980, 620));
-    if (!popup) {
-      toast('The browser blocked the detached terminal window. Allow popups for this local PAH site.', true);
-      return;
-    }
-    if (!state.terminalId) await startTerminal();
-    state.detachedWindows.terminal = popup;
-    state.terminalDetached = true;
-    clearInterval(state.terminalPoll);
-    state.terminalPoll = null;
-    writeDetachedTerminalShell(popup);
-    $('terminalPanel').classList.add('collapsed');
-    $('app').classList.add('terminal-collapsed');
-    $('terminalToggle').textContent = 'Show';
-    renderDetachedState();
-    ensureDetachedWatch();
-  }
-
-  function handleDetachedTerminalClosed(expand) {
-    const popup = state.detachedWindows.terminal;
-    if (popup && popup._pahTerminalPoll) popup.clearInterval(popup._pahTerminalPoll);
-    state.detachedWindows.terminal = null;
-    state.terminalDetached = false;
-    clearInterval(state.terminalPoll);
-    state.terminalPoll = state.terminalId ? setInterval(pollTerminal, 300) : null;
-    if (expand) {
-      $('terminalPanel').classList.remove('collapsed');
-      $('app').classList.remove('terminal-collapsed');
-      $('terminalToggle').textContent = 'Hide';
-    }
-    renderDetachedState();
-  }
-
-  function reattachTerminal(expand = true) {
-    const popup = detachedWindow('terminal');
-    state.detachedWindows.terminal = null;
-    if (popup && popup._pahTerminalPoll) popup.clearInterval(popup._pahTerminalPoll);
-    if (popup && !popup.closed) popup.close();
-    state.terminalDetached = false;
-    clearInterval(state.terminalPoll);
-    state.terminalPoll = state.terminalId ? setInterval(pollTerminal, 300) : null;
-    if (expand) {
-      $('terminalPanel').classList.remove('collapsed');
-      $('app').classList.remove('terminal-collapsed');
-      $('terminalToggle').textContent = 'Hide';
-    }
-    renderDetachedState();
-  }
-
   async function restartTerminal() {
     if (!state.workspace) return;
     await startTerminal();
@@ -795,8 +1122,20 @@
   async function refreshEnvironment() {
     if (!state.workspace) return;
     const data = await api('/api/environment');
-    $('envButton').textContent = data.is_venv ? `Python: ${basename(data.selected)}` : 'Python: system';
+    const environmentStatus = $('toolsEnvironmentStatus');
+    if (environmentStatus) environmentStatus.textContent = data.is_venv ? basename(data.selected) : 'system';
     $('envStatus').textContent = `${data.version}\nInterpreter: ${data.interpreter}\nEnvironment: ${data.selected || 'system'}`;
+  }
+
+  async function openEnvironmentDialog() {
+    try {
+      const data = await api('/api/environment');
+      await refreshEnvironment();
+      $('envPath').value = data.selected || '.venv';
+      $('envDialog').showModal();
+    } catch (error) {
+      toast(error.message, true);
+    }
   }
 
   async function changeEnvironment(action) {
@@ -826,12 +1165,10 @@
       body: JSON.stringify({path: tab.path, terminal_id: state.terminalId, args: []}),
     });
     state.terminalId = data.terminal_id;
-    if (state.terminalDetached) {
-      detachedWindow('terminal')?.focus();
+    if (isSurfaceDetached('terminal')) {
+      surfaceWindow('terminal')?.focus();
     } else {
-      $('terminalPanel').classList.remove('collapsed');
-      $('app').classList.remove('terminal-collapsed');
-      $('terminalToggle').textContent = 'Hide';
+      setPaneCollapsed('terminal', false);
     }
     toast(`Running ${basename(tab.path)}`);
   }
@@ -2142,7 +2479,7 @@
     state.references.selected = null;
     await refreshReferenceStatus();
     await refreshFullTools();
-    if (isToolDetached('references')) refreshDetachedToolWindow('references');
+    if (isSurfaceDetached('references')) refreshDetachedSurface('references');
     else if (state.mode === 'references') loadToolFrame('references', true);
     toast(`Reference library: ${state.references.libraryRoot}`);
   }
@@ -2253,18 +2590,63 @@
   // ---------------------------------------------------------------------------
   // Event wiring
   // ---------------------------------------------------------------------------
-  document.querySelectorAll('.mode-button').forEach(button => {
-    button.addEventListener('click', () => setMode(button.dataset.mode).catch(error => toast(error.message, true)));
+  document.querySelectorAll('.mode-button[data-mode]').forEach(button => {
+    button.addEventListener('click', () => openWindowSurface(button.dataset.mode).catch(error => toast(error.message, true)));
+  });
+  document.querySelectorAll('[data-menu-toggle]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      toggleServiceMenu(button.dataset.menuToggle);
+    });
+  });
+  document.querySelectorAll('[data-service-action="open"]').forEach(button => {
+    button.addEventListener('click', () => openWindowSurface(button.dataset.serviceTool).catch(error => toast(error.message, true)));
   });
   document.querySelectorAll('[data-tool-reload]').forEach(button => {
-    button.addEventListener('click', () => loadToolFrame(button.dataset.toolReload, true));
+    button.addEventListener('click', () => reloadTool(button.dataset.toolReload).catch(error => toast(error.message, true)));
   });
   document.querySelectorAll('[data-tool-detach]').forEach(button => {
-    button.addEventListener('click', () => detachTool(button.dataset.toolDetach).catch(error => toast(error.message, true)));
+    button.addEventListener('click', () => {
+      closeServiceMenus();
+      detachSurface(button.dataset.toolDetach).catch(error => toast(error.message, true));
+    });
   });
-  $('openFullAnalysis').onclick = () => setMode('analysis').catch(error => toast(error.message, true));
-  $('openFullDocuments').onclick = () => setMode('documents').catch(error => toast(error.message, true));
-  $('openFullReferences').onclick = () => setMode('references').catch(error => toast(error.message, true));
+  document.querySelectorAll('[data-pane-target]').forEach(button => {
+    button.addEventListener('click', () => {
+      const pane = button.dataset.paneTarget;
+      closeServiceMenus();
+      if (pane === 'terminal' && isSurfaceDetached('terminal')) {
+        surfaceWindow('terminal')?.focus();
+        return;
+      }
+      togglePane(pane);
+    });
+  });
+  document.addEventListener('click', event => {
+    if (!event.target.closest('.mode-launcher')) closeServiceMenus();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') closeServiceMenus();
+    if (!(event.ctrlKey && event.altKey) || event.metaKey) return;
+
+    if (event.code === 'KeyP') {
+      event.preventDefault();
+      togglePane('project');
+    } else if (event.code === 'KeyO') {
+      event.preventDefault();
+      togglePane('context');
+    } else if (event.code === 'KeyK') {
+      event.preventDefault();
+      if (isSurfaceDetached('terminal')) surfaceWindow('terminal')?.focus();
+      else togglePane('terminal');
+    } else if (event.code === 'KeyE') {
+      event.preventDefault();
+      focusWorkspaceEditor().catch(error => toast(error.message, true));
+    }
+  });
+  $('openFullAnalysis').onclick = () => openWindowSurface('analysis').catch(error => toast(error.message, true));
+  $('openFullDocuments').onclick = () => openWindowSurface('documents').catch(error => toast(error.message, true));
+  $('openFullReferences').onclick = () => openWindowSurface('references').catch(error => toast(error.message, true));
 
   $('openWorkspace').onclick = () => openWorkspace($('workspacePath').value).catch(error => toast(error.message, true));
   $('workspacePath').addEventListener('keydown', event => { if (event.key === 'Enter') $('openWorkspace').click(); });
@@ -2293,23 +2675,29 @@
   $('terminalInterrupt').onclick = () => terminalSend('\x03').catch(error => toast(error.message, true));
   $('terminalClear').onclick = () => setText('terminalOutput', '');
   $('terminalRestart').onclick = () => restartTerminal().catch(error => toast(error.message, true));
-  $('terminalDetach').onclick = () => detachTerminal().catch(error => toast(error.message, true));
-  $('terminalToggle').onclick = () => {
-    const panel = $('terminalPanel');
-    const app = $('app');
-    panel.classList.toggle('collapsed');
-    app.classList.toggle('terminal-collapsed', panel.classList.contains('collapsed'));
-    $('terminalToggle').textContent = panel.classList.contains('collapsed') ? 'Show' : 'Hide';
-  };
+  $('terminalDetach').onclick = () => detachSurface('terminal').catch(error => toast(error.message, true));
+  $('projectPaneToggle').onclick = () => togglePane('project');
+  $('contextPaneToggle').onclick = () => togglePane('context');
+  $('terminalToggle').onclick = () => togglePane('terminal');
+  document.querySelectorAll('[data-resize-pane]').forEach(handle => {
+    handle.addEventListener('pointerdown', event => beginPaneResize(handle.dataset.resizePane, event));
+    handle.addEventListener('dblclick', () => {
+      const name = handle.dataset.resizePane;
+      const config = layoutSizeConfig[name];
+      if (!config) return;
+      setLayoutPaneSize(name, layoutDefaults[config.stateKey], {persist: true});
+    });
+  });
 
-  $('envButton').onclick = async () => {
-    try {
-      const data = await api('/api/environment');
-      await refreshEnvironment();
-      $('envPath').value = data.selected || '.venv';
-      $('envDialog').showModal();
-    } catch (error) { toast(error.message, true); }
+  $('toolsEnvironment').onclick = () => {
+    closeServiceMenus();
+    openEnvironmentDialog();
   };
+  $('toolsTerminalWindow').onclick = () => {
+    closeServiceMenus();
+    detachSurface('terminal').catch(error => toast(error.message, true));
+  };
+  $('toolsResetLayout').onclick = resetWorkspaceLayout;
   $('createEnv').onclick = () => changeEnvironment('create');
   $('selectEnv').onclick = () => changeEnvironment('select');
   $('systemEnv').onclick = () => changeEnvironment('system');
@@ -2377,7 +2765,7 @@
   });
   window.addEventListener('unload', () => {
     for (const key of ['analysis', 'documents', 'references', 'terminal']) {
-      const popup = detachedWindow(key);
+      const popup = surfaceWindow(key);
       if (popup) popup.close();
     }
   });
@@ -2385,5 +2773,16 @@
   resetAnalyzerView();
   resetDocumentsView();
   resetReferencesView();
-  loadWorkspaceInfo().catch(error => toast(error.message, true));
+  loadLayoutPreferences();
+  renderWorkspacePanes();
+  applyLayoutSizes();
+  window.addEventListener('resize', applyLayoutSizes);
+  (async () => {
+    try {
+      await loadWorkspaceInfo();
+      await restoreLastMode();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  })();
 })();

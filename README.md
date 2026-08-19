@@ -1,5 +1,11 @@
 # PAH — Project Assistant Host
 
+## PAH 0.8 — Flexible Workspace Sprint 1
+
+PAH 0.8 begins the flexible-workspace series by making every auxiliary pane in the native Workspace collapsible without destroying its state. The project tree and Project Tools context panel now collapse to narrow restore rails, while the terminal uses the same generic pane-state contract as those side panes. The editor automatically expands into reclaimed space.
+
+This sprint deliberately does **not** add Git, Overleaf, new services, layout persistence, or a new launcher. Existing Analysis/Documents/References detachment and terminal PTY behavior remain unchanged.
+
 PAH is a local workspace for working with Python software projects, technical documentation, and research references from one interface.
 
 ## PAH 0.7.1 — visual identity
@@ -651,3 +657,27 @@ The artifacts remain ordinary files.
 
 PAH provides the layer connecting them.
 
+
+## PAH 0.8.1 — compact service launcher
+
+PAH 0.8.1 reduces always-visible controls without removing functionality. Analysis, Documents, and References remain direct top-level work modes, but their alternate actions now live in compact dropdown launchers. The **Tools** menu provides on-demand access to Project Tree, Project Tools, Terminal, a detachable Terminal Window, and Python Environment controls.
+
+This release does not add new services or persistence. It builds on the Sprint 1 pane contract so opening/collapsing tools changes presentation only; existing editor state, module state, and the terminal PTY remain intact.
+
+
+## PAH 0.8.2 — generic dock/detach window controller
+
+PAH 0.8.2 consolidates detachable-window lifecycle management behind one host-side controller. Analysis, Documents, References, and Terminal register as window surfaces with shared open/focus/detach/reattach/window-close behavior. Hosted module surfaces use the existing loopback iframe adapter; Terminal uses a PTY adapter that transfers polling without creating another shell.
+
+The controller exposes presentation state as `closed`, `docked`, `collapsed`, or `detached` where applicable. This sprint does not add a new service or persist layout. It removes duplicated detach state so later Git, Research Search, preview, and other detachable services can plug into the same lifecycle rather than implementing their own popup/watch/reattach code.
+
+
+## PAH 0.8.3 — persistent, resizable workspace layout
+
+PAH 0.8.3 completes the first flexible-workspace milestone by persisting presentation preferences locally in the browser. Project Tree, Project Tools, and Terminal collapse state now survives reloads, along with user-adjusted pane widths/heights and the last active PAH work mode. These preferences are UI-only and are never written into the opened research/code repository.
+
+Pane edges now expose narrow drag handles while expanded. Drag the Project Tree or Project Tools edge to resize horizontally and the Terminal top edge to resize vertically; double-clicking a resize edge restores that pane's default size. `Tools ▾ → Reset Workspace Layout` restores all three panes and default dimensions.
+
+Keyboard conveniences are deliberately small in scope: `Ctrl+Alt+P` toggles Project Tree, `Ctrl+Alt+O` toggles Project Tools, `Ctrl+Alt+K` toggles/focuses Terminal, and `Ctrl+Alt+E` returns focus to the Workspace editor.
+
+Detached windows are intentionally not auto-created on startup. Browser popup/window-position restrictions vary, so PAH restores safe docked layout state and the last normal work mode without making startup depend on detached-window restoration.

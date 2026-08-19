@@ -13,11 +13,51 @@
 <div id="app">
   <header class="topbar">
     <div class="brand">PAH <span>Project Assistant Host</span></div>
-    <nav class="mode-nav" aria-label="PAH work modes">
+    <nav class="mode-nav" aria-label="PAH work modes and services">
       <button class="mode-button active" data-mode="workspace">Workspace</button>
-      <button class="mode-button" data-mode="analysis">Analysis</button>
-      <button class="mode-button" data-mode="documents">Documents</button>
-      <button class="mode-button" data-mode="references">References</button>
+
+      <div class="mode-launcher" data-tool-launcher="analysis">
+        <button class="mode-button" data-mode="analysis">Analysis</button>
+        <button class="mode-menu-toggle" type="button" data-menu-toggle="analysisMenu" aria-controls="analysisMenu" aria-expanded="false" aria-haspopup="menu" title="Analysis options">▾</button>
+        <div id="analysisMenu" class="service-menu hidden" role="menu">
+          <button type="button" data-service-tool="analysis" data-service-action="open">Open Analysis</button>
+          <button type="button" data-tool-detach="analysis">Open in New Window</button>
+          <button type="button" data-tool-reload="analysis">Reload</button>
+        </div>
+      </div>
+
+      <div class="mode-launcher" data-tool-launcher="documents">
+        <button class="mode-button" data-mode="documents">Documents</button>
+        <button class="mode-menu-toggle" type="button" data-menu-toggle="documentsMenu" aria-controls="documentsMenu" aria-expanded="false" aria-haspopup="menu" title="Document options">▾</button>
+        <div id="documentsMenu" class="service-menu hidden" role="menu">
+          <button type="button" data-service-tool="documents" data-service-action="open">Open Documents</button>
+          <button type="button" data-tool-detach="documents">Open in New Window</button>
+          <button type="button" data-tool-reload="documents">Reload</button>
+        </div>
+      </div>
+
+      <div class="mode-launcher" data-tool-launcher="references">
+        <button class="mode-button" data-mode="references">References</button>
+        <button class="mode-menu-toggle" type="button" data-menu-toggle="referencesMenu" aria-controls="referencesMenu" aria-expanded="false" aria-haspopup="menu" title="Reference options">▾</button>
+        <div id="referencesMenu" class="service-menu hidden" role="menu">
+          <button type="button" data-service-tool="references" data-service-action="open">Open References</button>
+          <button type="button" data-tool-detach="references">Open in New Window</button>
+          <button type="button" data-tool-reload="references">Reload</button>
+        </div>
+      </div>
+
+      <div class="mode-launcher tools-launcher">
+        <button id="toolsMenuToggle" class="mode-button tools-menu-button" type="button" data-menu-toggle="toolsMenu" aria-controls="toolsMenu" aria-expanded="false" aria-haspopup="menu">Tools ▾</button>
+        <div id="toolsMenu" class="service-menu tools-menu hidden" role="menu">
+          <button type="button" data-pane-target="project" title="Toggle project tree (Ctrl+Alt+P)"><span>Project Tree</span><span class="service-menu-meta" data-pane-indicator="project">Shown</span></button>
+          <button type="button" data-pane-target="context" title="Toggle project tools (Ctrl+Alt+O)"><span>Project Tools</span><span class="service-menu-meta" data-pane-indicator="context">Shown</span></button>
+          <button type="button" data-pane-target="terminal" title="Toggle terminal (Ctrl+Alt+K)"><span>Terminal</span><span class="service-menu-meta" data-pane-indicator="terminal">Shown</span></button>
+          <button id="toolsTerminalWindow" type="button"><span>Terminal Window</span><span class="service-menu-meta">Open</span></button>
+          <div class="service-menu-separator" role="separator"></div>
+          <button id="toolsEnvironment" type="button"><span>Python Environment</span><span id="toolsEnvironmentStatus" class="service-menu-meta">system</span></button>
+          <button id="toolsResetLayout" type="button" title="Restore default pane visibility and sizes"><span>Reset Workspace Layout</span><span class="service-menu-meta">Default</span></button>
+        </div>
+      </div>
     </nav>
     <div class="workspace-bar">
       <input id="workspacePath" type="text" placeholder="/path/to/project" spellcheck="false">
@@ -25,18 +65,21 @@
       <select id="recentWorkspaces" title="Recent workspaces"><option value="">Recent…</option></select>
     </div>
     <div class="top-actions">
-      <button id="envButton" title="Python environment">Python</button>
       <button id="runButton" disabled title="Run active Python file">▶ Run</button>
       <button id="saveButton" disabled title="Save (Ctrl+S)">Save</button>
     </div>
   </header>
 
   <main id="workspaceMode" class="workspace-layout mode-surface">
-    <aside class="sidebar">
+    <aside id="projectPane" class="sidebar" data-pane="project">
       <div class="panel-heading">
         <span>PROJECT</span>
-        <button id="refreshTree" title="Refresh">↻</button>
+        <div class="pane-heading-actions">
+          <button id="refreshTree" title="Refresh">↻</button>
+          <button id="projectPaneToggle" class="pane-toggle" type="button" aria-controls="projectPane" aria-expanded="true" title="Collapse project tree">‹</button>
+        </div>
       </div>
+      <div id="projectPaneResize" class="pane-resize-handle pane-resize-vertical pane-resize-right" data-resize-pane="project" role="separator" aria-orientation="vertical" title="Resize project tree"></div>
       <div class="fs-actions">
         <button id="newFile" title="New file">+File</button>
         <button id="newFolder" title="New folder">+Folder</button>
@@ -63,7 +106,8 @@
       </div>
     </section>
 
-    <aside class="analysis-panel">
+    <aside id="contextPane" class="analysis-panel" data-pane="context">
+      <div id="contextPaneResize" class="pane-resize-handle pane-resize-vertical pane-resize-left" data-resize-pane="context" role="separator" aria-orientation="vertical" title="Resize project tools"></div>
       <div class="analysis-heading">
         <div>
           <span>PROJECT TOOLS</span>
@@ -71,7 +115,7 @@
           <span id="documentBadge" class="badge muted">docs</span>
           <span id="referenceBadge" class="badge muted">refs</span>
         </div>
-        <div class="analysis-heading-actions"><button id="openFullAnalysis">Full</button><button id="analyzeButton" disabled>Analyze</button></div>
+        <div class="analysis-heading-actions"><button id="openFullAnalysis">Full</button><button id="analyzeButton" disabled>Analyze</button><button id="contextPaneToggle" class="pane-toggle" type="button" aria-controls="contextPane" aria-expanded="true" title="Collapse project tools">›</button></div>
       </div>
       <div class="analysis-tabs">
         <button class="analysis-tab active" data-analysis-tab="context">Code</button>
@@ -271,21 +315,22 @@
   </main>
 
   <section id="analysisMode" class="full-tool-view mode-surface hidden" data-tool="analysis">
-    <div class="full-tool-status"><strong>Full Analysis</strong><span id="analysisToolStatus">Preparing analyzer…</span><button data-tool-detach="analysis">Detach</button><button class="toolReload" data-tool-reload="analysis">Reload</button></div>
+    <div class="full-tool-status"><strong>Full Analysis</strong><span id="analysisToolStatus">Preparing analyzer…</span></div>
     <iframe id="analysisToolFrame" title="Full Code Analysis" referrerpolicy="no-referrer"></iframe>
   </section>
 
   <section id="documentsMode" class="full-tool-view mode-surface hidden" data-tool="documents">
-    <div class="full-tool-status"><strong>Document Workbench</strong><span id="documentsToolStatus">Preparing document workspace…</span><button data-tool-detach="documents">Detach</button><button class="toolReload" data-tool-reload="documents">Reload</button></div>
+    <div class="full-tool-status"><strong>Document Workbench</strong><span id="documentsToolStatus">Preparing document workspace…</span></div>
     <iframe id="documentsToolFrame" title="Full Document Workbench" referrerpolicy="no-referrer"></iframe>
   </section>
 
   <section id="referencesMode" class="full-tool-view mode-surface hidden" data-tool="references">
-    <div class="full-tool-status"><strong>Reference Manager</strong><span id="referencesToolStatus">Preparing reference manager…</span><button data-tool-detach="references">Detach</button><button class="toolReload" data-tool-reload="references">Reload</button></div>
+    <div class="full-tool-status"><strong>Reference Manager</strong><span id="referencesToolStatus">Preparing reference manager…</span></div>
     <iframe id="referencesToolFrame" title="Full Reference Manager" referrerpolicy="no-referrer"></iframe>
   </section>
 
-  <section id="terminalPanel" class="terminal-panel">
+  <section id="terminalPanel" class="terminal-panel" data-pane="terminal">
+    <div id="terminalPaneResize" class="pane-resize-handle pane-resize-horizontal pane-resize-top" data-resize-pane="terminal" role="separator" aria-orientation="horizontal" title="Resize terminal"></div>
     <div class="terminal-heading">
       <span>TERMINAL</span>
       <div>

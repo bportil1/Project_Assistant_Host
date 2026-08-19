@@ -396,3 +396,65 @@ dialog::backdrop {
   border-color: #d98989;
   background: #702f2f;
 }
+
+/* ----- PAH 0.8 Sprint 2 compact launchers ----------------------------- */
+.mode-launcher {
+  border-left: 1px solid rgb(255 255 255 / 0.035);
+}
+.mode-launcher > .mode-button {
+  border-left: 0;
+}
+.mode-menu-toggle {
+  min-height: 100%;
+  color: rgb(255 255 255 / 0.68);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  border-left: 1px solid rgb(255 255 255 / 0.08);
+  box-shadow: none;
+}
+.mode-menu-toggle:hover,
+.mode-menu-toggle.menu-open {
+  color: #fff;
+  background: rgb(255 255 255 / 0.09);
+}
+.tools-menu-button.menu-open {
+  color: #fff;
+  background: rgb(255 255 255 / 0.09);
+}
+.service-menu {
+  background: #f2f7fa;
+  border: 1px solid var(--pah-border-strong);
+  border-top: 3px solid var(--pah-sky-500);
+  border-radius: 0 0 var(--pah-radius-sm) var(--pah-radius-sm);
+  box-shadow: 0 7px 18px rgb(15 43 63 / 0.24);
+}
+.service-menu button {
+  min-height: 27px;
+  padding: 4px 7px;
+  color: var(--pah-text);
+  background: transparent;
+  border: 0;
+  border-radius: 1px;
+  box-shadow: none;
+  font-size: 10px;
+  font-weight: 650;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.service-menu button:hover:not(:disabled) {
+  color: var(--pah-navy-950);
+  background: #dcecf4;
+}
+.service-menu button:disabled {
+  color: #8d9ba4;
+  background: transparent;
+  opacity: .7;
+  cursor: default;
+}
+.service-menu-meta {
+  color: #657985;
+  text-transform: uppercase;
+  letter-spacing: .045em;
+}
+.service-menu-separator { background: #c4d3dc; }

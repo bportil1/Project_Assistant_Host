@@ -183,3 +183,48 @@
 .terminal-panel.detached .terminal-heading > span::after {
   color: #c2e8c7;
 }
+
+
+/* ----- PAH 0.8 flexible pane rails ----------------------------------- */
+.sidebar.collapsed,
+.analysis-panel.collapsed {
+  background: var(--pah-navy-950);
+  border-color: var(--pah-navy-900);
+  box-shadow: none;
+}
+.sidebar.collapsed .panel-heading,
+.analysis-panel.collapsed .analysis-heading {
+  background: var(--pah-navy-950);
+  border-bottom: 0;
+}
+.sidebar.collapsed .pane-toggle,
+.analysis-panel.collapsed .pane-toggle {
+  width: 26px;
+  min-width: 26px;
+  height: 28px;
+  padding: 0;
+  color: #e8f4fa;
+  background: var(--pah-navy-800);
+  border-color: #355b74;
+}
+.sidebar.collapsed .pane-toggle:hover,
+.analysis-panel.collapsed .pane-toggle:hover {
+  background: var(--pah-blue-700);
+  color: #fff;
+}
+.pane-toggle {
+  font-weight: 800;
+  line-height: 1;
+}
+
+
+/* ----- PAH 0.8.3 persisted layout resize affordances ----------------- */
+.pane-resize-handle::after {
+  background: var(--pah-sky-300);
+}
+.sidebar:hover > .pane-resize-handle::after,
+.analysis-panel:hover > .pane-resize-handle::after,
+.terminal-panel:hover > .pane-resize-handle::after,
+.pane-resize-handle:hover::after {
+  opacity: .8;
+}
