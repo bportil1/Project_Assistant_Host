@@ -191,3 +191,48 @@ def test_git_rejects_unknown_local_branch_empty_commit_and_bad_remote_inputs(tmp
         service.add_remote("bad remote", "example")
     with pytest.raises(GitError, match="cannot begin"):
         service.add_remote("origin", "--upload-pack=oops")
+
+
+def test_remote_comparison_is_local_and_reports_cached_relation(tmp_path: Path):
+    remote = make_bare_remote(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    service = LocalGitService(project)
+    service.init()
+    configure_identity(project)
+    (project / "paper.tex").write_text("one\n", encoding="utf-8")
+    service.stage(["paper.tex"])
+    service.commit("Initial")
+    service.add_remote("overleaf", str(remote))
+
+    before = service.remote_comparison("overleaf")
+    assert before["state"] == "not_fetched"
+
+    service.set_connectivity("manual_remote")
+    service.push("overleaf", set_upstream=True)
+    service.fetch("overleaf")
+    current = service.remote_comparison("overleaf")
+    assert current["state"] == "up_to_date"
+    assert current["ahead"] == 0
+    assert current["behind"] == 0
+
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", str(remote), str(other)], text=True, capture_output=True, check=True)
+    configure_identity(other)
+    (other / "paper.tex").write_text("two\n", encoding="utf-8")
+    git(other, "add", "paper.tex")
+    git(other, "commit", "-m", "Remote edit")
+    git(other, "push")
+
+    service.fetch("overleaf")
+    behind = service.remote_comparison("overleaf")
+    assert behind["state"] == "behind"
+    assert behind["behind"] == 1
+
+
+def test_conflict_path_detection_recognizes_unmerged_statuses():
+    changes = [
+        {"path": "paper.tex", "status": "UU", "index_status": "U", "worktree_status": "U"},
+        {"path": "notes.txt", "status": " M", "index_status": " ", "worktree_status": "M"},
+    ]
+    assert LocalGitService._conflict_paths(changes) == ["paper.tex"]

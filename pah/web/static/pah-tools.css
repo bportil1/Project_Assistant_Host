@@ -443,3 +443,83 @@ button.result-row:hover,
   .overleaf-import-grid { grid-template-columns: 1fr; }
   .overleaf-summary { grid-template-columns: 1fr 1fr; }
 }
+
+/* PAH 0.8.8 Sprint 9: explicit Overleaf sync remains a transient Documents service. */
+.overleaf-sync-card { width: min(980px, calc(100vw - 40px)); }
+.overleaf-sync-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 7px;
+  padding: 8px;
+  background: #e7f0f5;
+  border-bottom: 1px solid var(--pah-border, #bfd0d9);
+}
+.overleaf-sync-toolbar label {
+  display: grid;
+  gap: 3px;
+  min-width: 210px;
+  color: var(--pah-muted, #657985);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+}
+.overleaf-sync-toolbar select { min-width: 210px; }
+.overleaf-sync-status,
+.overleaf-sync-bib {
+  margin: 8px;
+  border: 1px solid var(--pah-border, #bfd0d9);
+  background: #fff;
+}
+.overleaf-sync-status .overleaf-result-heading,
+.overleaf-sync-bib .overleaf-result-heading { margin: 0; }
+.overleaf-sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--pah-border, #bfd0d9);
+}
+.overleaf-sync-warning {
+  margin: 8px;
+  padding: 7px 8px;
+  color: #7c2d12;
+  background: #fff4e8;
+  border: 1px solid #e6b888;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.overleaf-sync-warning.hidden { display: none; }
+.overleaf-sync-note {
+  margin: 0;
+  padding: 0 8px 8px;
+  color: var(--pah-muted, #657985);
+  font-size: 9px;
+  line-height: 1.45;
+}
+.overleaf-bib-list { display: grid; }
+.overleaf-bib-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #d8e4ea;
+}
+.overleaf-bib-row:nth-child(even) { background: #edf6fb; }
+.overleaf-bib-row:last-child { border-bottom: 0; }
+.overleaf-bib-row code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pah-navy-900, #12344b);
+  background: transparent;
+}
+.overleaf-bib-actions { display: flex; gap: 5px; }
+.overleaf-bib-empty { padding: 10px; color: var(--pah-muted, #657985); font-size: 10px; }
+@media (max-width: 760px) {
+  .overleaf-sync-toolbar { align-items: stretch; flex-direction: column; }
+  .overleaf-sync-toolbar label,
+  .overleaf-sync-toolbar select { width: 100%; min-width: 0; }
+}

@@ -146,6 +146,8 @@ class LocalGitService:
             "head": None,
             "has_commits": False,
             "changes": [],
+            "conflict_paths": [],
+            "has_conflicts": False,
             "staged_count": 0,
             "unstaged_count": 0,
             "untracked_count": 0,
@@ -175,6 +177,8 @@ class LocalGitService:
                 "head": head,
                 "has_commits": has_commits,
                 "changes": changes,
+                "conflict_paths": self._conflict_paths(changes),
+                "has_conflicts": bool(self._conflict_paths(changes)),
                 "staged_count": sum(1 for item in changes if item["staged"]),
                 "unstaged_count": sum(1 for item in changes if item["unstaged"]),
                 "untracked_count": sum(1 for item in changes if item["untracked"]),
@@ -216,6 +220,17 @@ class LocalGitService:
                 }
             )
         return output
+
+    @staticmethod
+    def _conflict_paths(changes: list[dict]) -> list[str]:
+        conflict_codes = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
+        return [
+            str(item.get("path"))
+            for item in changes
+            if str(item.get("status") or "") in conflict_codes
+            or str(item.get("index_status") or "") == "U"
+            or str(item.get("worktree_status") or "") == "U"
+        ]
 
     def init(self) -> dict:
         root = self._require_workspace()
@@ -378,6 +393,51 @@ class LocalGitService:
             "remote_branch": remote_branch,
             "ahead": ahead,
             "behind": behind,
+        }
+
+    def remote_comparison(self, remote: str, *, branch: str | None = None) -> dict:
+        """Compare HEAD with a cached remote-tracking ref without network access."""
+        repo_root = self._require_repo()
+        selected = self._resolve_remote(remote, repo_root=repo_root)
+        status = self.status()
+        local_branch = str(branch or status.get("branch") or "").strip()
+        if not local_branch:
+            return {
+                "remote": selected, "branch": None, "remote_branch": None,
+                "remote_ref": None, "available": False, "state": "detached",
+                "ahead": None, "behind": None,
+            }
+        tracking = self.tracking(repo_root=repo_root)
+        remote_branch = (
+            str(tracking.get("remote_branch"))
+            if tracking and tracking.get("remote") == selected and tracking.get("remote_branch")
+            else local_branch
+        )
+        remote_ref = f"refs/remotes/{selected}/{remote_branch}"
+        exists = self._run(["show-ref", "--verify", "--quiet", remote_ref], check=False, cwd=repo_root).returncode == 0
+        if not exists:
+            return {
+                "remote": selected, "branch": local_branch, "remote_branch": remote_branch,
+                "remote_ref": remote_ref, "available": False, "state": "not_fetched",
+                "ahead": None, "behind": None,
+            }
+        counts = self._run(["rev-list", "--left-right", "--count", f"HEAD...{remote_ref}"], cwd=repo_root)
+        ahead, behind = 0, 0
+        parts = counts.stdout.strip().split()
+        if len(parts) == 2:
+            ahead, behind = int(parts[0]), int(parts[1])
+        if ahead == 0 and behind == 0:
+            relation = "up_to_date"
+        elif ahead > 0 and behind == 0:
+            relation = "ahead"
+        elif ahead == 0 and behind > 0:
+            relation = "behind"
+        else:
+            relation = "diverged"
+        return {
+            "remote": selected, "branch": local_branch, "remote_branch": remote_branch,
+            "remote_ref": remote_ref, "available": True, "state": relation,
+            "ahead": ahead, "behind": behind,
         }
 
     def _resolve_remote(self, name: str | None = None, *, repo_root: Path | None = None) -> str:

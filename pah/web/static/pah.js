@@ -40,7 +40,7 @@
     },
     mode: 'workspace',
     git: {git_available: false, workspace: null, is_repository: false, repository_root: null, branch: null, detached: false, head: null, changes: [], staged_count: 0, unstaged_count: 0, untracked_count: 0, submodules: [], remotes: [], tracking: null, connectivity_mode: 'local_only', local_only: true, remote_enabled: false},
-    overleaf: {lastImport: null},
+    overleaf: {lastImport: null, sync: null},
     fullTools: {
       analysis: {available: false, url: null, error: null},
       documents: {available: false, url: null, error: null},
@@ -887,7 +887,7 @@
 
   async function enableOverleafManualRemote() {
     if (state.git?.remote_enabled) return;
-    const ok = window.confirm('Enable Manual Remote Git for this PAH session? This permits the Overleaf Git clone only when you explicitly click Clone Project. Credentials remain with Git/your credential helper.');
+    const ok = window.confirm('Enable Manual Remote Git for this PAH session? This permits Overleaf Git clone/sync only when you explicitly click a remote action. Credentials remain with Git/your credential helper.');
     if (!ok) return;
     const data = await api('/api/git/connectivity', {method: 'POST', body: JSON.stringify({mode: 'manual_remote'})});
     state.git = {...state.git, ...data};
@@ -985,6 +985,189 @@
     toast('Imported project opened in PAH.');
   }
 
+  function overleafRelationLabel(comparison) {
+    const stateName = comparison?.state || 'unknown';
+    if (stateName === 'up_to_date') return 'Up to date';
+    if (stateName === 'ahead') return `Ahead by ${comparison.ahead ?? '?'}`;
+    if (stateName === 'behind') return `Behind by ${comparison.behind ?? '?'}`;
+    if (stateName === 'diverged') return `Diverged · ↑${comparison.ahead ?? '?'} ↓${comparison.behind ?? '?'}`;
+    if (stateName === 'not_fetched') return 'Remote ref not fetched';
+    if (stateName === 'detached') return 'Detached HEAD';
+    return 'Unknown';
+  }
+
+  function renderOverleafSync(data) {
+    state.overleaf.sync = data;
+    if (data.git) state.git = data.git;
+    renderGitLauncher();
+
+    const select = $('overleafSyncRemote');
+    const previous = data.selected_remote || select?.value || '';
+    if (select) {
+      select.replaceChildren();
+      const remotes = data.overleaf_remotes || [];
+      if (!remotes.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No recognized Overleaf remote';
+        select.appendChild(option);
+      } else {
+        if (!previous && remotes.length > 1) {
+          const placeholder = document.createElement('option');
+          placeholder.value = '';
+          placeholder.textContent = 'Choose an Overleaf remote…';
+          select.appendChild(placeholder);
+        }
+        for (const remote of remotes) {
+          const option = document.createElement('option');
+          option.value = remote.name;
+          option.textContent = `${remote.name} — ${remote.fetch_url || remote.push_url || 'configured remote'}`;
+          option.selected = remote.name === previous;
+          select.appendChild(option);
+        }
+        if (!select.value && remotes.length === 1) select.value = remotes[0].name;
+      }
+    }
+
+    const remoteEnabled = Boolean(data.git?.remote_enabled);
+    const connection = $('overleafSyncConnectivity');
+    if (connection) {
+      connection.textContent = data.git?.git_available === false ? 'GIT UNAVAILABLE' : (remoteEnabled ? 'MANUAL REMOTE' : 'LOCAL ONLY');
+      connection.classList.toggle('remote', remoteEnabled);
+    }
+    const enable = $('overleafSyncEnableRemote');
+    if (enable) {
+      enable.disabled = data.git?.git_available === false || remoteEnabled;
+      enable.textContent = remoteEnabled ? 'Manual Remote Enabled' : 'Enable Manual Remote';
+    }
+
+    const holder = $('overleafSyncSummary');
+    holder?.replaceChildren();
+    const comparison = data.comparison || null;
+    appendOverleafSummaryCell(holder, 'Branch', data.git?.branch || '—');
+    appendOverleafSummaryCell(holder, 'Overleaf remote', data.selected_remote || 'Not selected');
+    appendOverleafSummaryCell(holder, 'Remote relation', overleafRelationLabel(comparison));
+    appendOverleafSummaryCell(holder, 'Ahead / behind', comparison?.available ? `↑${comparison.ahead ?? '?'} / ↓${comparison.behind ?? '?'}` : '—');
+    appendOverleafSummaryCell(holder, 'Likely main document', data.project?.likely_main || 'Not detected', {wide: true, code: true});
+    appendOverleafSummaryCell(holder, 'Unresolved conflicts', (data.git?.conflict_paths || []).length, {wide: false});
+
+    const freshness = $('overleafSyncFreshness');
+    const lastFetch = data.sync_events?.last_fetch_at || null;
+    if (freshness) freshness.textContent = data.comparison_fresh && lastFetch ? `Fetched ${lastFetch}` : 'Cached · Fetch to verify remote state';
+
+    const warnings = [];
+    if (!data.git?.is_repository) warnings.push('The current workspace is not a Git repository. Overleaf Git synchronization is unavailable; ZIP-imported projects can remain local.');
+    if (data.git?.is_repository && !(data.overleaf_remotes || []).length) warnings.push('No recognized Overleaf remote was found. Use a remote named “overleaf” or an Overleaf Git URL, configurable under Tools → Git.');
+    if ((data.git?.conflict_paths || []).length) warnings.push(`Resolve Git conflicts before synchronization: ${data.git.conflict_paths.join(', ')}`);
+    if ((data.git?.changes || []).length) warnings.push('The working tree has local changes. Pull is blocked until those disk changes are committed or otherwise cleaned.');
+    if (state.tabs.some(tab => tab.dirty)) warnings.push('PAH has unsaved editor buffers. Save or close them before Pull.');
+    if (comparison?.state === 'behind' || comparison?.state === 'diverged') warnings.push('Push is blocked while the cached Overleaf state is behind/diverged. Fetch/Pull and resolve remote changes first.');
+    const warning = $('overleafSyncWarning');
+    if (warning) {
+      warning.textContent = warnings.join(' ');
+      warning.classList.toggle('hidden', warnings.length === 0);
+    }
+
+    const hasRemote = Boolean(data.selected_remote);
+    const networkReady = remoteEnabled && hasRemote && data.git?.is_repository;
+    $('overleafSyncFetch').disabled = !networkReady;
+    $('overleafSyncPull').disabled = !networkReady || Boolean((data.git?.changes || []).length) || Boolean((data.git?.conflict_paths || []).length) || state.tabs.some(tab => tab.dirty);
+    $('overleafSyncPush').disabled = !networkReady || Boolean((data.git?.conflict_paths || []).length) || ['behind', 'diverged'].includes(comparison?.state);
+
+    const ref = data.references || {};
+    $('overleafBibReferenceStatus').textContent = ref.configured ? `Library: ${ref.library_root || 'configured'}` : 'Reference library not configured';
+    const bibList = $('overleafBibList');
+    bibList?.replaceChildren();
+    const bibs = data.project?.bib_files || [];
+    if (!bibs.length) {
+      const empty = document.createElement('div');
+      empty.className = 'overleaf-bib-empty';
+      empty.textContent = 'No .bib files detected in the current workspace.';
+      bibList?.appendChild(empty);
+    } else {
+      for (const path of bibs) {
+        const row = document.createElement('div');
+        row.className = 'overleaf-bib-row';
+        const code = document.createElement('code');
+        code.textContent = path;
+        code.title = path;
+        const actions = document.createElement('div');
+        actions.className = 'overleaf-bib-actions';
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.textContent = 'Open';
+        open.onclick = () => openOverleafBib(path).catch(error => toast(error.message, true));
+        const importButton = document.createElement('button');
+        importButton.type = 'button';
+        importButton.textContent = 'Import to References';
+        importButton.disabled = !ref.available || !ref.configured;
+        importButton.onclick = () => importOverleafBib(path).catch(error => toast(error.message, true));
+        actions.append(open, importButton);
+        row.append(code, actions);
+        bibList?.appendChild(row);
+      }
+    }
+
+    const menuMeta = $('overleafSyncMenuStatus');
+    if (menuMeta) menuMeta.textContent = hasRemote ? overleafRelationLabel(comparison) : 'No remote';
+  }
+
+  async function refreshOverleafSync(remote = null) {
+    const selected = remote || $('overleafSyncRemote')?.value || '';
+    const suffix = selected ? `?remote=${encodeURIComponent(selected)}` : '';
+    const data = await api(`/api/overleaf/status${suffix}`);
+    renderOverleafSync(data);
+    return data;
+  }
+
+  async function openOverleafSyncDialog() {
+    closeServiceMenus();
+    if (!state.workspace) return toast('Open a PAH workspace first.', true);
+    await refreshGitStatus();
+    $('overleafSyncDialog')?.showModal();
+    await refreshOverleafSync();
+  }
+
+  async function overleafSyncAction(action) {
+    const sync = state.overleaf.sync || {};
+    const remote = $('overleafSyncRemote')?.value || sync.selected_remote || '';
+    if (!remote) return toast('Choose a recognized Overleaf remote first.', true);
+    if (!state.git?.remote_enabled) return toast('Enable Manual Remote before contacting Overleaf.', true);
+    if (action === 'pull' && state.tabs.some(tab => tab.dirty)) return toast('Save or close unsaved PAH editor buffers before pulling.', true);
+    if (action === 'fetch' && !window.confirm(`Fetch from Overleaf remote “${remote}”?`)) return;
+    if (action === 'pull' && !window.confirm(`Pull from Overleaf remote “${remote}” using fast-forward only?`)) return;
+    if (action === 'push' && !window.confirm(`Push the current branch to Overleaf remote “${remote}”?`)) return;
+    try {
+      const data = await api(`/api/overleaf/${action}`, {method: 'POST', body: JSON.stringify({remote})});
+      renderOverleafSync(data);
+      if (action === 'pull') {
+        await refreshCleanTabsFromDisk();
+        await refreshTree();
+        await refreshAnalyzerStatus().catch(() => {});
+        await refreshDocumentStatus().catch(() => {});
+      }
+      toast(`Overleaf ${action} completed.`);
+    } catch (error) {
+      toast(error.message, true);
+      await refreshOverleafSync(remote).catch(() => {});
+    }
+  }
+
+  async function openOverleafBib(path) {
+    $('overleafSyncDialog')?.close();
+    await setMode('workspace');
+    await openFile(path);
+  }
+
+  async function importOverleafBib(path) {
+    if (!window.confirm(`Import BibTeX entries from ${path} into the currently selected Reference Manager library? The document .bib file itself will not be modified.`)) return;
+    const data = await api('/api/overleaf/bibtex/import', {method: 'POST', body: JSON.stringify({path})});
+    await refreshReferenceStatus().catch(() => {});
+    toast(`BibTeX import completed for ${path}.`);
+    await refreshOverleafSync($('overleafSyncRemote')?.value || null).catch(() => {});
+    return data;
+  }
+
   function loadToolFrame(tool, force = false) {
     if (isSurfaceDetached(tool)) return false;
     const info = state.fullTools[tool];
@@ -1058,6 +1241,8 @@
     const data = await api('/api/workspace');
     state.workspace = data.root;
     if (data.git) state.git = data.git;
+    state.overleaf.sync = null;
+    if ($('overleafSyncMenuStatus')) $('overleafSyncMenuStatus').textContent = 'Manual';
     $('workspacePath').value = data.root || '';
 
     const recent = $('recentWorkspaces');
@@ -3029,11 +3214,20 @@
   });
 
   $('documentsOverleafImport').onclick = () => openOverleafDialog().catch(error => toast(error.message, true));
+  $('documentsOverleafSync').onclick = () => openOverleafSyncDialog().catch(error => toast(error.message, true));
   $('overleafDialogClose').onclick = () => $('overleafDialog')?.close();
   $('overleafImportZip').onclick = () => importOverleafZip();
   $('overleafEnableRemote').onclick = () => enableOverleafManualRemote().catch(error => toast(error.message, true));
   $('overleafCloneGit').onclick = () => cloneOverleafGit();
   $('overleafOpenProject').onclick = () => openImportedOverleafProject().catch(error => toast(error.message, true));
+  $('overleafSyncClose').onclick = () => $('overleafSyncDialog')?.close();
+  $('overleafSyncEnableRemote').onclick = () => enableOverleafManualRemote().then(() => refreshOverleafSync($('overleafSyncRemote')?.value || null)).catch(error => toast(error.message, true));
+  $('overleafSyncRefresh').onclick = () => refreshOverleafSync($('overleafSyncRemote')?.value || null).catch(error => toast(error.message, true));
+  $('overleafSyncRemote').onchange = () => refreshOverleafSync($('overleafSyncRemote').value).catch(error => toast(error.message, true));
+  $('overleafSyncFetch').onclick = () => overleafSyncAction('fetch');
+  $('overleafSyncPull').onclick = () => overleafSyncAction('pull');
+  $('overleafSyncPush').onclick = () => overleafSyncAction('push');
+  $('overleafSyncOpenGit').onclick = () => openWindowSurface('git').catch(error => toast(error.message, true));
 
   $('toolsEnvironment').onclick = () => {
     closeServiceMenus();

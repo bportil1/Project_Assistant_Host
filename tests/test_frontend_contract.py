@@ -140,8 +140,8 @@ def test_pah08_collapsible_workspace_panes_are_generic_and_wired():
 def test_pah_current_version_is_reported():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
-    assert 'version = "0.8.7"' in pyproject
-    assert '"version": "0.8.7"' in app
+    assert 'version = "0.8.8"' in pyproject
+    assert '"version": "0.8.8"' in app
 
 
 def test_pah081_compact_service_launchers_are_wired():
@@ -409,3 +409,35 @@ def test_pah087_overleaf_import_is_documents_side_transient_and_local_first():
     assert "zipfile.ZipFile" in overleaf
     assert '"acquisition_mode": "zip"' in overleaf
     assert "git init" not in overleaf.lower()
+
+
+def test_pah088_overleaf_sync_is_transient_explicit_and_bib_handoff_is_opt_in():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
+    core = (ROOT / "pah" / "core" / "git.py").read_text(encoding="utf-8")
+    overleaf = (ROOT / "pah" / "integrations" / "overleaf.py").read_text(encoding="utf-8")
+
+    assert 'id="documentsOverleafSync"' in html
+    assert 'id="overleafSyncDialog"' in html
+    assert 'id="overleafSyncFetch"' in html
+    assert 'id="overleafSyncPull"' in html
+    assert 'id="overleafSyncPush"' in html
+    assert 'id="overleafBibList"' in html
+    assert 'data-mode="overleaf"' not in html
+    for function_name in ["openOverleafSyncDialog", "refreshOverleafSync", "overleafSyncAction", "importOverleafBib"]:
+        assert f"function {function_name}" in js or f"async function {function_name}" in js
+    for route in [
+        "/api/overleaf/status",
+        "/api/overleaf/fetch",
+        "/api/overleaf/pull",
+        "/api/overleaf/push",
+        "/api/overleaf/bibtex/import",
+    ]:
+        assert route in app
+    assert "def remote_comparison" in core
+    assert '"state": "not_fetched"' in core
+    assert "def recognized_remotes" in overleaf
+    assert "overleaf.com" in overleaf
+    assert "record_sync_event" in overleaf
+    assert "setInterval" not in js[js.find("function overleafRelationLabel"):js.find("function loadToolFrame")]

@@ -35,6 +35,7 @@
           <button type="button" data-tool-reload="documents">Reload</button>
           <div class="service-menu-separator" role="separator"></div>
           <button id="documentsOverleafImport" type="button"><span>Import Overleaf Project…</span><span class="service-menu-meta">ZIP / Git</span></button>
+          <button id="documentsOverleafSync" type="button"><span>Overleaf Sync…</span><span id="overleafSyncMenuStatus" class="service-menu-meta">Manual</span></button>
         </div>
       </div>
 
@@ -424,6 +425,46 @@
       <div class="overleaf-result-heading"><strong>Imported project</strong><span id="overleafImportMode" class="service-menu-meta"></span></div>
       <div id="overleafImportSummary" class="overleaf-summary"></div>
       <div class="dialog-actions compact"><button id="overleafOpenProject" type="button">Open Project in PAH</button></div>
+    </section>
+  </div>
+</dialog>
+
+<dialog id="overleafSyncDialog" class="overleaf-dialog">
+  <div class="overleaf-dialog-card overleaf-sync-card">
+    <div class="dialog-heading">
+      <div>
+        <h3>Overleaf Sync</h3>
+        <span class="small-muted">Explicit Git synchronization for the current PAH document project</span>
+      </div>
+      <button id="overleafSyncClose" type="button" class="plain">×</button>
+    </div>
+
+    <div class="overleaf-sync-toolbar">
+      <label>Overleaf remote
+        <select id="overleafSyncRemote"></select>
+      </label>
+      <span id="overleafSyncConnectivity" class="overleaf-remote-badge">LOCAL ONLY</span>
+      <button id="overleafSyncEnableRemote" type="button">Enable Manual Remote</button>
+      <button id="overleafSyncRefresh" type="button">Refresh Local Status</button>
+      <button id="overleafSyncOpenGit" type="button">Open Git</button>
+    </div>
+
+    <section class="overleaf-sync-status">
+      <div class="overleaf-result-heading"><strong>Synchronization status</strong><span id="overleafSyncFreshness" class="service-menu-meta">Fetch to verify remote state</span></div>
+      <div id="overleafSyncSummary" class="overleaf-summary"></div>
+      <div id="overleafSyncWarning" class="overleaf-sync-warning hidden"></div>
+      <div class="overleaf-sync-actions">
+        <button id="overleafSyncFetch" type="button">Fetch from Overleaf</button>
+        <button id="overleafSyncPull" type="button">Pull from Overleaf · FF only</button>
+        <button id="overleafSyncPush" type="button">Push to Overleaf</button>
+      </div>
+      <p class="overleaf-sync-note">PAH never synchronizes automatically. Comparison values use cached remote-tracking data and are marked fresh only after an explicit Fetch/Pull in this PAH session.</p>
+    </section>
+
+    <section class="overleaf-sync-bib">
+      <div class="overleaf-result-heading"><strong>Bibliography handoff</strong><span id="overleafBibReferenceStatus" class="service-menu-meta">References</span></div>
+      <div id="overleafBibList" class="overleaf-bib-list"></div>
+      <p class="overleaf-sync-note">BibTeX import is explicit. PAH never modifies the document bibliography merely because a .bib file is detected.</p>
     </section>
   </div>
 </dialog>

@@ -71,3 +71,18 @@ def test_overleaf_likely_main_prefers_document_entry_point(tmp_path: Path):
     (root / "thesis.tex").write_text(r"\documentclass{report}\begin{document}x\end{document}", encoding="utf-8")
     summary = service.inspect_project(root)
     assert summary["likely_main"] == "thesis.tex"
+
+
+def test_overleaf_remote_recognition_prefers_named_or_overleaf_urls():
+    service = OverleafImportService()
+    remotes = [
+        {"name": "origin", "fetch_url": "git@github.com:example/paper.git", "push_url": None},
+        {"name": "overleaf", "fetch_url": "/tmp/local-overleaf.git", "push_url": None},
+        {"name": "cloud", "fetch_url": "https://git.overleaf.com/project-id", "push_url": None},
+    ]
+    recognized = service.recognized_remotes(remotes)
+    assert [row["name"] for row in recognized] == ["overleaf", "cloud"]
+    assert service.select_remote(remotes) == "overleaf"
+    assert service.select_remote(remotes, "cloud") == "cloud"
+    with pytest.raises(OverleafImportError, match="not recognized"):
+        service.select_remote(remotes, "origin")

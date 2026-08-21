@@ -5,6 +5,7 @@ import shutil
 import stat
 import tempfile
 import zipfile
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
@@ -58,6 +59,51 @@ class OverleafImportService:
     _MAX_ARCHIVE_FILES = 20_000
     _MAX_UNCOMPRESSED_BYTES = 1_073_741_824  # 1 GiB safety ceiling.
     _MAX_TEX_INSPECTION_BYTES = 1_048_576
+
+    def __init__(self) -> None:
+        self._sync_events: dict[tuple[str, str], dict[str, str]] = {}
+
+    @staticmethod
+    def is_overleaf_remote(remote: dict) -> bool:
+        name = str(remote.get("name") or "").strip().lower()
+        urls = [str(remote.get("fetch_url") or ""), str(remote.get("push_url") or "")]
+        return name == "overleaf" or any("overleaf.com" in url.lower() for url in urls)
+
+    def recognized_remotes(self, remotes: list[dict]) -> list[dict]:
+        return [dict(remote) for remote in remotes if self.is_overleaf_remote(remote)]
+
+    def select_remote(self, remotes: list[dict], requested: str | None = None) -> str | None:
+        candidates = self.recognized_remotes(remotes)
+        known = {str(item.get("name")) for item in candidates}
+        requested_name = str(requested or "").strip()
+        if requested_name:
+            if requested_name not in known:
+                raise OverleafImportError(f"Git remote is not recognized as an Overleaf remote: {requested_name}")
+            return requested_name
+        if len(candidates) == 1:
+            return str(candidates[0].get("name"))
+        if "overleaf" in known:
+            return "overleaf"
+        return None
+
+    def record_sync_event(self, root: str | Path, remote: str, action: str) -> str:
+        key = (str(Path(root).resolve()), str(remote))
+        stamp = datetime.now(timezone.utc).isoformat()
+        row = self._sync_events.setdefault(key, {})
+        row[str(action)] = stamp
+        if action in {"fetch", "pull"}:
+            row["fetch"] = stamp
+        return stamp
+
+    def sync_events(self, root: str | Path, remote: str | None) -> dict[str, str | None]:
+        if not remote:
+            return {"last_fetch_at": None, "last_pull_at": None, "last_push_at": None}
+        row = self._sync_events.get((str(Path(root).resolve()), str(remote)), {})
+        return {
+            "last_fetch_at": row.get("fetch"),
+            "last_pull_at": row.get("pull"),
+            "last_push_at": row.get("push"),
+        }
 
     def import_zip(self, stream: BinaryIO, destination: str | Path, *, filename: str = "project.zip") -> dict:
         dest = self._validate_destination(destination)

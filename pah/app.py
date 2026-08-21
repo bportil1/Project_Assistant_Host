@@ -72,6 +72,34 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return FileSystemService(workspaces.require_root())
 
 
+    def overleaf_sync_payload(remote_name: str | None = None) -> dict:
+        root = workspaces.require_root()
+        git_status = git_service.status()
+        project = overleaf.inspect_project(root)
+        candidates = overleaf.recognized_remotes(git_status.get("remotes", []))
+        selected = overleaf.select_remote(git_status.get("remotes", []), remote_name)
+        comparison = git_service.remote_comparison(selected) if selected else None
+        events = overleaf.sync_events(root, selected)
+        last_fetch = events.get("last_fetch_at")
+        last_push = events.get("last_push_at")
+        comparison_fresh = bool(last_fetch and (not last_push or str(last_fetch) > str(last_push)))
+        ref_status = references.status()
+        return {
+            "workspace": str(root),
+            "project": project,
+            "overleaf_remotes": candidates,
+            "selected_remote": selected,
+            "comparison": comparison,
+            "comparison_fresh": comparison_fresh,
+            "sync_events": events,
+            "references": {
+                "available": ref_status.get("available", False),
+                "configured": ref_status.get("configured", False),
+                "library_root": ref_status.get("library_root"),
+            },
+            "git": git_status,
+        }
+
     def analyzer_relevant_path(relative: str) -> bool:
         """Return whether a pre-existing path can affect Python analysis."""
         try:
@@ -293,6 +321,65 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             "project": project,
             **git_service.connectivity(),
         })
+
+    @app.get("/api/overleaf/status")
+    def overleaf_status():
+        remote = request.args.get("remote") or None
+        return jsonify({"ok": True, **overleaf_sync_payload(remote)})
+
+    @app.post("/api/overleaf/fetch")
+    def overleaf_fetch():
+        payload = request.get_json(silent=True) or {}
+        root = workspaces.require_root()
+        remote = overleaf.select_remote(git_service.status().get("remotes", []), payload.get("remote"))
+        if not remote:
+            raise OverleafImportError("Choose a recognized Overleaf Git remote before fetching.")
+        git_service.fetch(remote)
+        overleaf.record_sync_event(root, remote, "fetch")
+        return jsonify({"ok": True, **overleaf_sync_payload(remote)})
+
+    @app.post("/api/overleaf/pull")
+    def overleaf_pull():
+        payload = request.get_json(silent=True) or {}
+        root = workspaces.require_root()
+        status = git_service.status()
+        remote = overleaf.select_remote(status.get("remotes", []), payload.get("remote"))
+        if not remote:
+            raise OverleafImportError("Choose a recognized Overleaf Git remote before pulling.")
+        if status.get("has_conflicts"):
+            raise GitError("Overleaf pull is blocked while unresolved Git conflicts exist.")
+        git_service.pull(remote)
+        overleaf.record_sync_event(root, remote, "pull")
+        analyzer.mark_stale()
+        return jsonify({"ok": True, **overleaf_sync_payload(remote)})
+
+    @app.post("/api/overleaf/push")
+    def overleaf_push():
+        payload = request.get_json(silent=True) or {}
+        root = workspaces.require_root()
+        status = git_service.status()
+        remote = overleaf.select_remote(status.get("remotes", []), payload.get("remote"))
+        if not remote:
+            raise OverleafImportError("Choose a recognized Overleaf Git remote before pushing.")
+        if status.get("has_conflicts"):
+            raise GitError("Overleaf push is blocked while unresolved Git conflicts exist.")
+        comparison = git_service.remote_comparison(remote)
+        if comparison.get("state") in {"behind", "diverged"}:
+            raise GitError("Overleaf push is blocked because the cached remote state is behind/diverged. Fetch and resolve the remote changes first.")
+        git_service.push(remote, set_upstream=not bool(status.get("tracking")))
+        overleaf.record_sync_event(root, remote, "push")
+        return jsonify({"ok": True, **overleaf_sync_payload(remote)})
+
+    @app.post("/api/overleaf/bibtex/import")
+    def overleaf_import_bibtex():
+        payload = request.get_json(silent=True) or {}
+        relative = str(payload.get("path", "")).strip()
+        path = fs().resolve(relative, must_exist=True)
+        if not path.is_file() or path.suffix.lower() != ".bib":
+            raise OverleafImportError("Choose a .bib file from the current PAH workspace.")
+        text = path.read_text(encoding="utf-8")
+        result = references.import_bibtex(text)
+        return jsonify({"ok": True, "path": relative, **result, "references": references.status()})
 
     @app.get("/api/tree")
     def get_tree():
@@ -822,7 +909,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.8.7",
+            "version": "0.8.8",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),
