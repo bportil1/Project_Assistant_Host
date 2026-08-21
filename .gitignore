@@ -6,3 +6,5 @@ __pycache__/
 htmlcov/
 .DS_Store
 *.log
+pah/web/static/vendor/ace/
+pah/web/static/vendor/xterm/

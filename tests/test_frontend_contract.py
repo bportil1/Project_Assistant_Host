@@ -140,8 +140,8 @@ def test_pah08_collapsible_workspace_panes_are_generic_and_wired():
 def test_pah_current_version_is_reported():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
-    assert 'version = "0.8.8"' in pyproject
-    assert '"version": "0.8.8"' in app
+    assert 'version = "0.9.1"' in pyproject
+    assert '"version": "0.9.1"' in app
 
 
 def test_pah081_compact_service_launchers_are_wired():
@@ -221,11 +221,13 @@ def test_pah082_generic_window_surface_controller_replaces_tool_specific_detach_
 def test_pah082_terminal_uses_shared_window_controller_but_preserves_single_pty_transfer():
     js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
 
-    assert "if (!isSurfaceDetached('terminal')) state.terminalPoll = setInterval(pollTerminal, 300);" in js
+    assert "if (!isSurfaceDetached('terminal')) state.terminalPoll = setInterval(pollTerminal, 120);" in js
     assert "if (!state.terminalId || isSurfaceDetached('terminal')) return;" in js
     assert "popup._pahTerminalPoll" in js
-    assert "state.terminalPoll = state.terminalId ? setInterval(pollTerminal, 300) : null;" in js
-    assert "writeDetachedTerminalShell(popup)" in js
+    assert "state.terminalPoll = state.terminalId ? setInterval(pollTerminal, 120) : null;" in js
+    assert "await writeDetachedTerminalShell(popup)" in js
+    assert "terminal.onData" in js
+    assert "detached.onData" in js
 
 
 def test_pah083_layout_preferences_are_local_persistent_and_resizable():
@@ -286,8 +288,7 @@ def test_pah083_aesthetic_hotfix_keeps_tool_heading_single_line_and_terminal_cli
     assert "flex-wrap: nowrap;" in css
     assert ".analysis-heading .badge" in css
     assert "text-overflow: ellipsis;" in css
-    assert ".terminal-panel.collapsed .terminal-output" in css
-    assert ".terminal-panel.collapsed .terminal-input-row { display: none; }" in css
+    assert ".terminal-panel.collapsed .terminal-emulator { display: none; }" in css
 
 
 def test_pah084_research_search_is_optional_companion_surface_under_references():
@@ -441,3 +442,57 @@ def test_pah088_overleaf_sync_is_transient_explicit_and_bib_handoff_is_opt_in():
     assert "overleaf.com" in overleaf
     assert "record_sync_event" in overleaf
     assert "setInterval" not in js[js.find("function overleafRelationLabel"):js.find("function loadToolFrame")]
+
+
+def test_pah090_workspace_editor_uses_vendored_ace_sessions():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    css = (ROOT / "pah" / "web" / "static" / "pah.css").read_text(encoding="utf-8")
+    workspace_css = (ROOT / "pah" / "web" / "static" / "pah-workspace.css").read_text(encoding="utf-8")
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    vendor = (ROOT / "scripts" / "vendor_ace.py").read_text(encoding="utf-8")
+
+    assert 'id="editor" class="workspace-editor"' in html
+    assert "vendor/ace/ace.js" in html
+    assert "syntax.js" not in html
+    assert 'id="highlightLayer"' not in html
+    assert '<textarea id="editor"' not in html
+    assert "window.ace.edit(editorHost)" in js
+    assert "window.ace.createEditSession" in js
+    assert "tab.editorSession" in js
+    assert "editor.setSession(session)" in js
+    assert "session.setUseWorker(false)" in js
+    assert "Ctrl-S" in js
+    assert "#editor .ace_gutter" in workspace_css
+    assert "#editor.editor-vendor-missing" in css
+    assert 'ACE_VERSION = "1.44.0"' in vendor
+    assert "src-min-noconflict" in vendor
+    assert "urlopen" in vendor
+
+
+def test_pah090_runtime_has_no_editor_cdn_dependency():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+
+    for remote in ["cdnjs", "unpkg", "jsdelivr", "esm.sh", "ace.c9.io"]:
+        assert remote not in html
+        assert remote not in js
+
+
+def test_pah091_xterm_terminal_replaces_line_input_shell():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
+    terminal_core = (ROOT / "pah" / "core" / "terminal.py").read_text(encoding="utf-8")
+
+    assert 'vendor/xterm/xterm.css' in html
+    assert 'vendor/xterm/xterm.js' in html
+    assert 'vendor/xterm/addon-fit.js' in html
+    assert 'id="terminalEmulator"' in html
+    assert 'id="terminalInput"' not in html
+    assert 'id="terminalOutput"' not in html
+    assert 'function initTerminalEmulator' in js
+    assert 'terminal.onData' in js
+    assert 'terminal.onResize' in js
+    assert '/api/terminal/resize' in app
+    assert 'def resize(self, session_id: str, cols: int, rows: int)' in terminal_core
+    assert (ROOT / "scripts" / "vendor_xterm.py").exists()

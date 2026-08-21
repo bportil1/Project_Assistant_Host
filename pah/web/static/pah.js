@@ -1,8 +1,10 @@
 (() => {
   const $ = id => document.getElementById(id);
-  const editor = $('editor');
-  const highlightCode = $('highlightCode');
-  const highlightLayer = $('highlightLayer');
+  const editorHost = $('editor');
+  let editor = null;
+  let terminal = null;
+  let terminalFitAddon = null;
+  let terminalResizeObserver = null;
 
   const state = {
     workspace: null,
@@ -11,6 +13,8 @@
     selectedTree: null,
     terminalId: null,
     terminalPoll: null,
+    terminalStartPromise: null,
+    terminalRawHistory: '',
     analyzer: {
       available: false,
       analyzed: false,
@@ -108,6 +112,110 @@
     const number = Number(value);
     return Number.isFinite(number) ? number.toFixed(digits) : String(value ?? '');
   }
+
+  function aceModeForTab(tab) {
+    const path = String(tab?.path || '').toLowerCase();
+    if (path.endsWith('.bib')) return 'bibtex';
+    if (path.endsWith('.ts') || path.endsWith('.tsx')) return 'typescript';
+    if (path.endsWith('.xml') || path.endsWith('.svg')) return 'xml';
+    const modes = {
+      python: 'python',
+      markdown: 'markdown',
+      json: 'json',
+      yaml: 'yaml',
+      toml: 'toml',
+      latex: 'latex',
+      shell: 'sh',
+      javascript: 'javascript',
+      markup: 'html',
+      css: 'css',
+      text: 'text',
+    };
+    return modes[tab?.language] || 'text';
+  }
+
+  function ensureEditorSession(tab) {
+    if (!editor || !tab) return null;
+    if (tab.editorSession) return tab.editorSession;
+    const session = window.ace.createEditSession(tab.content || '', `ace/mode/${aceModeForTab(tab)}`);
+    session.setUseWorker(false);
+    session.setUseWrapMode(false);
+    session.setTabSize(4);
+    session.setUseSoftTabs(true);
+    session.on('change', () => {
+      if (tab._editorSyncing) return;
+      tab.content = session.getValue();
+      tab.dirty = tab.content !== tab.saved;
+      if (state.active === tab.path) {
+        renderTabs();
+        updateCursor();
+      }
+    });
+    session.selection.on('changeCursor', () => {
+      if (state.active === tab.path) updateCursor();
+    });
+    session.selection.on('changeSelection', () => {
+      if (state.active === tab.path) updateCursor();
+    });
+    tab.editorSession = session;
+    return session;
+  }
+
+  function setTabEditorContent(tab, content) {
+    if (!tab) return;
+    tab.content = String(content ?? '');
+    const session = ensureEditorSession(tab);
+    if (session && session.getValue() !== tab.content) {
+      const position = session.selection.getCursor();
+      tab._editorSyncing = true;
+      session.setValue(tab.content);
+      tab._editorSyncing = false;
+      const row = Math.min(position.row, Math.max(0, session.getLength() - 1));
+      const column = Math.min(position.column, session.getLine(row).length);
+      session.selection.moveTo(row, column);
+    }
+    if (editor && state.active === tab.path && editor.session !== session) editor.setSession(session);
+  }
+
+  function initWorkspaceEditor() {
+    if (!editorHost) return;
+    if (!window.ace) {
+      editorHost.classList.add('editor-vendor-missing');
+      editorHost.textContent = 'Ace editor assets are not installed.\nRun: python3 scripts/vendor_ace.py\nThen restart PAH.';
+      return;
+    }
+    const basePath = editorHost.dataset.aceBase || '/static/vendor/ace';
+    window.ace.config.set('basePath', basePath);
+    window.ace.config.set('modePath', basePath);
+    window.ace.config.set('themePath', basePath);
+    window.ace.config.set('workerPath', basePath);
+    editor = window.ace.edit(editorHost);
+    editor.setTheme('ace/theme/tomorrow_night');
+    editor.setOptions({
+      fontSize: '13px',
+      showPrintMargin: false,
+      displayIndentGuides: true,
+      highlightActiveLine: true,
+      highlightGutterLine: true,
+      showFoldWidgets: true,
+      showLineNumbers: true,
+      showGutter: true,
+      useSoftTabs: true,
+      tabSize: 4,
+      wrap: false,
+      scrollPastEnd: 0.35,
+      animatedScroll: false,
+      behavioursEnabled: true,
+      wrapBehavioursEnabled: true,
+    });
+    editor.session.setUseWorker(false);
+    editor.commands.addCommand({
+      name: 'pah-save',
+      bindKey: {win: 'Ctrl-S', mac: 'Command-S'},
+      exec: () => saveActive().catch(error => toast(error.message, true)),
+      readOnly: false,
+    });
+  }
   function setText(id, text) { $(id).textContent = text; }
   function clearElement(id) { $(id).replaceChildren(); }
 
@@ -203,6 +311,8 @@
     for (const [name, config] of Object.entries(layoutSizeConfig)) {
       setLayoutPaneSize(name, state.layout[config.stateKey], {persist: false});
     }
+    if (editor) window.requestAnimationFrame(() => editor.resize(true));
+    scheduleTerminalFit();
   }
 
   function beginPaneResize(name, event) {
@@ -249,7 +359,7 @@
   async function focusWorkspaceEditor() {
     if (state.mode !== 'workspace') await setMode('workspace');
     const tab = activeTab();
-    if (tab) editor.focus();
+    if (tab && editor) editor.focus();
     else $('workspacePath')?.focus();
   }
 
@@ -320,6 +430,7 @@
     state.panes[name].collapsed = Boolean(collapsed);
     renderPaneState(name);
     if (persist) persistLayoutPreferences();
+    if (name === 'terminal' && !state.panes.terminal.collapsed && !isSurfaceDetached('terminal')) scheduleTerminalFit();
   }
 
   function togglePane(name) {
@@ -329,6 +440,7 @@
 
   function renderWorkspacePanes() {
     for (const name of Object.keys(paneConfig)) renderPaneState(name);
+    if (editor) window.requestAnimationFrame(() => editor.resize(true));
   }
 
   // ---------------------------------------------------------------------------
@@ -585,7 +697,7 @@
     state.surfaceWindows.terminal.popup = popup;
     clearInterval(state.terminalPoll);
     state.terminalPoll = null;
-    writeDetachedTerminalShell(popup);
+    await writeDetachedTerminalShell(popup);
     setPaneCollapsed('terminal', true, {persist: false});
     return true;
   }
@@ -638,7 +750,8 @@
     }
     if (name === 'terminal') {
       setPaneCollapsed('terminal', false);
-      $('terminalInput')?.focus();
+      scheduleTerminalFit();
+      terminal?.focus();
     }
   }
 
@@ -649,9 +762,13 @@
 
     if (config.kind === 'terminal') {
       if (popup && popup._pahTerminalPoll) popup.clearInterval(popup._pahTerminalPoll);
+      if (popup && popup._pahTerminalResize) popup.clearTimeout(popup._pahTerminalResize);
+      try { popup?._pahTerminal?.dispose?.(); } catch (_) {}
       clearInterval(state.terminalPoll);
-      state.terminalPoll = state.terminalId ? setInterval(pollTerminal, 300) : null;
+      state.terminalPoll = state.terminalId ? setInterval(pollTerminal, 120) : null;
+      replayDockedTerminal();
       if (expand) setPaneCollapsed('terminal', false, {persist: false});
+      scheduleTerminalFit();
     }
 
     state.surfaceWindows[name].popup = null;
@@ -1188,9 +1305,11 @@
       if (tab.dirty) { skippedDirty += 1; continue; }
       try {
         const data = await api(`/api/file?path=${encodeURIComponent(tab.path)}`);
-        tab.content = data.content;
         tab.saved = data.content;
         tab.language = data.language;
+        setTabEditorContent(tab, data.content);
+        tab.dirty = false;
+        if (tab.editorSession) tab.editorSession.setMode(`ace/mode/${aceModeForTab(tab)}`);
       } catch (_) {
         // A full tool may have moved/deleted a file. Leave the tab as-is so the
         // user can decide what to do rather than silently discarding content.
@@ -1232,6 +1351,7 @@
     $('documentsMode').classList.toggle('hidden', mode !== 'documents');
     $('referencesMode').classList.toggle('hidden', mode !== 'references');
     $('app').classList.toggle('full-mode', mode !== 'workspace');
+    if (mode === 'workspace' && editor) window.requestAnimationFrame(() => editor.resize(true));
   }
 
   // ---------------------------------------------------------------------------
@@ -1381,6 +1501,10 @@
     const tab = state.tabs.find(item => item.path === path);
     if (tab?.dirty && !confirm(`Discard unsaved changes to ${path}?`)) return;
     const index = state.tabs.findIndex(item => item.path === path);
+    if (tab?.editorSession) {
+      tab.editorSession.destroy();
+      tab.editorSession = null;
+    }
     state.tabs.splice(index, 1);
     if (state.active === path) {
       state.active = state.tabs[Math.max(0, index - 1)]?.path || state.tabs[0]?.path || null;
@@ -1405,8 +1529,9 @@
       refreshReferenceContext();
       return;
     }
-    editor.value = tab.content;
-    updateHighlight();
+    const session = ensureEditorSession(tab);
+    if (editor && session && editor.session !== session) editor.setSession(session);
+    if (editor) editor.resize(true);
     setText('fileStatus', `${tab.path}  •  ${tab.language}`);
     updateCursor();
     refreshAnalyzerFile().catch(error => toast(error.message, true));
@@ -1414,19 +1539,16 @@
     refreshReferenceContext();
   }
 
-  function updateHighlight() {
-    const tab = activeTab();
-    if (!tab) return;
-    highlightCode.innerHTML = window.PAHSyntax.highlight(editor.value, tab.language) + '\n';
-    highlightLayer.scrollTop = editor.scrollTop;
-    highlightLayer.scrollLeft = editor.scrollLeft;
-  }
-
   function updateCursor() {
-    const before = editor.value.slice(0, editor.selectionStart);
-    const line = before.split('\n').length;
-    const col = before.length - before.lastIndexOf('\n');
-    setText('cursorStatus', `Ln ${line}, Col ${col}`);
+    if (!editor || !activeTab()) {
+      setText('cursorStatus', '');
+      return;
+    }
+    const position = editor.getCursorPosition();
+    const range = editor.getSelectionRange();
+    const selected = range && !range.isEmpty();
+    const suffix = selected ? ' · Selection' : '';
+    setText('cursorStatus', `Ln ${position.row + 1}, Col ${position.column + 1}${suffix}`);
   }
 
   async function saveActive() {
@@ -1441,34 +1563,7 @@
     toast(`Saved ${tab.path}`);
   }
 
-  editor.addEventListener('input', () => {
-    const tab = activeTab();
-    if (!tab) return;
-    tab.content = editor.value;
-    tab.dirty = tab.content !== tab.saved;
-    renderTabs();
-    updateHighlight();
-    updateCursor();
-  });
-  editor.addEventListener('scroll', () => {
-    highlightLayer.scrollTop = editor.scrollTop;
-    highlightLayer.scrollLeft = editor.scrollLeft;
-  });
-  editor.addEventListener('keyup', updateCursor);
-  editor.addEventListener('click', updateCursor);
-  editor.addEventListener('keydown', event => {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
-      event.preventDefault();
-      saveActive().catch(error => toast(error.message, true));
-    }
-    if (event.key === 'Tab') {
-      event.preventDefault();
-      const start = editor.selectionStart;
-      const end = editor.selectionEnd;
-      editor.setRangeText('    ', start, end, 'end');
-      editor.dispatchEvent(new Event('input'));
-    }
-  });
+
 
   async function fsCreate(kind) {
     if (!state.workspace) return toast('Open a workspace first', true);
@@ -1546,23 +1641,126 @@
   // ---------------------------------------------------------------------------
   // Terminal / environment / execution
   // ---------------------------------------------------------------------------
-  function stripAnsi(text) {
-    return text
-      .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
-      .replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, '')
-      .replace(/\r(?!\n)/g, '');
+  function xtermFitConstructor(scope = window) {
+    return scope.FitAddon?.FitAddon || scope.FitAddon || null;
+  }
+
+  function appendTerminalHistory(data) {
+    if (!data) return;
+    state.terminalRawHistory += data;
+    const max = 600_000;
+    if (state.terminalRawHistory.length > max) {
+      state.terminalRawHistory = state.terminalRawHistory.slice(-max);
+    }
+  }
+
+  async function resizeTerminalPty(cols, rows) {
+    if (!state.terminalId || !Number.isFinite(cols) || !Number.isFinite(rows)) return;
+    try {
+      await api('/api/terminal/resize', {
+        method: 'POST',
+        body: JSON.stringify({id: state.terminalId, cols: Math.max(2, Math.round(cols)), rows: Math.max(1, Math.round(rows))}),
+      });
+    } catch (_) {}
+  }
+
+  function fitDockedTerminal() {
+    if (!terminal || !terminalFitAddon || state.panes.terminal.collapsed || isSurfaceDetached('terminal')) return;
+    try {
+      terminalFitAddon.fit();
+      resizeTerminalPty(terminal.cols, terminal.rows);
+    } catch (_) {}
+  }
+
+  function scheduleTerminalFit() {
+    window.clearTimeout(scheduleTerminalFit._timer);
+    scheduleTerminalFit._timer = window.setTimeout(fitDockedTerminal, 40);
+  }
+
+  function clearTerminalView({history = true} = {}) {
+    if (history) state.terminalRawHistory = '';
+    try { terminal?.clear(); } catch (_) {}
+    const popup = surfaceWindow('terminal');
+    try { popup?._pahTerminal?.clear?.(); } catch (_) {}
+  }
+
+  function replayDockedTerminal() {
+    if (!terminal) return;
+    try {
+      terminal.reset();
+      if (state.terminalRawHistory) terminal.write(state.terminalRawHistory);
+    } catch (_) {}
+  }
+
+  function initTerminalEmulator() {
+    const host = $('terminalEmulator');
+    if (!host) return;
+    if (!window.Terminal) {
+      host.textContent = 'xterm.js is not vendored. Run: python3 scripts/vendor_xterm.py';
+      host.classList.add('terminal-missing-runtime');
+      return;
+    }
+    const FitCtor = xtermFitConstructor(window);
+    terminal = new window.Terminal({
+      cursorBlink: true,
+      cursorStyle: 'block',
+      convertEol: false,
+      scrollback: 5000,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+      fontSize: 12,
+      lineHeight: 1.2,
+      allowTransparency: false,
+      theme: {
+        background: '#0d0f13',
+        foreground: '#d9e4d4',
+        cursor: '#7ec8e3',
+        cursorAccent: '#0d0f13',
+        selectionBackground: '#285c75',
+        black: '#14181d', red: '#e06c75', green: '#98c379', yellow: '#e5c07b', blue: '#61afef', magenta: '#c678dd', cyan: '#56b6c2', white: '#d7dae0',
+        brightBlack: '#5c6370', brightRed: '#e88388', brightGreen: '#b1d196', brightYellow: '#ebcb8b', brightBlue: '#82bff5', brightMagenta: '#d19ae6', brightCyan: '#7bcad3', brightWhite: '#f0f3f6',
+      },
+    });
+    if (FitCtor) {
+      terminalFitAddon = new FitCtor();
+      terminal.loadAddon(terminalFitAddon);
+    }
+    terminal.open(host);
+    terminal.onData(data => terminalSend(data).catch(error => toast(error.message, true)));
+    terminal.onResize(size => resizeTerminalPty(size.cols, size.rows));
+    terminal.attachCustomKeyEventHandler(event => {
+      // Preserve PAH's workspace shortcut while letting the shell receive normal
+      // terminal keys (arrows, Tab, Ctrl+C, Ctrl+L, Ctrl+R, etc.).
+      if (event.ctrlKey && event.altKey && event.key.toLowerCase() === 'k') return false;
+      return true;
+    });
+    if ('ResizeObserver' in window) {
+      terminalResizeObserver = new ResizeObserver(() => scheduleTerminalFit());
+      terminalResizeObserver.observe(host);
+    }
+    scheduleTerminalFit();
   }
 
   async function startTerminal() {
     if (!state.workspace) return;
-    if (state.terminalId) {
-      try { await api(`/api/terminal?id=${encodeURIComponent(state.terminalId)}`, {method: 'DELETE'}); } catch (_) {}
+    if (state.terminalStartPromise) return state.terminalStartPromise;
+    state.terminalStartPromise = (async () => {
+      if (state.terminalId) {
+        try { await api(`/api/terminal?id=${encodeURIComponent(state.terminalId)}`, {method: 'DELETE'}); } catch (_) {}
+      }
+      const data = await api('/api/terminal/start', {method: 'POST', body: '{}'});
+      state.terminalId = data.id;
+      state.terminalRawHistory = '';
+      try { terminal?.reset(); } catch (_) {}
+      clearInterval(state.terminalPoll);
+      if (!isSurfaceDetached('terminal')) state.terminalPoll = setInterval(pollTerminal, 120);
+      scheduleTerminalFit();
+      return data.id;
+    })();
+    try {
+      return await state.terminalStartPromise;
+    } finally {
+      state.terminalStartPromise = null;
     }
-    const data = await api('/api/terminal/start', {method: 'POST', body: '{}'});
-    state.terminalId = data.id;
-    setText('terminalOutput', '');
-    clearInterval(state.terminalPoll);
-    if (!isSurfaceDetached('terminal')) state.terminalPoll = setInterval(pollTerminal, 300);
   }
 
   async function pollTerminal() {
@@ -1570,9 +1768,8 @@
     try {
       const data = await api(`/api/terminal/read?id=${encodeURIComponent(state.terminalId)}`);
       if (data.output) {
-        const output = $('terminalOutput');
-        output.textContent += stripAnsi(data.output);
-        output.scrollTop = output.scrollHeight;
+        appendTerminalHistory(data.output);
+        terminal?.write(data.output);
       }
       if (data.closed) {
         clearInterval(state.terminalPoll);
@@ -1590,13 +1787,7 @@
     if (!state.terminalId) return {output: '', closed: true};
     try {
       const data = await api(`/api/terminal/read?id=${encodeURIComponent(state.terminalId)}`);
-      if (data.output) {
-        const clean = stripAnsi(data.output);
-        const output = $('terminalOutput');
-        output.textContent += clean;
-        output.scrollTop = output.scrollHeight;
-        data.output = clean;
-      }
+      if (data.output) appendTerminalHistory(data.output);
       if (data.closed) state.terminalId = null;
       return data;
     } catch (_) {
@@ -1604,37 +1795,66 @@
     }
   }
 
-  function writeDetachedTerminalShell(popup) {
+  function waitForPopupXterm(popup, timeoutMs = 2500) {
+    return new Promise((resolve, reject) => {
+      const started = Date.now();
+      const check = () => {
+        if (popup.closed) return reject(new Error('Detached terminal window was closed.'));
+        if (popup.Terminal) return resolve();
+        if (Date.now() - started > timeoutMs) return reject(new Error('xterm.js did not load in the detached terminal window.'));
+        popup.setTimeout(check, 30);
+      };
+      check();
+    });
+  }
+
+  async function writeDetachedTerminalShell(popup) {
     popup.document.open();
-    popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PAH — Terminal</title><style>html,body{margin:0;height:100%;background:#0d0f13;color:#d9dee7;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace}body{display:grid;grid-template-rows:36px minmax(0,1fr) 38px}header{display:flex;align-items:center;gap:6px;padding:4px 8px;background:#171a21;border-bottom:1px solid #303642;font-family:Inter,system-ui,sans-serif;font-size:12px}header strong{margin-right:auto}button{background:#252b35;color:#d9dee7;border:1px solid #303642;border-radius:5px;padding:4px 8px;cursor:pointer}button:hover{background:#303744}pre{margin:0;overflow:auto;padding:9px 11px;white-space:pre-wrap;word-break:break-word;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;color:#cbd4c4}div.input{display:flex;align-items:center;gap:7px;padding:4px 9px;border-top:1px solid #252a33}input{flex:1;border:0;outline:none;background:transparent;color:#d9dee7;font:12px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace}</style></head><body><header><strong>PAH Terminal</strong><button id="interrupt">Ctrl+C</button><button id="clear">Clear</button><button id="restart">Restart</button><button id="reattach">Reattach</button></header><pre id="output"></pre><div class="input"><span>›</span><input id="input" autocomplete="off" spellcheck="false" placeholder="Enter terminal command"></div></body></html>`);
+    popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PAH — Terminal</title><link rel="stylesheet" href="/static/vendor/xterm/xterm.css"><style>html,body{margin:0;height:100%;background:#0d0f13;color:#d9dee7;font-family:Inter,system-ui,sans-serif}body{display:grid;grid-template-rows:36px minmax(0,1fr)}header{display:flex;align-items:center;gap:6px;padding:4px 8px;background:#171a21;border-bottom:1px solid #303642;font-size:12px}header strong{margin-right:auto}button{background:#252b35;color:#d9dee7;border:1px solid #303642;border-radius:3px;padding:4px 8px;cursor:pointer}button:hover{background:#303744}#terminal{min-width:0;min-height:0;overflow:hidden;padding:6px 8px 4px}.xterm{height:100%}</style><script src="/static/vendor/xterm/xterm.js"><\/script><script src="/static/vendor/xterm/addon-fit.js"><\/script></head><body><header><strong>PAH Terminal</strong><button id="interrupt">Ctrl+C</button><button id="clear">Clear</button><button id="restart">Restart</button><button id="reattach">Reattach</button></header><div id="terminal"></div></body></html>`);
     popup.document.close();
-    const out = popup.document.getElementById('output');
-    out.textContent = $('terminalOutput').textContent;
-    out.scrollTop = out.scrollHeight;
-    const input = popup.document.getElementById('input');
-    input.addEventListener('keydown', event => {
-      if (event.key === 'Enter') {
-        const value = input.value;
-        input.value = '';
-        terminalSend(value + '\n').catch(error => toast(error.message, true));
-      } else if (event.ctrlKey && event.key.toLowerCase() === 'c') {
-        event.preventDefault();
-        terminalSend('\x03').catch(error => toast(error.message, true));
-      }
+    await waitForPopupXterm(popup);
+    const FitCtor = xtermFitConstructor(popup);
+    const detached = new popup.Terminal({
+      cursorBlink: true,
+      scrollback: 5000,
+      fontSize: 12,
+      lineHeight: 1.2,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+      theme: {background:'#0d0f13',foreground:'#d9e4d4',cursor:'#7ec8e3',selectionBackground:'#285c75'},
+    });
+    let fit = null;
+    if (FitCtor) {
+      fit = new FitCtor();
+      detached.loadAddon(fit);
+    }
+    detached.open(popup.document.getElementById('terminal'));
+    detached.onData(data => terminalSend(data).catch(error => toast(error.message, true)));
+    detached.onResize(size => resizeTerminalPty(size.cols, size.rows));
+    popup._pahTerminal = detached;
+    popup._pahTerminalFit = fit;
+    if (state.terminalRawHistory) detached.write(state.terminalRawHistory);
+    const fitDetached = () => {
+      try { fit?.fit(); resizeTerminalPty(detached.cols, detached.rows); } catch (_) {}
+    };
+    popup.addEventListener('resize', () => {
+      popup.clearTimeout(popup._pahTerminalResize);
+      popup._pahTerminalResize = popup.setTimeout(fitDetached, 50);
     });
     popup.document.getElementById('interrupt').onclick = () => terminalSend('\x03').catch(error => toast(error.message, true));
-    popup.document.getElementById('clear').onclick = () => { out.textContent = ''; setText('terminalOutput', ''); };
+    popup.document.getElementById('clear').onclick = () => {
+      state.terminalRawHistory = '';
+      try { detached.clear(); terminal?.clear(); } catch (_) {}
+    };
     popup.document.getElementById('restart').onclick = async () => {
-      try { await restartTerminal(); out.textContent = ''; } catch (error) { toast(error.message, true); }
+      try { await restartTerminal(); detached.reset(); fitDetached(); } catch (error) { toast(error.message, true); }
     };
     popup.document.getElementById('reattach').onclick = () => reattachSurface('terminal', {activate: true, expand: true});
     popup._pahTerminalPoll = popup.setInterval(async () => {
       const data = await pollDetachedTerminal();
-      if (data.output) {
-        out.textContent += data.output;
-        out.scrollTop = out.scrollHeight;
-      }
-    }, 300);
+      if (data.output) detached.write(data.output);
+    }, 120);
+    fitDetached();
+    detached.focus();
     popup.focus();
   }
 
@@ -2053,15 +2273,16 @@
     const entity = state.analyzer.selectedEntity;
     if (!entity?.path) return;
     await openFile(entity.path);
-    const startLine = Number(entity.metadata?.line_start || 1);
-    const endLine = Number(entity.metadata?.line_end || startLine);
-    const lines = editor.value.split('\n');
-    let start = 0;
-    for (let i = 0; i < startLine - 1 && i < lines.length; i++) start += lines[i].length + 1;
-    let end = start;
-    for (let i = startLine - 1; i < endLine && i < lines.length; i++) end += lines[i].length + (i < lines.length - 1 ? 1 : 0);
+    const startLine = Math.max(1, Number(entity.metadata?.line_start || 1));
+    const endLine = Math.max(startLine, Number(entity.metadata?.line_end || startLine));
+    if (!editor) return;
+    const Range = window.ace.require('ace/range').Range;
+    const lastRow = Math.min(endLine - 1, Math.max(0, editor.session.getLength() - 1));
+    const firstRow = Math.min(startLine - 1, lastRow);
+    const lastColumn = editor.session.getLine(lastRow).length;
     editor.focus();
-    editor.setSelectionRange(start, Math.max(start, end));
+    editor.selection.setRange(new Range(firstRow, 0, lastRow, lastColumn), false);
+    editor.scrollToLine(firstRow, true, true);
     updateCursor();
   }
 
@@ -2477,10 +2698,8 @@
   function useNormalizedDiagram() {
     const tab = activeTab();
     if (!tab || !state.documents.normalizedDiagram) return;
-    tab.content = state.documents.normalizedDiagram;
+    setTabEditorContent(tab, state.documents.normalizedDiagram);
     tab.dirty = tab.content !== tab.saved;
-    editor.value = tab.content;
-    updateHighlight();
     updateCursor();
     renderTabs();
     toast('Applied normalized .diagram source; save when ready.');
@@ -2538,10 +2757,8 @@
     await openFile(target);
     const tab = activeTab();
     const separator = tab.content.trim().length ? '\n\n' : '';
-    tab.content = tab.content.replace(/\s*$/, '') + separator + data.snippet;
+    setTabEditorContent(tab, tab.content.replace(/\s*$/, '') + separator + data.snippet);
     tab.dirty = tab.content !== tab.saved;
-    editor.value = tab.content;
-    updateHighlight();
     updateCursor();
     renderTabs();
     refreshDocumentContext();
@@ -2614,10 +2831,8 @@
     await openFile(target);
     const targetTab = activeTab();
     const separator = targetTab.content.trim().length ? '\n\n' : '';
-    targetTab.content = targetTab.content.replace(/\s*$/, '') + separator + data.snippet;
+    setTabEditorContent(targetTab, targetTab.content.replace(/\s*$/, '') + separator + data.snippet);
     targetTab.dirty = targetTab.content !== targetTab.saved;
-    editor.value = targetTab.content;
-    updateHighlight();
     updateCursor();
     renderTabs();
     refreshDocumentContext();
@@ -2633,10 +2848,8 @@
       method: 'POST',
       body: JSON.stringify({target: tab.path, content: tab.content}),
     });
-    tab.content = data.content;
+    setTabEditorContent(tab, data.content);
     tab.dirty = tab.content !== tab.saved;
-    editor.value = tab.content;
-    updateHighlight();
     updateCursor();
     renderTabs();
     await refreshArtifactUsage();
@@ -3053,10 +3266,8 @@
     await openFile(target);
     const tab = activeTab();
     const separator = tab.content.trim().length ? '\n\n' : '';
-    tab.content = tab.content.replace(/\s*$/, '') + separator + data.snippet;
+    setTabEditorContent(tab, tab.content.replace(/\s*$/, '') + separator + data.snippet);
     tab.dirty = tab.content !== tab.saved;
-    editor.value = tab.content;
-    updateHighlight();
     updateCursor();
     renderTabs();
     refreshDocumentContext();
@@ -3186,18 +3397,8 @@
   $('saveButton').onclick = () => saveActive().catch(error => toast(error.message, true));
   $('runButton').onclick = () => runActive().catch(error => toast(error.message, true));
 
-  $('terminalInput').addEventListener('keydown', event => {
-    if (event.key === 'Enter') {
-      const value = event.target.value;
-      event.target.value = '';
-      terminalSend(value + '\n').catch(error => toast(error.message, true));
-    } else if (event.ctrlKey && event.key.toLowerCase() === 'c') {
-      event.preventDefault();
-      terminalSend('\x03').catch(error => toast(error.message, true));
-    }
-  });
   $('terminalInterrupt').onclick = () => terminalSend('\x03').catch(error => toast(error.message, true));
-  $('terminalClear').onclick = () => setText('terminalOutput', '');
+  $('terminalClear').onclick = () => clearTerminalView();
   $('terminalRestart').onclick = () => restartTerminal().catch(error => toast(error.message, true));
   $('terminalDetach').onclick = () => detachSurface('terminal').catch(error => toast(error.message, true));
   $('projectPaneToggle').onclick = () => togglePane('project');
@@ -3323,12 +3524,16 @@
     }
   });
   window.addEventListener('unload', () => {
+    terminalResizeObserver?.disconnect?.();
+    try { terminal?.dispose?.(); } catch (_) {}
     for (const key of ['analysis', 'documents', 'references', 'git', 'terminal']) {
       const popup = surfaceWindow(key);
       if (popup) popup.close();
     }
   });
 
+  initWorkspaceEditor();
+  initTerminalEmulator();
   resetAnalyzerView();
   resetDocumentsView();
   resetReferencesView();

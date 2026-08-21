@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import errno
+import fcntl
 import os
 import pty
+import struct
+import termios
 import select
 import signal
 import subprocess
@@ -46,9 +49,9 @@ class TerminalSession:
 class TerminalManager:
     """Small PTY-backed local terminal service.
 
-    The browser UI currently sends line input plus common control sequences.  The
-    backend is a real PTY, so a richer terminal renderer can be substituted later
-    without replacing the process/session layer.
+    The browser terminal forwards raw terminal input/control sequences into a real
+    PTY.  Terminal emulation stays in the browser while shell history, completion,
+    cursor editing, signals, and interactive programs remain owned by the shell.
     """
 
     def __init__(self) -> None:
@@ -139,6 +142,21 @@ class TerminalManager:
             "output": session.drain(),
             "closed": session.closed or session.process.poll() is not None,
         }
+
+    def resize(self, session_id: str, cols: int, rows: int) -> None:
+        session = self.get(session_id)
+        if session.closed or session.process.poll() is not None:
+            raise TerminalError("Terminal session is closed.")
+        cols = int(cols)
+        rows = int(rows)
+        if cols < 2 or rows < 1 or cols > 1000 or rows > 500:
+            raise TerminalError("Terminal size is outside the supported range.")
+        winsize = struct.pack("HHHH", rows, cols, 0, 0)
+        fcntl.ioctl(session.master_fd, termios.TIOCSWINSZ, winsize)
+        try:
+            os.killpg(session.process.pid, signal.SIGWINCH)
+        except (ProcessLookupError, PermissionError):
+            pass
 
     def stop(self, session_id: str) -> None:
         session = self.get(session_id)

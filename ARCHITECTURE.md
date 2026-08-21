@@ -1,279 +1,417 @@
-# PAH architecture
+# PAH Architecture
 
-## Core rule
+PAH (Project Assistant Host) is a local-first host application that combines a native project workspace with independently maintained tools for code analysis, technical documents, and research references. This document describes the architecture of PAH 0.9.1.
 
-PAH is the host. `CodeAnalyzer`, `DocumentEngine`, and `ReferenceManager` remain independently runnable repositories and must not import each other.
+The central architectural rule is simple:
 
-```text
-                         PAH
-                          │
-              ┌───────────┼───────────┐
-              ▼           ▼           ▼
-        CodeAnalyzer  DocumentEngine  ReferenceManager
-```
+> PAH owns the workspace and cross-tool coordination. Specialized modules own their specialized behavior and remain independently runnable.
 
-Cross-module behavior belongs to PAH's integration layer.
-
-## Host responsibilities
-
-`pah/core/` owns general local-project behavior:
-
-- workspace selection and external state
-- filesystem operations
-- Python environment selection/creation
-- PTY terminal sessions
-- running Python source
-
-`pah/web/` owns the shared lightweight editing interface.
-
-PAH metadata is stored outside user projects, under the PAH state directory (normally `~/.local/share/pah/`). Generated documentation and diagrams are ordinary user-requested project files, not hidden PAH metadata.
-
-## Module integration boundaries
-
-### CodeAnalyzer
-
-`pah/integrations/analyzer.py` imports only the public `code_analyzer.CodeAnalyzer` façade.
-
-Analysis is explicit. Editing never invokes analyzer algorithms continuously. After Python-tree changes, existing results are marked stale until the user re-analyzes.
-
-Cross-module generation that depends on code facts requires **current, non-stale analysis**.
-
-### DocumentEngine
-
-`pah/integrations/documents.py` imports only the public `tech_documents.DocumentEngine` façade.
-
-PAH owns arbitrary project roots and the general editor. DocumentEngine supplies document-specific operations such as `.diagram` parsing/normalization and LaTeX compilation.
-
-Analyzer-generated `.diagram` content is validated through DocumentEngine before PAH writes the generated file.
-
-### ReferenceManager
-
-`pah/integrations/references.py` imports only the public `reference_manager.ReferenceManager` façade.
-
-The paper library may be separate from the current code workspace. The adapter exposes common writing-time operations while full archival/checkpoint/library administration stays in the standalone manager.
-
-## PAH-owned cross-module bridges
-
-### `code_document.py`
-
-Creates bounded Markdown/LaTeX code-reference blocks from serialized analyzer entities.
-
-New markers store:
-
-- analyzer entity ID
-- source path
-- qualified entity name
-- line range
-- insertion mode (`reference` or `source`)
-
-The same bridge can refresh bounded blocks after explicit re-analysis. Legacy unbounded 0.3/0.4 markers are recognized for traceability but are not rewritten automatically.
-
-### `analysis_diagram.py`
-
-Transforms a serialized analyzer entity plus incoming/outgoing relationships into human-editable `.diagram` source. It contains presentation mapping only; it does not perform code analysis or diagram parsing.
-
-### `diagram_document.py`
-
-Wraps DocumentEngine-generated Mermaid in a bounded Markdown block carrying the source `.diagram` path. This creates traceable `Analyzer → .diagram → Markdown` workflows without introducing a dependency from CodeAnalyzer to DocumentEngine.
-
-### `documentation_scaffold.py`
-
-Generates deterministic Markdown scaffolds from CodeAnalyzer facts. It does not infer undocumented behavior. Human-authored sections remain explicit placeholders.
-
-### `artifact_links.py`
-
-Scans explicit PAH markers in Markdown/LaTeX and builds a host-local traceability view.
-
-Recognized relationships include:
+## System overview
 
 ```text
-Code entity  → documents that reference it
-Paper        → documents that cite/note it
-Document     → code entities / diagrams / papers it links
+                              PAH
+                     Project Assistant Host
+                               │
+          ┌────────────────────┼────────────────────┐
+          │                    │                    │
+          ▼                    ▼                    ▼
+   Native Workspace        Host Services      Hosted Modules
+          │                    │                    │
+   ┌──────┼──────┐       ┌─────┼─────┐       ┌─────┼──────────┐
+   │      │      │       │     │     │       │     │          │
+ Editor Files Terminal   Git  Env  Windows  Analysis Documents References
+   │              │                         │          │          │
+  Ace          xterm.js                 Code       Document   Reference
+                + PTY                  Analyzer     Engine      Manager
+                                                                  │
+                                                                  ▼
+                                                            Research Search
 ```
 
-Reverse usage searches saved files. Inspection of the active document may use the current unsaved editor buffer.
+PAH runs as a local Flask application. The primary host normally listens on `127.0.0.1:8765` and coordinates local services rather than requiring a remote backend.
 
-### `reference_document.py`
+## Architectural principles
 
-Creates Markdown/LaTeX citation or bibliographic-note snippets from serialized ReferenceManager records. Citation mode requires an existing `BibKey`; PAH never invents citation keys.
+### Local first
 
-## Repository layout
+Core project work does not require a network connection. Files, editing, terminal sessions, Python environments, local Git, and installed modules operate against local resources.
+
+Remote Git and Overleaf synchronization are separate capabilities that require explicit user permission and explicit actions.
+
+### Modular ownership
+
+The Code Repository Cataloguer, Research Document Workbench, and Research Paper Repository Manager are maintained as separate repositories and included through Git submodules.
+
+They do not depend on one another. Cross-module workflows belong to PAH.
+
+### Host-owned coordination
+
+PAH owns concerns that apply to the whole project rather than to a specialized module:
+
+* workspace selection;
+* filesystem operations;
+* editor tabs and unsaved-buffer state;
+* terminal sessions;
+* Python environment selection;
+* local and remote Git coordination;
+* detachable-window lifecycle;
+* presentation state;
+* cross-module artifact workflows.
+
+### Explicit state changes
+
+PAH avoids hidden synchronization and automatic destructive actions. Examples include:
+
+* opening a directory does not run `git init`;
+* configured remotes are not contacted automatically;
+* code analysis is marked stale after relevant edits instead of being recomputed silently;
+* Overleaf synchronization occurs only through explicit Fetch, Pull, or Push actions;
+* `.bib` files are not silently imported into the reference library;
+* unsaved editor buffers are not silently staged, committed, or overwritten.
+
+## Repository organization
 
 ```text
 Project_Assistant_Host/
 ├── pah/
-│   ├── core/
-│   ├── integrations/
-│   │   ├── analyzer.py
-│   │   ├── documents.py
-│   │   ├── references.py
-│   │   ├── code_document.py
-│   │   ├── reference_document.py
-│   │   ├── analysis_diagram.py
-│   │   ├── diagram_document.py
-│   │   ├── documentation_scaffold.py
-│   │   └── artifact_links.py
-│   └── web/
+│   ├── core/                 # host-owned project services
+│   ├── integrations/         # cross-module coordination
+│   ├── web/                  # PAH browser UI
+│   ├── app.py                # host HTTP application
+│   └── full_tools.py         # hosted standalone-tool lifecycle
+│
 ├── modules/
-│   ├── code_analyzer/          # submodule
-│   ├── tech_documents/         # submodule
-│   └── reference_manager/      # submodule
+│   ├── code_analyzer/        # Git submodule
+│   ├── tech_documents/       # Git submodule
+│   └── reference_manager/    # Git submodule
+│       └── modules/
+│           └── paper_searcher/
+│
 ├── scripts/
 ├── tests/
 └── run.py
 ```
 
+## Native Workspace
+
+Workspace is PAH-native rather than an embedded specialized module.
+
+### Filesystem
+
+The host filesystem layer operates directly on the selected project directory and supports normal file and directory operations. PAH does not require a proprietary workspace format.
+
+PAH-specific state is stored separately from the project, normally under:
+
+```text
+~/.local/share/pah/
+```
+
+This keeps opened repositories free from hidden PAH metadata unless the user explicitly creates project artifacts.
+
+### Editor
+
+The Workspace editor uses Ace as the browser editing component.
+
+PAH remains responsible for:
+
+* opening and closing project files;
+* tab management;
+* dirty-buffer tracking;
+* save behavior;
+* project-aware Run behavior;
+* integration-generated edits and insertions;
+* deciding when clean buffers should be refreshed from disk.
+
+Ace owns editor mechanics such as cursor placement, selections, syntax rendering, undo history, search, folding, indentation behavior, and clipboard-friendly editing.
+
+Each open PAH tab is associated with its own Ace editing session so editor state can remain associated with the file while tabs are switched.
+
+Ace is vendored into PAH's static assets. Normal runtime does not load editor code from a CDN.
+
+### Terminal
+
+The native Terminal consists of two layers:
+
+```text
+xterm.js in the browser
+        ↕ raw terminal input/output
+PAH terminal HTTP transport
+        ↕
+local PTY
+        ↕
+user shell
+```
+
+The shell—not PAH JavaScript—owns command history, tab completion, command-line cursor editing, control sequences, and interactive command behavior.
+
+The terminal manager creates a real PTY and forwards raw terminal data. xterm.js provides browser-side terminal emulation. Window-size changes are propagated back to the PTY so shell applications receive the appropriate terminal dimensions.
+
+One terminal session is retained across docked, collapsed, and detached presentation states.
+
+### Python environments and execution
+
+The host can create and select project Python environments and uses the selected environment when launching the terminal or running Python code through PAH.
+
+This is a Workspace concern rather than a responsibility of Analysis, Documents, or References.
+
+## Workspace presentation model
+
+PAH favors available work area over permanent secondary panels.
+
+The Project Tree, Project Tools, and Terminal are collapsible. Their expanded dimensions can be resized and the resulting presentation preferences can be retained in browser local storage.
+
+Presentation state is separate from project state. Collapsing a pane does not clear its underlying selection, terminal session, open files, or tool data.
+
+Secondary services are exposed through compact menus and transient dialogs instead of permanent sidebars.
+
+## Window surfaces
+
+PAH has a generic window-surface controller for tools that can leave the main browser window.
+
+Depending on the surface, presentation states may include:
+
+```text
+closed
+  │
+  ├── docked
+  │     └── collapsed
+  │
+  └── detached
+```
+
+The controller is responsible for common behavior such as:
+
+* opening a detached browser window;
+* focusing an existing detached window rather than duplicating it;
+* detecting manual window close;
+* reattaching dockable surfaces;
+* keeping presentation state synchronized.
+
+Tool-specific adapters handle the differences between hosted applications, the native terminal, and companion services.
+
+## Specialized modules
+
+### Code Repository Cataloguer
+
+The Code Analyzer owns repository-analysis algorithms and their full user interface.
+
+PAH integrates with its public façade for operations such as analysis state, serialized entities, dependencies, similarity, clustering, and related project facts.
+
+Analysis is explicit. When relevant Python files change, PAH can mark prior results stale. Workflows that depend on analyzer facts require current analysis rather than silently treating stale results as authoritative.
+
+### Research Document Workbench
+
+The Document Workbench owns document-specific behavior such as Markdown/LaTeX/BibTeX workflows, diagram semantics, document builds, and previews.
+
+When hosted inside PAH, the document application is adapted to the current PAH workspace rather than forcing users into a second project hierarchy.
+
+### Research Paper Repository Manager
+
+The Reference Manager owns paper-library and bibliographic behavior. Its selected paper library may be separate from the current software/document workspace.
+
+PAH can use reference records for writing-time workflows without absorbing the manager's full archival and library-management implementation.
+
+### Research Search
+
+Research Search remains a nested module owned by the Reference Manager. PAH exposes it as an optional companion service through the References menu.
+
+It is not a permanent PAH work mode and does not reserve workspace area when unused.
+
+## Hosted full-tool applications
+
+The mature standalone module interfaces are not merged into PAH's Flask route namespace. Instead, PAH can run the installed standalone applications on private loopback services and display them inside the host or in detachable windows.
+
+Conceptually:
+
+```text
+PAH host
+  ├── Workspace       native PAH UI
+  ├── Analysis   ──── hosted Code Analyzer UI
+  ├── Documents  ──── hosted Document Workbench UI
+  └── References ──── hosted Reference Manager UI
+```
+
+This approach preserves the modules' independent interfaces and route structures while allowing PAH to coordinate project context around them.
+
+The host starts these services lazily and shuts them down with the PAH process.
+
+## Cross-module integration layer
+
+Cross-module behavior belongs under `pah/integrations/` rather than inside the specialized repositories.
+
+Major integration responsibilities include:
+
+### Analyzer → document references
+
+PAH can serialize analyzer entities into bounded Markdown or LaTeX blocks. Traceability metadata can identify the source entity, file, qualified name, and line range.
+
+### Analyzer → diagrams
+
+Analyzer entities and relationships can be transformed into human-editable `.diagram` source. Diagram parsing and normalization remain Document Workbench responsibilities.
+
+### Diagram → documentation
+
+Generated Mermaid content can be inserted into bounded document regions with an explicit link back to the source `.diagram` file.
+
+### Analyzer → documentation scaffolds
+
+PAH can generate deterministic documentation scaffolds from known analyzer facts. The integration is intended to expose known structure, not to present inferred prose as ground truth.
+
+### References → documents
+
+Reference records can be transformed into citation or bibliographic-note snippets. Citation generation uses existing bibliography keys; PAH does not invent citation keys silently.
+
+### Artifact traceability
+
+PAH can scan explicit markers in Markdown and LaTeX to show relationships among code entities, documents, diagrams, and research papers.
+
+Traceability is based on explicit metadata rather than heuristic guessing.
+
+## Git architecture
+
+Git is a host service and is optional for every workspace.
+
+### Local Git
+
+The local Git layer can provide:
+
+* repository detection and initialization;
+* status;
+* working and staged diffs;
+* stage/unstage;
+* commits;
+* local history;
+* local branch inspection and switching;
+* recursive submodule inspection;
+* local remote-configuration inspection.
+
+A plain directory remains a plain directory until the user explicitly enables Git or opens an existing repository.
+
+### Remote Git permission boundary
+
+Each workspace begins in **Local Only** mode.
+
+Network-capable operations require the user to explicitly switch the current workspace to **Manual Remote**. The permission is enforced in the host Git service rather than only by disabled buttons.
+
+Manual Remote allows explicit operations such as:
+
+* Fetch;
+* fast-forward-only Pull;
+* Push;
+* Clone;
+* recursive submodule update when missing objects may require remote access.
+
+It does not start background synchronization.
+
+Changing workspaces resets the remote permission to Local Only.
+
+### Credentials
+
+PAH does not store Git passwords, personal access tokens, or private SSH keys. Git credential helpers and SSH agents remain responsible for authentication.
+
+## Overleaf integration
+
+Overleaf is implemented as an integration over ordinary local files plus the existing Git service.
+
+### ZIP import
+
+Downloaded source archives can be imported locally without enabling Git. The importer validates archive paths, rejects unsafe entries, preserves directory structure, and inspects the resulting project for likely main TeX files, bibliographies, figures, and LaTeX support files.
+
+The imported project is then just an ordinary PAH workspace.
+
+### Git-backed projects
+
+Overleaf Git projects use the same Manual Remote boundary as other remote repositories. PAH recognizes Overleaf-oriented remotes and provides explicit Fetch, fast-forward-only Pull, and Push actions.
+
+Remote comparison state is based on Git tracking references. PAH distinguishes cached state from state refreshed by an explicit Fetch and does not imply continuous knowledge of the remote.
+
+Pull and Push operations include safeguards for dirty worktrees, unsaved editor buffers, unresolved conflicts, and known behind/diverged states where appropriate.
+
+### Bibliography handoff
+
+Detected `.bib` files remain ordinary project files. PAH can open them in the Workspace editor or explicitly import them into the selected Reference Manager library.
+
+No automatic bibliography transfer occurs.
+
+## State and synchronization rules
+
+PAH coordinates several kinds of state without merging their ownership.
+
+### Workspace changes
+
+Opening a different project rebinds host services and hosted tools to the new project where appropriate.
+
+Remote Git permission resets to Local Only.
+
+### Editor versus disk
+
+Dirty editor buffers are not silently overwritten by background or module changes. When PAH returns from a tool that may have modified files, clean buffers can be refreshed from disk while unsaved buffers remain protected.
+
+### Analysis freshness
+
+Python edits can invalidate existing analyzer results. PAH records this as stale analysis rather than automatically invoking analysis algorithms.
+
+### Reference-library state
+
+Reference-library selection is allowed to remain separate from the code/document workspace. When the hosted Reference Manager changes the active library, PAH can adopt that selection for its own reference integrations.
+
+## Privacy and network boundaries
+
+The core system is designed to function locally.
+
+PAH does not require cloud storage or a remote application server for ordinary Workspace, Analysis, Documents, References, terminal, or local Git usage.
+
+Network activity is associated with explicit features, such as:
+
+* Git remote operations;
+* Git-backed Overleaf operations;
+* external capabilities owned by individual optional modules.
+
+PAH's own remote Git boundary starts disabled for every workspace.
+
+## Third-party browser components
+
+PAH vendors the browser components used for its native editing and terminal experiences:
+
+* Ace for code editing;
+* xterm.js and the fit addon for terminal emulation.
+
+These assets are served locally by PAH. A source checkout can populate the pinned assets through the provided vendor scripts; release distributions can include the vendored files directly.
+
+Normal project use does not require loading these components from a CDN.
+
 ## Dependency rules
 
-1. Each major module remains independently runnable.
-2. Major modules do not import one another.
-3. PAH imports only documented public module façades.
-4. Cross-module workflows live under `pah/integrations/` or PAH's web coordination layer.
-5. PAH remains useful when optional modules are unavailable.
-6. General editing, terminal, environment, and filesystem behavior remain host concerns.
-7. Specialized analysis/document/reference behavior remains module-local.
-8. Submodules pin known-compatible revisions rather than silently following latest `main`.
-9. PAH state must not silently add hidden metadata directories to a user's project.
-10. Cross-module snippets enter the unsaved editor buffer first; PAH does not overwrite an open draft behind the editor.
-11. Analyzer-backed generation/refresh requires explicit current analysis; stale results are not silently treated as authoritative.
-12. Traceability is based on explicit PAH markers, not heuristic text matching.
-13. Generated documentation scaffolds may state deterministic analyzer facts but must not pretend inferred prose is ground truth.
+The architecture follows these rules:
 
-## Full standalone UI hosting (PAH 0.6)
+1. PAH owns general workspace behavior and cross-module coordination.
+2. Specialized modules remain independently runnable.
+3. Specialized modules do not import one another through PAH.
+4. Cross-module workflows belong to PAH's integration layer.
+5. PAH remains useful when optional specialized modules are unavailable.
+6. User projects remain ordinary filesystem projects rather than PAH-specific containers.
+7. PAH state is kept outside user projects unless the user explicitly creates an artifact.
+8. Unsaved editor buffers are protected from silent replacement.
+9. Network Git activity requires explicit per-workspace permission and explicit user action.
+10. Credentials remain outside PAH's project metadata.
+11. Traceability uses explicit markers and known facts rather than hidden heuristic state.
+12. Presentation choices such as collapse or detach must not create duplicate backend sessions when one shared session is intended.
 
-PAH 0.6 adds a presentation layer above the public-API integrations. It does **not** merge the standalone Flask applications into the PAH Flask routing table. Their mature frontends use absolute `/api/...` URLs, so merging them directly would cause route collisions and force module-specific frontend rewrites.
+## Design intent
 
-Instead, `pah/full_tools.py` runs each installed standalone web app on a private loopback port and PAH exposes them as switchable full work modes:
+PAH is not a wrapper around one monolithic application. It is a host that gives several independent local tools a shared project context and a consistent workspace.
 
-```text
-PAH :8765
-  ├── Workspace        native PAH UI
-  ├── Analysis   ───── iframe ───── CodeAnalyzer UI :8766
-  ├── Documents  ───── iframe ───── Document UI     :8767
-  └── References ───── iframe ───── Reference UI    :8768
-```
-
-The loopback servers are started lazily when full-tool status is first requested. They are not additional user-managed processes. PAH stops them on host shutdown. Normal internal access logs are suppressed; errors remain visible.
-
-### Document compatibility adapter
-
-The standalone Document Workbench normally owns a `documents/<project>` hierarchy. PAH instead binds it to the current arbitrary workspace through a host-owned `WorkspaceDocumentEngine` adapter. The module UI and module routes remain unchanged. Project create/delete are disabled in this hosted mode; file/folder/document operations act on the real PAH workspace. Build outputs remain under PAH state rather than being injected into the source repository.
-
-### State synchronization rules
-
-1. PAH workspace changes rebind/restart the hosted analyzer UI.
-2. The hosted document adapter resolves its project dynamically from the current PAH workspace.
-3. The hosted reference manager uses a PAH-state config file, never the module repository's `config.json`.
-4. Leaving a hosted tool refreshes clean PAH editor tabs from disk; dirty buffers are preserved.
-5. Leaving hosted Analysis marks quick-panel analysis stale because refactor operations may have modified Python source.
-6. Reference-library changes made in the hosted manager are adopted by PAH's quick reference adapter.
-
-This hosting layer is a UI integration concern only. `CodeAnalyzer`, `DocumentEngine`, and `ReferenceManager` still do not import PAH or one another.
-
-
-## Detachable tool windows (PAH 0.7)
-
-Detachment is a host presentation concern. Analysis, Documents, and References continue to run on the same private loopback servers introduced in 0.6; a detached PAH browser window simply hosts the corresponding tool URL in its own frame. PAH intentionally avoids starting a second module backend.
-
-The host keeps at most one detached window reference per tool. A detached top-level mode is focused rather than duplicated. Reattach or window close runs the same conservative state-handoff path used when leaving a full tool, refreshing clean editor buffers and relevant quick-panel state.
-
-The terminal is different because it is PAH-native rather than a hosted module. Detachment transfers PTY polling to the popup while retaining the same server-side terminal id. The docked and detached terminal therefore never race to consume the PTY stream. Reattachment resumes polling in the main PAH window.
-
-
-## Shared visual identity (PAH 0.7.1)
-
-Visual identity remains a presentation concern. The host retains `pah/web/static/pah.css` as the behavioral/layout baseline and loads `pah-identity.css`, `pah-workspace.css`, and `pah-tools.css` afterward as reviewable overrides.
-
-Standalone/detached services cannot inherit CSS through their iframe/window boundary, so each independently runnable module carries a synchronized copy of the kit's `pah-module-theme.css` plus a narrow `pah-compat.css` adapter for its existing markup. The Code Analyzer inlines these styles with its existing report CSS; Document Workbench, Reference Manager, and Research Search load them from their own static roots. This intentionally duplicates a small presentation asset so every module remains independently runnable.
-
-The visual layer may add semantic classes/data attributes such as `pah-module` and `pah-tool-nav`, but it must not rename existing IDs, routes, APIs, or JavaScript contracts. Layout ownership, detach/reattach behavior, pane collapse behavior, and module boundaries remain unchanged.
-
-
-## Flexible workspace pane contract (PAH 0.8 Sprint 1)
-
-The native Workspace treats its auxiliary surfaces as presentation panes rather than permanent layout requirements. `project`, `context`, and `terminal` use one host-side pane-state contract with `expanded`/`collapsed` presentation state. Collapsing changes only DOM/layout presentation; it does not clear selected files, analysis/reference/document context, open editor tabs, or the terminal PTY.
-
-The project and context panes collapse to narrow restore rails, and the editor grid expands into the released width. The terminal keeps its existing live PTY while collapsed and routes its existing detach/reattach behavior through the same pane-state helper. No pane state is persisted across browser sessions in Sprint 1; persistence is reserved for the later layout-persistence sprint.
-
-## Compact service launcher (PAH 0.8 Sprint 2)
-
-PAH no longer treats every secondary action as permanent top-bar or full-tool chrome. Workspace remains a direct mode, while Analysis, Documents, and References use compact split launchers: the primary button opens/focuses the tool and the adjacent menu exposes alternate presentation actions such as opening/focusing a detached window and reloading the hosted view.
-
-Host-owned secondary workspace capabilities are grouped under `Tools`: Project Tree, Project Tools, Terminal, detached Terminal Window, and Python Environment. Pane entries route through the same pane-state contract introduced in Sprint 1, so launcher actions do not create duplicate state or separate sessions. Terminal Window continues to transfer the existing PTY rather than starting a second shell.
-
-Launcher menus are transient presentation surfaces. They close on selection, outside click, or Escape, and do not reserve workspace width. Full-tool status strips retain status/binding information but no longer duplicate Detach/Reload controls that are already available from the launcher. This keeps the editor/work area visually dominant while preserving one-click access to core modes.
-
-
-## Generic dock/detach controller (PAH 0.8 Sprint 3)
-
-PAH 0.8.2 replaces the earlier per-tool popup lifecycle with a single window-surface controller in the host frontend. The controller owns popup references, detached-state detection, focus behavior, popup creation, reattachment, manual-window-close detection, and the shared watcher.
-
-Registered surfaces currently include `analysis`, `documents`, `references`, and `terminal`. Analysis/Documents/References use the hosted-tool adapter and therefore continue to reuse their existing PAH-managed loopback servers. Terminal uses a PTY adapter: detaching transfers polling to the popup and reattaching resumes docked polling against the same terminal id.
-
-Presentation state is normalized as `closed`, `docked`, `collapsed`, or `detached` where meaningful. Tool-specific code is limited to adapters for content/lifecycle differences; it no longer owns generic window bookkeeping. This is intentionally a presentation architecture only: module APIs, routes, workspace binding, terminal APIs, and submodule ownership are unchanged.
-
-
-## Persistent workspace presentation state (PAH 0.8.3)
-
-Sprint 4 keeps workspace presentation state entirely in the host frontend. `localStorage` key `pah.workspace.layout.v1` records only pane collapse flags, Project/Project Tools widths, Terminal height, and the last normal work mode. It does not store repository contents, credentials, remote configuration, terminal output, or detached-window handles. If browser storage is disabled/corrupt, PAH silently falls back to built-in layout defaults.
-
-The three resizable panes use the existing pane-state contract rather than introducing another layout system. Project Tree and Project Tools retain collapsed rails; Terminal retains the same PTY lifecycle. Resize handles only mutate CSS custom properties (`--project-pane-width`, `--context-pane-width`, `--terminal-pane-height`) and persist the resulting numeric preferences on pointer release.
-
-Detached surfaces remain owned by the PAH 0.8.2 window-surface controller. Their browser window objects and screen positions are intentionally ephemeral and are not restored from persistence. This keeps startup deterministic and avoids popup-policy failures.
-
-Presentation persistence remains local-first: no layout action causes network access and no layout metadata is injected into the user's workspace.
-
-## Research Search companion service (PAH 0.8.4)
-
-Research Search remains a nested module owned by Reference Manager:
+The architecture intentionally keeps these concerns distinct:
 
 ```text
-PAH
-  └── References launcher
-        ↓
-Reference Manager hosted UI/service :8768
-        ↓ existing /api/research-search/launch
-Reference Manager/modules/paper_searcher
-        ↓
-Research Search :8770
+Workspace ownership        → PAH
+Code analysis              → Code Analyzer
+Document semantics/builds  → Document Workbench
+Paper/library management   → Reference Manager
+Research acquisition       → Research Search
+Version control            → PAH Git service
+Overleaf coordination      → PAH integration layer
 ```
 
-PAH does not import or reimplement Paper Searcher application logic. `FullToolManager` only detects whether the nested module is installed, ensures the existing hosted Reference Manager is available, calls Reference Manager's existing launch endpoint, and returns the resulting loopback URL to the host frontend. Reference Manager therefore remains the process/service owner.
+This separation allows each component to evolve independently while PAH focuses on the workflows that connect them.
 
-The frontend registers `research_search` with the generic window-surface controller as a `companion` surface. Companion surfaces are window-only: their meaningful presentation states are `closed` and `detached`, and the controller supplies popup creation, focus-existing-window behavior, popup-block handling, manual-close detection, and shared window-state rendering. Research Search does not become a fifth top-level PAH work mode and does not reserve Workspace layout space.
-
-Missing nested-module state is reported through the same References launcher. This integration changes presentation/coordination only; the nested repository, its standalone operation, and its provider/search logic remain unchanged.
-
-
-## Optional Local Git service (PAH 0.8.5)
-
-Git is a host-owned workspace capability, not a module dependency and not a primary PAH work mode. `pah/core/git.py` binds to the active workspace and exposes an allowlist of local operations through `/api/git/...`: detection/init, status, diff, stage/unstage, commit, local history, existing-local-branch switching, and recursive submodule inspection.
-
-The local Git layer intentionally has no clone/fetch/pull/push/remote-management methods or HTTP routes. Opening a workspace never initializes Git automatically. A user may therefore operate PAH as a plain local directory, a local Git repository with no remotes, or—after the later remote-Git sprint—a repository with explicitly enabled remote actions.
-
-Presentation follows the flexible-workspace rules: `Git ▾` is a compact transient launcher. The full local Git surface opens in a modal dialog inside PAH or as a detachable `local` surface registered with the generic window controller. It never reserves a permanent Workspace column. The Git surface shows Changes/Diff/Commit/History/Branches/Submodules and clearly labels the Sprint 6 capability as **Local only**.
-
-Local Git operations act on the filesystem/repository on disk; unsaved PAH editor buffers are not implicitly staged or committed. Remote credentials, provider APIs, GitHub/Overleaf integration, and all network synchronization remain outside this sprint.
-
-
-## Explicit Remote Git layer (PAH 0.8.6)
-
-Sprint 7 keeps the local Git service host-owned but introduces a second, explicitly gated capability layer. `LocalGitService` starts in `local_only` mode and resets to that mode whenever a different PAH workspace is bound. Network-capable methods call `_require_remote_enabled()` before invoking Git, so the privacy boundary is enforced in the backend rather than only by frontend button state.
-
-```text
-PAH Git
-  ├── Local core (always available when Git is installed)
-  │     status / diff / stage / commit / history / local branches
-  │     remote configuration reads/writes / cached remote refs
-  │
-  └── Manual Remote (explicit session permission)
-        fetch / pull --ff-only / push / clone
-        recursive submodule update
-```
-
-No background fetch or synchronization loop exists. Listing, adding, or removing a remote changes only local repository configuration and does not require Manual Remote because those operations do not contact the target. Fetch/Pull/Push/Clone and both recursive submodule update modes require Manual Remote; even `git submodule update --init --recursive` is gated because Git may need to retrieve a missing recorded object.
-
-The Git presentation remains a secondary service. The former top-level `Git ▾` launcher is removed and its controls are nested under `Tools ▾ → Git`. The transient/detachable `/git` work surface remains registered with the generic window controller and adds a Remotes view for connectivity permission, remote configuration, explicit sync, and cloning. Provider-specific APIs are still outside the Git core; GitHub, GitLab, and Overleaf remain ordinary Git remotes at this layer.
-
-PAH never stores Git passwords, personal access tokens, or SSH private keys. Remote commands disable interactive terminal prompting; existing Git credential helpers or SSH agents may satisfy authentication, otherwise the operation fails visibly. Pull uses `--ff-only` so the PAH UI does not silently create merge commits or start a rebase.

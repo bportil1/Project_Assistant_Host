@@ -469,6 +469,12 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         terminals.write(payload.get("id", ""), payload.get("data", ""))
         return jsonify({"ok": True})
 
+    @app.post("/api/terminal/resize")
+    def terminal_resize():
+        payload = request.get_json(force=True)
+        terminals.resize(payload.get("id", ""), payload.get("cols", 80), payload.get("rows", 24))
+        return jsonify({"ok": True})
+
     @app.delete("/api/terminal")
     def terminal_stop():
         terminals.stop(request.args.get("id", ""))
@@ -909,7 +915,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.8.8",
+            "version": "0.9.1",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),

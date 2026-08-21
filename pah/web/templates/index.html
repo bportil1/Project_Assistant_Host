@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>PAH — Project Assistant Host</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/xterm/xterm.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='pah.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='pah-identity.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='pah-workspace.css') }}">
@@ -114,8 +115,7 @@
         <p>PAH 0.6 adds switchable full Analysis, Documents, and References workspaces while keeping code analysis, documents, and references independently runnable.</p>
       </div>
       <div id="editorWrap" class="editor-wrap hidden">
-        <pre id="highlightLayer" aria-hidden="true"><code id="highlightCode"></code></pre>
-        <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+        <div id="editor" class="workspace-editor" data-ace-base="{{ url_for('static', filename='vendor/ace') }}" aria-label="Workspace editor"></div>
       </div>
       <div class="statusbar">
         <span id="fileStatus">No file open</span>
@@ -358,11 +358,7 @@
         <button id="terminalToggle">Hide</button>
       </div>
     </div>
-    <pre id="terminalOutput" class="terminal-output"></pre>
-    <div class="terminal-input-row">
-      <span>›</span>
-      <input id="terminalInput" type="text" autocomplete="off" spellcheck="false" placeholder="Enter terminal command">
-    </div>
+    <div id="terminalEmulator" class="terminal-emulator" role="application" aria-label="PAH terminal"></div>
   </section>
 </div>
 
@@ -489,7 +485,9 @@
 </dialog>
 
 <div id="toast" class="toast"></div>
-<script src="{{ url_for('static', filename='syntax.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/ace/ace.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/xterm/xterm.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/xterm/addon-fit.js') }}"></script>
 <script src="{{ url_for('static', filename='pah.js') }}"></script>
 </body>
 </html>

@@ -106,17 +106,38 @@
   color: #8ecae6;
 }
 
-#highlightLayer {
-  color: var(--pah-editor-text);
-  background: var(--pah-editor);
-}
-
 #editor {
-  caret-color: #f7fbff;
+  background: var(--pah-editor);
+  color: var(--pah-editor-text);
 }
 
-#editor::selection {
+#editor .ace_gutter {
+  background: #171d24;
+  color: #72808f;
+  border-right: 1px solid var(--pah-editor-border);
+}
+
+#editor .ace_gutter-active-line {
+  background: #202a34;
+  color: #b8c5d1;
+}
+
+#editor .ace_marker-layer .ace_active-line {
+  background: rgb(142 202 230 / 0.055);
+}
+
+#editor .ace_marker-layer .ace_selection {
   background: rgb(142 202 230 / 0.28);
+}
+
+#editor .ace_cursor {
+  color: #f7fbff;
+  border-left-color: #f7fbff;
+}
+
+#editor .ace_fold {
+  background: #247ba0;
+  border-color: #8ecae6;
 }
 
 .statusbar {
@@ -137,21 +158,6 @@
   font-weight: 650;
 }
 
-/* Syntax palette: keep existing semantic mapping but harmonize accent colors. */
-.syn-comment { color: #738676; }
-.syn-string { color: #a9cc88; }
-.syn-number { color: #d2a0df; }
-.syn-keyword { color: #8ecae6; font-weight: 650; }
-.syn-name { color: #76d0ca; }
-.syn-decorator { color: #e2bd72; }
-.syn-operator { color: #b7c0ca; }
-.syn-heading { color: #8ecae6; font-weight: 700; }
-.syn-code { color: #a9cc88; }
-.syn-link { color: #76d0ca; }
-.syn-punct { color: #b7c0ca; }
-.syn-tag { color: #8ecae6; }
-.syn-attr { color: #e2bd72; }
-
 /* ----- Terminal -------------------------------------------------------- */
 
 .terminal-panel {
@@ -159,25 +165,18 @@
   border-top: 2px solid var(--pah-navy-900);
 }
 
-.terminal-output {
-  color: #cfdbc9;
+.terminal-emulator {
   background: var(--pah-terminal);
+  color: #cfdbc9;
 }
 
-.terminal-input-row {
-  background: #151b21;
-  color: var(--pah-sky-300);
-  border-top-color: #29333e;
+.terminal-emulator .xterm {
+  height: 100%;
+  padding: 0;
 }
 
-.terminal-input-row input {
-  color: #e6edf3;
-  background: transparent;
-  border: 0;
-}
-
-.terminal-input-row input::placeholder {
-  color: #70808e;
+.terminal-emulator .xterm-screen {
+  cursor: text;
 }
 
 .terminal-panel.detached .terminal-heading > span::after {
