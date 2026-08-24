@@ -676,8 +676,32 @@ def advance_latest_modules(
     return {"components": results, "parent_changes": parent_changes}
 
 
+def ensure_compatibility_test_dependencies(root: Path, python: Path) -> None:
+    """Ensure the developer-only test runner exists before compatibility checks.
+
+    Normal PAH setup installs runtime dependencies only. ``--latest-modules`` is
+    explicitly a developer workflow, so it may install the host ``dev`` extra on
+    demand rather than making pytest a runtime requirement for every PAH user.
+    """
+    probe = _run([python, "-c", "import pytest"], cwd=root, check=False, capture=True)
+    if probe.returncode == 0:
+        return
+    print("\n== Compatibility test dependencies ==")
+    print("pytest is not installed in the PAH environment; installing the host dev extra.")
+    result = _run([python, "-m", "pip", "install", "-e", ".[dev]"], cwd=root, check=False)
+    if result.returncode != 0:
+        raise LifecycleError(
+            "Unable to install compatibility-test dependencies. "
+            "Run .venv/bin/python -m pip install -e '.[dev]' and retry."
+        )
+    verify = _run([python, "-c", "import pytest"], cwd=root, check=False, capture=True)
+    if verify.returncode != 0:
+        raise LifecycleError("pytest is still unavailable after installing the host dev extra.")
+
+
 def run_component_tests(root: Path, python: Path) -> dict:
     """Run the test suites that are present in the host and managed modules."""
+    ensure_compatibility_test_dependencies(root, python)
     print("\n== Compatibility tests ==")
     targets = [("PAH host", root)] + [
         (component.label, root / component.path) for component in PYTHON_COMPONENTS if component.key != "pah"

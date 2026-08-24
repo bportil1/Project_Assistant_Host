@@ -8,3 +8,5 @@ htmlcov/
 *.log
 pah/web/static/vendor/ace/
 pah/web/static/vendor/xterm/
+
+*.egg-info/

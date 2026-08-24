@@ -51,8 +51,11 @@ def test_git_http_defaults_local_only_and_remote_routes_require_explicit_permiss
 
         page = client.get("/git")
         assert page.status_code == 200
-        assert b"MANUAL REMOTE" in page.data
+        assert b'id="gitConnectivityBadge"' in page.data
+        assert b"LOCAL ONLY" in page.data
         assert b"Remotes" in page.data
+        git_js = (Path(__file__).resolve().parents[1] / "pah" / "web" / "static" / "git.js").read_text(encoding="utf-8")
+        assert "remoteEnabled ? 'MANUAL REMOTE' : 'LOCAL ONLY'" in git_js
 
 
 def test_opening_another_workspace_resets_remote_permission(tmp_path: Path):

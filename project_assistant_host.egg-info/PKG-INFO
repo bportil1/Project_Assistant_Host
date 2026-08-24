@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: project-assistant-host
-Version: 0.7.0
-Summary: Local host workspace for modular Python project assistance
-Requires-Python: >=3.10
-Requires-Dist: Flask<4,>=3.0
-Provides-Extra: dev
-Requires-Dist: pytest>=8; extra == "dev"

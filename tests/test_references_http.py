@@ -8,6 +8,15 @@ pytest.importorskip("reference_manager")
 from pah import create_app
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _expected_host_version() -> str:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    version_line = next(line for line in pyproject.splitlines() if line.startswith("version = "))
+    return version_line.split('"', 2)[1]
+
+
 def test_reference_http_surface_and_document_bridge(tmp_path: Path):
     project = tmp_path / "project"
     project.mkdir()
@@ -48,5 +57,5 @@ def test_reference_http_surface_and_document_bridge(tmp_path: Path):
         )
         assert saved.get_json()["paper"]["Status"] == "Read"
         health = client.get("/api/health").get_json()
-        assert health["version"] == "0.6.0"
+        assert health["version"] == _expected_host_version()
         assert health["references"]["available"] is True
