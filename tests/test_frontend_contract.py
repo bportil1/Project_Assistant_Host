@@ -140,8 +140,8 @@ def test_pah08_collapsible_workspace_panes_are_generic_and_wired():
 def test_pah_current_version_is_reported():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
-    assert 'version = "0.9.1"' in pyproject
-    assert '"version": "0.9.1"' in app
+    assert 'version = "0.9.4"' in pyproject
+    assert '"version": "0.9.4"' in app
 
 
 def test_pah081_compact_service_launchers_are_wired():

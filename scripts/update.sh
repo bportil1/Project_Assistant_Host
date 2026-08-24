@@ -2,7 +2,5 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-git pull
-if [[ -f .gitmodules ]]; then
-  git submodule update --init --recursive
-fi
+PYTHON_BIN="${PYTHON:-python3}"
+exec "$PYTHON_BIN" -m pah.lifecycle --root "$ROOT" update "$@"

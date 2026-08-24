@@ -114,9 +114,17 @@ class OverleafImportService:
         staging = Path(tempfile.mkdtemp(prefix=f".{dest.name}.pah-overleaf-", dir=str(dest.parent)))
         try:
             try:
-                with zipfile.ZipFile(stream) as archive:
-                    members = self._validated_members(archive)
-                    self._extract_members(archive, members, staging)
+                # Flask/Werkzeug uploads may arrive as a SpooledTemporaryFile-like
+                # wrapper whose interface is not fully compatible with Python 3.10's
+                # zipfile internals. Normalize every upload into a standard temporary
+                # binary file before opening the archive. This also keeps extraction
+                # independent of the lifetime/implementation of the request stream.
+                with tempfile.TemporaryFile(mode="w+b") as upload:
+                    shutil.copyfileobj(stream, upload)
+                    upload.seek(0)
+                    with zipfile.ZipFile(upload) as archive:
+                        members = self._validated_members(archive)
+                        self._extract_members(archive, members, staging)
             except zipfile.BadZipFile as exc:
                 raise OverleafImportError("The selected file is not a valid ZIP archive.") from exc
 

@@ -46,6 +46,28 @@ def test_overleaf_zip_import_is_local_preserves_tree_and_detects_document_assets
     assert project["counts"] == {"tex": 2, "bib": 1, "figures": 1, "support": 1}
 
 
+class UploadReadStream:
+    """Read-only upload wrapper without seek()/seekable()."""
+
+    def __init__(self, payload: bytes) -> None:
+        self._buffer = io.BytesIO(payload)
+
+    def read(self, size: int = -1) -> bytes:
+        return self._buffer.read(size)
+
+
+def test_overleaf_zip_import_normalizes_non_seekable_upload_stream(tmp_path: Path):
+    service = OverleafImportService()
+    archive = make_zip({"main.tex": r"\documentclass{article}\begin{document}x\end{document}"})
+    stream = UploadReadStream(archive.getvalue())
+    destination = tmp_path / "uploaded"
+
+    result = service.import_zip(stream, destination, filename="overleaf.zip")
+
+    assert result["project"]["likely_main"] == "main.tex"
+    assert (destination / "main.tex").exists()
+
+
 def test_overleaf_zip_import_rejects_traversal_and_nonempty_destination(tmp_path: Path):
     service = OverleafImportService()
     bad = make_zip({"../escape.tex": "bad"})
