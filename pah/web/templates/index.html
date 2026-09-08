@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='pah-identity.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='pah-workspace.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='pah-tools.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='pah-labs.css') }}">
 </head>
 <body>
 <div id="app">
@@ -17,13 +18,11 @@
     <nav class="mode-nav" aria-label="PAH work modes and services">
       <button class="mode-button active" data-mode="workspace">Workspace</button>
 
-      <div class="mode-launcher" data-tool-launcher="analysis">
-        <button class="mode-button" data-mode="analysis">Analysis</button>
-        <button class="mode-menu-toggle" type="button" data-menu-toggle="analysisMenu" aria-controls="analysisMenu" aria-expanded="false" aria-haspopup="menu" title="Analysis options">▾</button>
-        <div id="analysisMenu" class="service-menu hidden" role="menu">
-          <button type="button" data-service-tool="analysis" data-service-action="open">Open Analysis</button>
-          <button type="button" data-tool-detach="analysis">Open in New Window</button>
-          <button type="button" data-tool-reload="analysis">Reload</button>
+      <div class="mode-launcher labs-launcher">
+        <button id="labsMenuToggle" class="mode-button labs-menu-button" type="button" data-menu-toggle="labsMenu" aria-controls="labsMenu" aria-expanded="false" aria-haspopup="menu">Labs ▾</button>
+        <div id="labsMenu" class="service-menu labs-menu hidden" role="menu">
+          <button id="openCodeAnalysisLab" type="button"><span>Code Analysis Lab</span><span class="service-menu-meta">Workflow</span></button>
+          <button id="openMlLab" type="button" disabled title="ML Lab orchestration surface will be added after the Code Analysis Lab pattern is proven"><span>ML Lab</span><span class="service-menu-meta">Planned</span></button>
         </div>
       </div>
 
@@ -51,6 +50,7 @@
           <button id="referencesResearchSearch" type="button" data-service-tool="research_search" data-service-action="open"><span>Research Search</span><span id="researchSearchMenuStatus" class="service-menu-meta">Ready</span></button>
         </div>
       </div>
+
 
       <div class="mode-launcher tools-launcher">
         <button id="toolsMenuToggle" class="mode-button tools-menu-button" type="button" data-menu-toggle="toolsMenu" aria-controls="toolsMenu" aria-expanded="false" aria-haspopup="menu">Tools ▾</button>
@@ -329,6 +329,42 @@
         </section>
       </div>
     </aside>
+  </main>
+
+  <main id="codeAnalysisLabMode" class="lab-mode mode-surface hidden">
+    <aside id="codeAnalysisLabRail" class="lab-workflow-rail">
+      <div class="lab-rail-heading">
+        <div>
+          <span class="lab-kicker">CODE ANALYSIS LAB</span>
+          <strong>Research workflow</strong>
+        </div>
+        <button id="codeAnalysisRailToggle" class="pane-toggle" type="button" aria-controls="codeAnalysisLabRail" aria-expanded="true" title="Collapse workflow rail">‹</button>
+      </div>
+      <div id="codeAnalysisWorkflowSummary" class="lab-workflow-summary">Loading workflow…</div>
+      <nav id="codeAnalysisWorkflowSteps" class="lab-workflow-steps" aria-label="Code Analysis Lab workflow"></nav>
+      <div class="lab-rail-footer">
+        <button id="refreshCodeAnalysisLab" type="button">Refresh Status</button>
+      </div>
+    </aside>
+
+    <section class="lab-workspace">
+      <header class="lab-workspace-header">
+        <div>
+          <span class="lab-kicker">PAH WORKFLOW COLLECTION</span>
+          <h1>Code Analysis Lab</h1>
+          <p id="codeAnalysisLabDescription">Software structure, security, quality modeling, and learned representation analysis.</p>
+        </div>
+        <div class="lab-header-actions">
+          <button id="codeAnalysisBackWorkspace" type="button">Back to Workspace</button>
+        </div>
+      </header>
+
+      <div id="codeAnalysisModuleHealth" class="lab-module-health"></div>
+
+      <section id="codeAnalysisStepDetail" class="lab-step-detail">
+        <div class="analysis-placeholder">Select a workflow step.</div>
+      </section>
+    </section>
   </main>
 
   <section id="analysisMode" class="full-tool-view mode-surface hidden" data-tool="analysis">

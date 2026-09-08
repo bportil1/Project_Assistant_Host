@@ -134,6 +134,34 @@ References hosts the Research Paper Repository Manager and can work with a paper
 
 Research Search is available as an optional companion window through the References menu when its nested module is installed.
 
+## Goal-oriented labs and reusable modules
+
+PAH is evolving from a fixed set of work modes toward goal-oriented lab
+collections built from reusable modules. A lab is a host-owned workflow view,
+not a repository owner or plugin sandbox.
+
+The first collection identities are **Code Analysis Lab** and **ML Lab**. A
+single module may appear in more than one collection, and modules are not
+required to own a browser UI. This allows specialized UI-owning tools and
+headless engines to participate through the same small host contract.
+
+PAH exposes the current semantic registry through:
+
+```text
+GET /api/orchestration/modules
+GET /api/orchestration/labs
+GET /api/orchestration/labs/<lab-id>
+```
+
+Optional standalone modules can register semantic manifests through the
+`pah.modules` Python entry-point group rather than requiring a new hard-coded
+import in the host. Independently runnable modules can separately expose
+launch/status/shutdown adapters through the `pah.runtimes` entry-point group.
+The runtime contract is UI-neutral: an adapter may return a PAH-owned surface,
+a standalone URL, or represent a headless service. Cross-module scientific
+conversions remain lab-controller responsibilities rather than being added
+pairwise to the individual repositories.
+
 ## A unified artifact workflow
 
 PAH keeps specialized tools independent, but it is designed around artifacts that can be reused across those tools.
@@ -261,6 +289,29 @@ modules/
 ```
 
 The three primary modules remain independently runnable and maintain their own repositories, tests, and interfaces. PAH coordinates them rather than copying their implementations into the host.
+
+## Goal-oriented labs
+
+PAH can present independently runnable modules as higher-level research workflows without moving scientific code into the host. The first collection is **Code Analysis Lab**, available from the **Labs** menu. Labs now occupy the top-navigation position previously used by the standalone Analysis launcher; the underlying Code Analyzer full surface remains available through its registered runtime adapter.
+
+Its controller currently models this workflow:
+
+```text
+Repository analysis        → Code Analyzer (optional)
+Quality evidence/model     → pyPIQUE
+Representation learning    → HSQA_DBN
+Latent-information analysis→ HSQA_DBN
+```
+
+The lab surface reports three kinds of state separately:
+
+- whether the expected module is registered with PAH;
+- whether the provider advertises the required capability;
+- whether the generic input/output artifacts required for the next handoff are registered.
+
+PAH does not mark a workflow step complete merely because its button was visited. Completion is artifact-driven. Missing modules or handoffs remain visible as blocked states rather than being replaced with hidden module-specific subprocess logic.
+
+Sprint 5B intentionally does not yet implement the pyPIQUE → HSQA_DBN conversion itself. That adapter belongs to the Code Analysis Lab integration layer in a later sprint.
 
 ## Installation
 

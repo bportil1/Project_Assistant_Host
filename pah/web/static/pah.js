@@ -43,6 +43,7 @@
       selected: null,
     },
     mode: 'workspace',
+    codeAnalysisLab: {snapshot: null, selectedStep: null, railCollapsed: false},
     git: {git_available: false, workspace: null, is_repository: false, repository_root: null, branch: null, detached: false, head: null, changes: [], staged_count: 0, unstaged_count: 0, untracked_count: 0, submodules: [], remotes: [], tracking: null, connectivity_mode: 'local_only', local_only: true, remote_enabled: false},
     overleaf: {lastImport: null, sync: null},
     fullTools: {
@@ -1321,7 +1322,7 @@
   }
 
   async function setMode(mode) {
-    if (!['workspace', 'analysis', 'documents', 'references'].includes(mode)) return;
+    if (!['workspace', 'analysis', 'documents', 'references', 'code_analysis_lab'].includes(mode)) return;
     closeServiceMenus();
     if (mode !== 'workspace' && isSurfaceDetached(mode)) {
       surfaceWindow(mode).focus();
@@ -1331,7 +1332,7 @@
     if (previousMode !== 'workspace' && previousMode !== mode) {
       await syncReturnedTool(previousMode);
     }
-    if (mode !== 'workspace') {
+    if (['analysis', 'documents', 'references'].includes(mode)) {
       await refreshFullTools();
       const info = state.fullTools[mode];
       if (!info?.available) {
@@ -1350,8 +1351,258 @@
     $('analysisMode').classList.toggle('hidden', mode !== 'analysis');
     $('documentsMode').classList.toggle('hidden', mode !== 'documents');
     $('referencesMode').classList.toggle('hidden', mode !== 'references');
+    $('codeAnalysisLabMode')?.classList.toggle('hidden', mode !== 'code_analysis_lab');
+    $('labsMenuToggle')?.classList.toggle('active', mode === 'code_analysis_lab');
     $('app').classList.toggle('full-mode', mode !== 'workspace');
     if (mode === 'workspace' && editor) window.requestAnimationFrame(() => editor.resize(true));
+  }
+
+  async function launchRegisteredModule(moduleId, {detached = false} = {}) {
+    const data = await api(`/api/orchestration/modules/${encodeURIComponent(moduleId)}/launch`, {
+      method: 'POST',
+      body: JSON.stringify({detached: Boolean(detached)}),
+    });
+    if (data.presentation === 'host_surface' && data.surface) {
+      await openWindowSurface(data.surface, {detached: Boolean(detached)});
+      return data;
+    }
+    if (data.url) {
+      window.open(data.url, '_blank', 'noopener');
+      return data;
+    }
+    if (data.message) toast(data.message);
+    return data;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Code Analysis Lab
+  // ---------------------------------------------------------------------------
+  const labStateLabels = {
+    complete: 'Complete',
+    ready: 'Ready',
+    blocked: 'Blocked',
+    missing_provider: 'Module unavailable',
+    missing_capability: 'Capability unavailable',
+    ambiguous: 'Provider choice required',
+  };
+
+  function codeAnalysisStep(stepId) {
+    return state.codeAnalysisLab.snapshot?.workflow?.steps?.find(step => step.step_id === stepId) || null;
+  }
+
+  function setCodeAnalysisRailCollapsed(collapsed) {
+    state.codeAnalysisLab.railCollapsed = Boolean(collapsed);
+    const rail = $('codeAnalysisLabRail');
+    const toggle = $('codeAnalysisRailToggle');
+    rail?.classList.toggle('collapsed', state.codeAnalysisLab.railCollapsed);
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', state.codeAnalysisLab.railCollapsed ? 'false' : 'true');
+      toggle.textContent = state.codeAnalysisLab.railCollapsed ? '›' : '‹';
+      toggle.title = state.codeAnalysisLab.railCollapsed ? 'Expand workflow rail' : 'Collapse workflow rail';
+    }
+  }
+
+  function renderCodeAnalysisModuleHealth() {
+    const holder = $('codeAnalysisModuleHealth');
+    if (!holder) return;
+    holder.replaceChildren();
+    const modules = state.codeAnalysisLab.snapshot?.expected_modules || [];
+    for (const item of modules) {
+      const card = document.createElement('div');
+      card.className = `lab-module-card ${item.registered ? 'registered' : 'missing'}`;
+      const name = document.createElement('strong');
+      name.textContent = item.display_name;
+      const status = document.createElement('span');
+      if (item.registered) {
+        const version = item.manifest?.version ? ` · ${item.manifest.version}` : '';
+        const runtime = item.runtime || null;
+        if (!runtime) status.textContent = `Registered${version}`;
+        else if (runtime.running) status.textContent = `Registered${version} · Running`;
+        else if (runtime.launchable) status.textContent = `Registered${version} · Ready to open`;
+        else status.textContent = `Registered${version} · No launch adapter`;
+      } else {
+        status.textContent = 'Not registered with PAH';
+      }
+      card.append(name, status);
+      holder.appendChild(card);
+    }
+  }
+
+  function renderCodeAnalysisWorkflowRail() {
+    const holder = $('codeAnalysisWorkflowSteps');
+    const summary = $('codeAnalysisWorkflowSummary');
+    const snapshot = state.codeAnalysisLab.snapshot;
+    if (!holder || !snapshot) return;
+    holder.replaceChildren();
+    const steps = snapshot.workflow?.steps || [];
+    const completeCount = steps.filter(step => step.state === 'complete').length;
+    if (summary) {
+      const recommended = steps.find(step => step.step_id === snapshot.recommended_step);
+      summary.textContent = recommended
+        ? `${completeCount}/${steps.length} complete · Next: ${recommended.label}`
+        : `${completeCount}/${steps.length} complete`;
+    }
+    for (const [index, step] of steps.entries()) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'lab-step-button';
+      button.classList.toggle('active', step.step_id === state.codeAnalysisLab.selectedStep);
+      button.title = `${index + 1}. ${step.label} — ${labStateLabels[step.state] || step.state}`;
+
+      const led = document.createElement('span');
+      led.className = `lab-step-led ${step.state}`;
+      led.setAttribute('aria-hidden', 'true');
+
+      const copy = document.createElement('span');
+      copy.className = 'lab-step-copy';
+      const title = document.createElement('strong');
+      title.textContent = `${index + 1}. ${step.label}`;
+      const provider = document.createElement('span');
+      const resolvedProvider = step.resolution?.provider?.display_name;
+      provider.textContent = resolvedProvider || step.provider_module || step.capability;
+      copy.append(title, provider);
+
+      const status = document.createElement('span');
+      status.className = 'lab-step-state';
+      status.textContent = labStateLabels[step.state] || step.state;
+
+      button.append(led, copy, status);
+      button.addEventListener('click', () => {
+        state.codeAnalysisLab.selectedStep = step.step_id;
+        renderCodeAnalysisWorkflowRail();
+        renderCodeAnalysisStepDetail(step.step_id);
+      });
+      holder.appendChild(button);
+    }
+  }
+
+  function appendLabContractRow(holder, left, right) {
+    const row = document.createElement('div');
+    row.className = 'lab-contract-row';
+    const label = document.createElement('span');
+    label.textContent = left;
+    const value = document.createElement('code');
+    value.textContent = right;
+    row.append(label, value);
+    holder.appendChild(row);
+  }
+
+  function renderCodeAnalysisStepDetail(stepId) {
+    const holder = $('codeAnalysisStepDetail');
+    const step = codeAnalysisStep(stepId);
+    if (!holder || !step) return;
+    holder.replaceChildren();
+
+    const title = document.createElement('h2');
+    title.textContent = step.label;
+    const description = document.createElement('p');
+    description.textContent = step.description || '';
+    const banner = document.createElement('div');
+    banner.className = `lab-step-banner ${step.state}`;
+
+    if (step.state === 'complete') banner.textContent = 'Complete — expected output artifacts are registered with PAH.';
+    else if (step.state === 'ready') banner.textContent = 'Ready — the provider is registered and required input artifacts are available.';
+    else if (step.state === 'blocked') banner.textContent = 'Blocked — one or more required cross-module artifacts have not been registered yet.';
+    else if (step.state === 'missing_provider') banner.textContent = `Blocked — ${step.provider_module || 'a required provider'} is not registered with PAH.`;
+    else if (step.state === 'missing_capability') banner.textContent = 'Blocked — the registered provider does not advertise the required capability.';
+    else if (step.state === 'ambiguous') banner.textContent = 'Provider choice required — more than one module advertises this capability.';
+    else banner.textContent = labStateLabels[step.state] || step.state;
+
+    holder.append(title, description, banner);
+
+    const grid = document.createElement('div');
+    grid.className = 'lab-detail-grid';
+
+    const providerSection = document.createElement('div');
+    providerSection.className = 'lab-detail-section';
+    const providerHeading = document.createElement('h3');
+    providerHeading.textContent = 'Provider';
+    providerSection.appendChild(providerHeading);
+    const provider = step.resolution?.provider;
+    if (provider) {
+      appendLabContractRow(providerSection, 'Module', provider.display_name || provider.module_id);
+      appendLabContractRow(providerSection, 'Capability', step.capability);
+      if (provider.version) appendLabContractRow(providerSection, 'Version', provider.version);
+      const runtime = provider.runtime || null;
+      if (runtime) {
+        appendLabContractRow(
+          providerSection,
+          'Runtime',
+          runtime.running ? 'Running' : (runtime.launchable ? 'Ready' : 'Unavailable'),
+        );
+        if (runtime.message) appendLabContractRow(providerSection, 'Runtime note', runtime.message);
+      }
+      if (runtime?.launchable) {
+        const actions = document.createElement('div');
+        actions.className = 'lab-provider-actions';
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.textContent = 'Open Provider';
+        open.addEventListener('click', () => launchRegisteredModule(provider.module_id).catch(error => toast(error.message, true)));
+        const detach = document.createElement('button');
+        detach.type = 'button';
+        detach.textContent = 'Open Detached';
+        detach.addEventListener('click', () => launchRegisteredModule(provider.module_id, {detached: true}).catch(error => toast(error.message, true)));
+        actions.append(open, detach);
+        providerSection.appendChild(actions);
+      }
+    } else {
+      appendLabContractRow(providerSection, 'Expected module', step.provider_module || 'Capability provider');
+      appendLabContractRow(providerSection, 'Capability', step.capability);
+    }
+
+    const inputs = document.createElement('div');
+    inputs.className = 'lab-detail-section';
+    const inputsHeading = document.createElement('h3');
+    inputsHeading.textContent = 'Required artifacts';
+    inputs.appendChild(inputsHeading);
+    if (!(step.requirements || []).length) {
+      appendLabContractRow(inputs, 'Inputs', 'No cross-module artifact required');
+    } else {
+      for (const requirement of step.requirements || []) {
+        const suffix = requirement.optional ? 'optional' : (requirement.satisfied ? 'available' : 'missing');
+        appendLabContractRow(inputs, requirement.kind, suffix);
+      }
+    }
+
+    const outputs = document.createElement('div');
+    outputs.className = 'lab-detail-section';
+    const outputsHeading = document.createElement('h3');
+    outputsHeading.textContent = 'Expected outputs';
+    outputs.appendChild(outputsHeading);
+    if (!(step.outputs || []).length) appendLabContractRow(outputs, 'Outputs', 'None declared');
+    for (const output of step.outputs || []) {
+      appendLabContractRow(outputs, output.kind, output.available ? 'registered' : 'not registered');
+    }
+
+    grid.append(providerSection, inputs, outputs);
+    holder.appendChild(grid);
+  }
+
+  function renderCodeAnalysisLab() {
+    const snapshot = state.codeAnalysisLab.snapshot;
+    if (!snapshot) return;
+    if ($('codeAnalysisLabDescription')) $('codeAnalysisLabDescription').textContent = snapshot.lab?.description || snapshot.workflow?.description || '';
+    renderCodeAnalysisModuleHealth();
+    if (!state.codeAnalysisLab.selectedStep || !codeAnalysisStep(state.codeAnalysisLab.selectedStep)) {
+      state.codeAnalysisLab.selectedStep = snapshot.recommended_step || snapshot.workflow?.steps?.[0]?.step_id || null;
+    }
+    renderCodeAnalysisWorkflowRail();
+    if (state.codeAnalysisLab.selectedStep) renderCodeAnalysisStepDetail(state.codeAnalysisLab.selectedStep);
+    setCodeAnalysisRailCollapsed(state.codeAnalysisLab.railCollapsed);
+  }
+
+  async function refreshCodeAnalysisLab() {
+    const data = await api('/api/orchestration/code-analysis');
+    state.codeAnalysisLab.snapshot = data;
+    renderCodeAnalysisLab();
+    return data;
+  }
+
+  async function openCodeAnalysisLab() {
+    closeServiceMenus();
+    await setMode('code_analysis_lab');
+    await refreshCodeAnalysisLab();
   }
 
   // ---------------------------------------------------------------------------
@@ -3325,6 +3576,11 @@
   // ---------------------------------------------------------------------------
   // Event wiring
   // ---------------------------------------------------------------------------
+  $('openCodeAnalysisLab')?.addEventListener('click', () => openCodeAnalysisLab().catch(error => toast(error.message, true)));
+  $('refreshCodeAnalysisLab')?.addEventListener('click', () => refreshCodeAnalysisLab().catch(error => toast(error.message, true)));
+  $('codeAnalysisBackWorkspace')?.addEventListener('click', () => setMode('workspace').catch(error => toast(error.message, true)));
+  $('codeAnalysisRailToggle')?.addEventListener('click', () => setCodeAnalysisRailCollapsed(!state.codeAnalysisLab.railCollapsed));
+
   document.querySelectorAll('.mode-button[data-mode]').forEach(button => {
     button.addEventListener('click', () => openWindowSurface(button.dataset.mode).catch(error => toast(error.message, true)));
   });

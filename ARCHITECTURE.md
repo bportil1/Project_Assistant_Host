@@ -101,6 +101,97 @@ Project_Assistant_Host/
 └── run.py
 ```
 
+## Module contracts and lab orchestration
+
+PAH distinguishes installation metadata from workflow semantics. The existing
+`pah.components` registry still owns setup, editable-install, Git, browser-asset,
+and system-tool concerns. A separate dependency-free contract layer under
+`pah.contracts` describes modules, artifacts, host context, and workflow steps.
+
+This separation allows two very different module shapes to participate in the
+same host without forcing either shape on the other:
+
+```text
+UI-owning module                     Headless engine
+HSQA_DBN                             ML_Lab
+├── callable API                     ├── callable API
+├── standalone UI                    └── service adapter
+├── embedded/detached UI
+└── artifact provider
+             \                         /
+              \                       /
+               └── PAH module contract
+```
+
+Modules may advertise one or more collection memberships and capabilities. A
+module can therefore appear in more than one goal-oriented lab without being
+copied or owned by either lab.
+
+```text
+HSQA_DBN
+   ├── Code Analysis Lab
+   └── ML Lab
+```
+
+PAH lab definitions live under `pah.labs`. Lab membership is resolved from the
+registered module manifests, while `LabOrchestrator` resolves workflow steps by
+capability. If no provider exists, or more than one provider can satisfy a step,
+the orchestrator reports that state instead of silently importing or choosing a
+module.
+
+Optional modules can publish a manifest through the Python entry-point group:
+
+```text
+pah.modules
+```
+
+The entry point may expose PAH's `ModuleManifest` or an equivalent module-local
+mapping/dataclass. This keeps scientific repositories independent of the PAH
+package while avoiding hard-coded host imports for every new module.
+
+### Cross-module artifacts
+
+`pah.contracts.ArtifactRef` and `ArtifactRequirement` provide a small routing
+contract for later cross-module workflows. They describe artifact kind, schema,
+producer, location, metadata, and provenance without defining domain semantics.
+The producing module owns the schema; PAH/lab orchestration owns handoff.
+
+The intended dependency direction is:
+
+```text
+PAH host
+   ↓
+Lab controller / orchestrator
+   ↓
+module public APIs / adapters
+   ↓
+module scientific core
+```
+
+Scientific modules do not import one another merely to participate in a PAH
+workflow. Pairwise conversions such as a future pyPIQUE benchmark → HSQA_DBN
+input adapter belong to the Code Analysis Lab orchestration layer.
+
+### Initial collections
+
+The initial host-level collection definitions are:
+
+```text
+Code Analysis Lab
+    software structure, security, quality, and representation workflows
+
+ML Lab                    # collection
+    model/representation workflows
+
+ML_Lab                    # module/engine
+    reusable headless ML implementation
+```
+
+The collection keeps the established ID `ml_lab` used by module manifests such
+as HSQA_DBN. Lab IDs and module IDs are separate registry namespaces, so a
+future ML_Lab engine may use its own stable module identity without changing the
+collection contract.
+
 ## Native Workspace
 
 Workspace is PAH-native rather than an embedded specialized module.
@@ -524,6 +615,34 @@ Pull and Push operations include safeguards for dirty worktrees, unsaved editor 
 Detected `.bib` files remain ordinary project files. PAH can open them in the Workspace editor or explicitly import them into the selected Reference Manager library.
 
 No automatic bibliography transfer occurs.
+
+
+## Goal-oriented lab orchestration
+
+PAH now distinguishes installation metadata from semantic workflow orchestration. The **Code Analysis Lab** is the first concrete lab controller. It owns the cross-module process description while the scientific modules remain independent:
+
+```text
+Code Analysis Lab Controller
+        │
+        ├── Code Analyzer       static_analysis
+        ├── pyPIQUE             quality_modeling
+        └── HSQA_DBN            representation_learning
+                                mutual_information_analysis
+```
+
+The controller resolves each workflow step against the semantic module registry and a generic in-memory `ArtifactInventory`. Artifact kinds such as `feature_dataset`, `domain_mapping`, and `representation` are routing contracts only; PAH does not interpret their scientific contents.
+
+A step can therefore be:
+
+- `ready` when its provider and required artifacts are available;
+- `complete` when its expected output artifacts are registered;
+- `blocked` when required artifacts are missing;
+- `missing_provider` or `missing_capability` when the module contract is not satisfied;
+- `ambiguous` when a capability has more than one possible provider and the workflow has not selected one.
+
+The Code Analyzer is already host-owned, so PAH reflects current non-stale analyzer state into the lab inventory as a `code_analysis` artifact. pyPIQUE and HSQA_DBN artifacts will be registered by their future generic runtime/integration adapters rather than by hard-coded imports in either scientific repository.
+
+This design deliberately keeps the workflow controller as the one place allowed to know that a Code Analysis workflow composes these modules. The modules themselves do not import one another.
 
 ## State and synchronization rules
 

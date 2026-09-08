@@ -38,8 +38,11 @@ def test_pah05_routes_are_present():
 def test_pah06_full_tool_modes_exist_and_are_wired():
     html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
     js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
-    for mode in ["workspace", "analysis", "documents", "references"]:
+    for mode in ["workspace", "documents", "references"]:
         assert f'data-mode="{mode}"' in html
+    assert 'id="labsMenuToggle"' in html
+    assert 'data-mode="analysis"' not in html
+    assert 'id="analysisMode"' in html  # preserved as an internal runtime surface
     for element_id in [
         "analysisMode",
         "documentsMode",
@@ -68,9 +71,11 @@ def test_pah06_full_tool_routes_are_present():
 def test_pah07_detachable_tool_controls_exist_and_are_wired():
     html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
     js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
-    for tool in ["analysis", "documents", "references"]:
+    for tool in ["documents", "references"]:
         assert f'data-tool-detach="{tool}"' in html
+    assert 'data-tool-detach="analysis"' not in html
     assert 'id="terminalDetach"' in html
+    assert "launchRegisteredModule" in js
     # Detach behavior is now routed through the generic window-surface controller.
     for function_name in [
         "detachSurface",
@@ -80,7 +85,6 @@ def test_pah07_detachable_tool_controls_exist_and_are_wired():
         assert f"function {function_name}" in js or f"async function {function_name}" in js
     assert "isSurfaceDetached(mode)" in js
     assert "isSurfaceDetached('terminal')" in js
-
 
 def test_pah_reported_versions_match():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -142,14 +146,18 @@ def test_pah081_compact_service_launchers_are_wired():
     js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
     css = (ROOT / "pah" / "web" / "static" / "pah.css").read_text(encoding="utf-8")
 
-    for menu_id in ["analysisMenu", "documentsMenu", "referencesMenu", "toolsMenu"]:
+    for menu_id in ["labsMenu", "documentsMenu", "referencesMenu", "toolsMenu"]:
         assert f'id="{menu_id}"' in html
         assert f'data-menu-toggle="{menu_id}"' in html
+    assert 'id="analysisMenu"' not in html
 
-    for tool in ["analysis", "documents", "references"]:
+    for tool in ["documents", "references"]:
         assert f'data-service-tool="{tool}" data-service-action="open"' in html
         assert f'data-tool-detach="{tool}"' in html
         assert f'data-tool-reload="{tool}"' in html
+    assert 'data-service-tool="analysis" data-service-action="open"' not in html
+    assert 'data-tool-detach="analysis"' not in html
+    assert 'launchRegisteredModule' in js
 
     for pane in ["project", "context", "terminal"]:
         assert f'data-pane-target="{pane}"' in html
@@ -159,13 +167,9 @@ def test_pah081_compact_service_launchers_are_wired():
         assert f'id="{element_id}"' in html
 
     assert 'id="envButton"' not in html
-    assert "function closeServiceMenus" in js
-    assert "function toggleServiceMenu" in js
-    assert "async function reloadTool" in js
-    assert "[data-pane-target]" in js
-    assert ".service-menu" in css
-    assert ".service-menu.hidden" in css
-
+    assert '.mode-launcher' in css
+    assert '.service-menu' in css
+    assert 'function toggleServiceMenu' in js
 
 def test_pah081_full_tool_status_strips_do_not_duplicate_launcher_actions():
     html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")

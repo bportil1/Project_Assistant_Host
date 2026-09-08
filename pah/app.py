@@ -13,6 +13,15 @@ from .core.git import GitError, LocalGitService
 from .core.terminal import TerminalError, TerminalManager
 from .core.workspace import WorkspaceError, WorkspaceManager
 from .full_tools import FullToolManager
+from .contracts import ArtifactRef, ModuleContext
+from .labs import (
+    ArtifactInventory,
+    CodeAnalysisLabController,
+    RegistryError,
+    default_lab_registry,
+)
+from .module_catalog import default_module_registry
+from .runtime import HostSurfaceRuntimeAdapter, RuntimeRegistry, RuntimeRegistryError
 from .integrations import (
     AnalysisDiagramBridgeError,
     AnalyzerIntegration,
@@ -56,6 +65,30 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         documents_port=int(os.environ.get("PAH_DOCUMENTS_PORT", "8767")),
         references_port=int(os.environ.get("PAH_REFERENCES_PORT", "8768")),
     )
+    module_registry = default_module_registry(discover=True)
+    runtime_registry = RuntimeRegistry()
+    runtime_registry.discover_entry_points()
+    # PAH-owned mature tools are bridged into the same runtime contract used by
+    # independently installed modules. Host adapters intentionally replace any
+    # duplicate runtime entry point for these host-owned surfaces.
+    runtime_registry.register(HostSurfaceRuntimeAdapter("code_analyzer", "analysis", full_tools), replace=True)
+    runtime_registry.register(HostSurfaceRuntimeAdapter("tech_documents", "documents", full_tools), replace=True)
+    runtime_registry.register(HostSurfaceRuntimeAdapter("reference_manager", "references", full_tools), replace=True)
+    lab_registry = default_lab_registry()
+    lab_artifacts = ArtifactInventory()
+    code_analysis_lab = CodeAnalysisLabController(
+        module_registry,
+        lab=lab_registry.get("code_analysis_lab"),
+        artifacts=lab_artifacts,
+        runtimes=runtime_registry,
+    )
+    # Expose the registries to future host/lab adapters without forcing Flask
+    # route code to become the orchestration boundary.
+    app.extensions["pah_module_registry"] = module_registry
+    app.extensions["pah_runtime_registry"] = runtime_registry
+    app.extensions["pah_lab_registry"] = lab_registry
+    app.extensions["pah_lab_artifacts"] = lab_artifacts
+    app.extensions["pah_code_analysis_lab"] = code_analysis_lab
     if workspaces.root is not None:
         analyzer.bind(workspaces.root)
         documents.bind(workspaces.root)
@@ -66,10 +99,18 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     if ref_status.get("configured") and ref_status.get("library_root"):
         full_tools.bind_reference_library(ref_status.get("library_root"))
     atexit.register(terminals.stop_all)
+    atexit.register(runtime_registry.shutdown_all)
     atexit.register(full_tools.stop_all)
 
     def fs() -> FileSystemService:
         return FileSystemService(workspaces.require_root())
+
+    def orchestration_context() -> ModuleContext:
+        return ModuleContext(
+            project_root=workspaces.root,
+            working_root=workspaces.root,
+            runtime={"state_dir": str(workspaces.state_dir)},
+        )
 
 
     def overleaf_sync_payload(remote_name: str | None = None) -> dict:
@@ -119,6 +160,33 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         if status.get("stale"):
             raise AnalyzerIntegrationError("Re-analyze the project before generating or refreshing analyzer-backed artifacts.")
 
+    def sync_code_analysis_artifacts() -> None:
+        """Reflect host-owned Code Analyzer readiness in the lab inventory.
+
+        Scientific adapters will register their own artifacts later.  PAH owns
+        the existing Code Analyzer integration already, so this bridge only
+        reflects whether the current repository analysis is usable.
+        """
+        artifact_id = "code-analyzer-current"
+        status = analyzer.status()
+        if workspaces.root is None or not status.get("analyzed") or status.get("stale"):
+            lab_artifacts.remove(artifact_id)
+            return
+        lab_artifacts.register(ArtifactRef(
+            artifact_id=artifact_id,
+            kind="code_analysis",
+            producer_module="code_analyzer",
+            location=str(workspaces.root),
+            schema_id="pah.code-analysis.current",
+            schema_version="1",
+            metadata={
+                "workspace": str(workspaces.root),
+                "generation": status.get("generation"),
+                "summary": status.get("summary"),
+            },
+            provenance={"source": "PAH Code Analyzer integration"},
+        ))
+
     def error_response(exc: Exception, status: int = 400):
         return jsonify({"ok": False, "error": str(exc)}), status
 
@@ -143,6 +211,56 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     def index():
         return render_template("index.html")
 
+    @app.get("/api/orchestration/modules")
+    def orchestration_modules():
+        return jsonify({"ok": True, **module_registry.snapshot()})
+
+    @app.get("/api/orchestration/labs")
+    def orchestration_labs():
+        return jsonify({"ok": True, **lab_registry.snapshot(module_registry)})
+
+    @app.get("/api/orchestration/runtimes")
+    def orchestration_runtimes():
+        return jsonify({"ok": True, **runtime_registry.snapshot(orchestration_context())})
+
+    @app.get("/api/orchestration/modules/<module_id>/runtime")
+    def orchestration_module_runtime(module_id: str):
+        return jsonify({"ok": True, **runtime_registry.status(module_id, orchestration_context()).to_dict()})
+
+    @app.post("/api/orchestration/modules/<module_id>/launch")
+    def orchestration_module_launch(module_id: str):
+        payload = request.get_json(silent=True) or {}
+        try:
+            launch = runtime_registry.launch(
+                module_id,
+                orchestration_context(),
+                detached=bool(payload.get("detached", False)),
+            )
+        except RuntimeRegistryError as exc:
+            return error_response(exc, 503)
+        return jsonify({"ok": True, **launch.to_dict()})
+
+    @app.post("/api/orchestration/modules/<module_id>/shutdown")
+    def orchestration_module_shutdown(module_id: str):
+        runtime_registry.shutdown(module_id, orchestration_context())
+        return jsonify({"ok": True, "module_id": module_id})
+
+    @app.get("/api/orchestration/labs/<lab_id>")
+    def orchestration_lab(lab_id: str):
+        try:
+            return jsonify({"ok": True, **lab_registry.lab_snapshot(lab_id, module_registry)})
+        except RegistryError as exc:
+            return error_response(exc, 404)
+
+    @app.get("/api/orchestration/code-analysis")
+    def orchestration_code_analysis():
+        sync_code_analysis_artifacts()
+        return jsonify({
+            "ok": True,
+            "workspace": str(workspaces.root) if workspaces.root else None,
+            **code_analysis_lab.snapshot(context=orchestration_context()),
+        })
+
     @app.get("/api/workspace")
     def get_workspace():
         return jsonify({"ok": True, **workspaces.snapshot()})
@@ -151,6 +269,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     def open_workspace():
         payload = request.get_json(force=True)
         root = workspaces.open(payload.get("path", ""))
+        lab_artifacts.clear()
         analyzer.bind(root)
         documents.bind(root)
         references.bind_workspace(root)
@@ -506,7 +625,9 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     @app.post("/api/analyzer/analyze")
     def analyzer_analyze():
         analyzer.bind(workspaces.require_root())
-        return jsonify({"ok": True, **analyzer.analyze()})
+        result = analyzer.analyze()
+        sync_code_analysis_artifacts()
+        return jsonify({"ok": True, **result})
 
     @app.get("/api/analyzer/functions")
     def analyzer_functions():
@@ -920,6 +1041,12 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             "documents": documents.status(),
             "references": references.status(),
             "full_tools": full_tools.status(),
+            "orchestration": {
+                "module_count": len(module_registry.all()),
+                "lab_count": len(lab_registry.all()),
+                "discovery_errors": module_registry.snapshot()["discovery_errors"],
+                "runtime_discovery_errors": runtime_registry.snapshot(orchestration_context())["discovery_errors"],
+            },
             "git": git_service.status(),
         })
 

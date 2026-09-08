@@ -129,6 +129,26 @@ class FullToolManager:
         if self._workspace is not None:
             self._start_analysis()
 
+    def start(self, name: str) -> dict[str, Any]:
+        """Start one hosted standalone module UI by stable surface id."""
+        starters = {
+            "analysis": self._start_analysis,
+            "documents": self._start_documents,
+            "references": self._start_references,
+        }
+        try:
+            starter = starters[str(name)]
+        except KeyError as exc:
+            raise KeyError(f"Unknown full-tool surface {name!r}") from exc
+        starter()
+        return dict(self.status()["tools"][str(name)])
+
+    def stop(self, name: str) -> None:
+        try:
+            self._servers[str(name)].stop()
+        except KeyError as exc:
+            raise KeyError(f"Unknown full-tool surface {name!r}") from exc
+
     def stop_all(self) -> None:
         for server in self._servers.values():
             server.stop()
