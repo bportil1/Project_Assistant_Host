@@ -8,3 +8,9 @@
 	path = modules/reference_manager
 	url = git@github.com:bportil1/Research_Paper_Repository_Manager.git
 
+[submodule "modules/pypique"]
+	path = modules/pypique
+	url = git@github.com:bportil1/pyPIQUE.git
+[submodule "modules/hsqa_dbn"]
+	path = modules/hsqa_dbn
+	url = git@github.com:bportil1/HSQA_DBN.git
