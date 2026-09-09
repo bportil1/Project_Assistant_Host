@@ -61,6 +61,7 @@
           <button id="toolsTerminalWindow" type="button"><span>Terminal Window</span><span class="service-menu-meta">Open</span></button>
           <div class="service-menu-separator" role="separator"></div>
           <button id="toolsEnvironment" type="button"><span>Python Environment</span><span id="toolsEnvironmentStatus" class="service-menu-meta">system</span></button>
+          <button id="toolsComponentVersions" type="button"><span>Component Versions</span><span id="toolsComponentVersionsStatus" class="service-menu-meta">Check</span></button>
           <button id="toolsResetLayout" type="button" title="Restore default pane visibility and sizes"><span>Reset Workspace Layout</span><span class="service-menu-meta">Default</span></button>
           <div class="service-menu-separator" role="separator"></div>
           <details id="toolsGitGroup" class="service-menu-details">
@@ -518,6 +519,63 @@
     </div>
     <p class="hint">Changing environments restarts the integrated terminal so its PATH is correct.</p>
   </form>
+</dialog>
+
+<dialog id="componentVersionsDialog" class="component-versions-dialog">
+  <div class="component-versions-card">
+    <div class="dialog-heading">
+      <div>
+        <h3>Component Versions &amp; Dependencies</h3>
+        <span id="componentVersionsFreshness" class="small-muted">Local status only</span>
+      </div>
+      <button id="componentVersionsClose" type="button" class="plain">×</button>
+    </div>
+
+    <div class="component-versions-toolbar">
+      <button id="componentVersionsRefresh" type="button">Refresh Local</button>
+      <button id="componentVersionsFetch" type="button">Fetch Remote Status</button>
+      <button id="componentVersionsSelectAll" type="button">Select All</button>
+      <button id="componentVersionsClear" type="button">Clear</button>
+      <span id="componentVersionsSummary" class="component-versions-summary">Checking…</span>
+    </div>
+
+    <div class="component-versions-table-wrap">
+      <table class="component-versions-table">
+        <thead>
+          <tr>
+            <th class="component-select-col"></th>
+            <th>Component</th>
+            <th>PAH pinned</th>
+            <th>Checked out</th>
+            <th>Remote</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="componentVersionsRows"></tbody>
+      </table>
+    </div>
+
+    <div class="component-versions-actions">
+      <label class="component-test-toggle"><input id="componentVersionsRunTests" type="checkbox" checked> Run compatibility checks after update</label>
+      <div class="dialog-actions compact">
+        <button id="componentVersionsUpdateSelected" type="button">Update Selected</button>
+        <button id="componentVersionsUpdateAll" type="button">Update All Modules</button>
+        <button id="componentVersionsRestore" type="button">Restore Pinned</button>
+        <button id="componentVersionsTest" type="button">Run Compatibility Checks</button>
+      </div>
+    </div>
+
+    <div class="component-record-row">
+      <label>Version commit message
+        <input id="componentVersionsCommitMessage" type="text" value="Record PAH component versions" spellcheck="false">
+      </label>
+      <button id="componentVersionsRecord" type="button">Record Component Versions</button>
+    </div>
+
+    <div id="componentVersionsResult" class="component-versions-result" aria-live="polite">
+      Local refresh does not contact any remote. Fetch and Update are explicit network actions. Recording versions creates local parent Git commits only; it never pushes.
+    </div>
+  </div>
 </dialog>
 
 <div id="toast" class="toast"></div>

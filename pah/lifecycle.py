@@ -463,6 +463,19 @@ def doctor_report(root: Path) -> dict:
         if tool.required and path is None:
             report["ok"] = False
         report["tools"].append(item)
+
+    # Revision state is informational: an available update or an intentionally
+    # advanced development checkout must not make ordinary PAH readiness fail.
+    # Remote-tracking refs are read from the local Git cache only; Doctor never
+    # contacts remotes implicitly.
+    try:
+        from .component_versions import component_version_snapshot
+        report["component_versions"] = [
+            component_version_snapshot(root, component) for component in GIT_COMPONENTS
+        ]
+    except Exception as exc:
+        report["component_versions"] = []
+        report["component_versions_error"] = str(exc)
     return report
 
 
@@ -506,6 +519,20 @@ def print_doctor(report: dict) -> None:
             print(f"{mark} {item['owner']}: {item['label']} — provisioning script missing ({item['script']})")
         else:
             print(f"{mark} {item['owner']}: {item['label']} — missing local asset")
+
+    print("\nMANAGED MODULE REVISIONS")
+    version_items = report.get("component_versions") or []
+    if not version_items:
+        detail = report.get("component_versions_error") or "revision status unavailable"
+        print(f"! {detail}")
+    for item in version_items:
+        status = item.get("status", "remote_unknown")
+        mark = "✓" if status == "current" else "!"
+        pinned = item.get("pinned_short") or "—"
+        checked = item.get("checked_out_short") or "—"
+        remote = item.get("remote_head_short") or "—"
+        print(f"{mark} {item['label']} — {item.get('status_label', status)}; pinned={pinned}, checked-out={checked}, remote={remote}")
+    print("  Remote values are cached; use the Component Versions panel or an explicit git fetch to refresh them.")
 
     print("\nOPTIONAL / SYSTEM TOOLS")
     for item in report["tools"]:

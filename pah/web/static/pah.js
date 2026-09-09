@@ -46,6 +46,7 @@
     codeAnalysisLab: {snapshot: null, selectedStep: null, railCollapsed: false},
     git: {git_available: false, workspace: null, is_repository: false, repository_root: null, branch: null, detached: false, head: null, changes: [], staged_count: 0, unstaged_count: 0, untracked_count: 0, submodules: [], remotes: [], tracking: null, connectivity_mode: 'local_only', local_only: true, remote_enabled: false},
     overleaf: {lastImport: null, sync: null},
+    componentVersions: {snapshot: null, busy: false},
     fullTools: {
       analysis: {available: false, url: null, error: null},
       documents: {available: false, url: null, error: null},
@@ -1920,6 +1921,225 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Managed component versions / dependency status
+  function selectedComponentVersionKeys() {
+    return Array.from(document.querySelectorAll('#componentVersionsRows input[data-component-key]:checked'))
+      .map(input => input.dataset.componentKey)
+      .filter(Boolean);
+  }
+
+  function componentVersionResult(message, kind = '') {
+    const holder = $('componentVersionsResult');
+    if (!holder) return;
+    holder.textContent = String(message || '');
+    holder.classList.toggle('error', kind === 'error');
+    holder.classList.toggle('success', kind === 'success');
+  }
+
+  function setComponentVersionsBusy(busy) {
+    state.componentVersions.busy = Boolean(busy);
+    const ids = [
+      'componentVersionsRefresh', 'componentVersionsFetch', 'componentVersionsSelectAll',
+      'componentVersionsClear', 'componentVersionsUpdateSelected', 'componentVersionsUpdateAll',
+      'componentVersionsRestore', 'componentVersionsTest', 'componentVersionsRecord',
+    ];
+    for (const id of ids) {
+      const button = $(id);
+      if (!button) continue;
+      button.disabled = Boolean(busy);
+      button.classList.toggle('busy', Boolean(busy));
+    }
+  }
+
+  function componentVersionDetail(item) {
+    const details = [];
+    if (item.dirty) details.push(`${(item.changes || []).length} working-tree change${(item.changes || []).length === 1 ? '' : 's'}`);
+    if (Number(item.behind || 0) > 0) details.push(`${item.behind} behind remote`);
+    if (Number(item.ahead || 0) > 0) details.push(`${item.ahead} ahead of remote`);
+    if (item.detached) details.push('detached');
+    else if (item.branch) details.push(item.branch);
+    return details.join(' · ');
+  }
+
+  function renderComponentVersions(snapshot, {preserveSelection = true} = {}) {
+    state.componentVersions.snapshot = snapshot || null;
+    const previous = preserveSelection ? new Set(selectedComponentVersionKeys()) : new Set();
+    const rows = $('componentVersionsRows');
+    if (!rows) return;
+    rows.replaceChildren();
+
+    const items = snapshot?.components || [];
+    const actionable = Number(snapshot?.summary?.actionable || 0);
+    const menuStatus = $('toolsComponentVersionsStatus');
+    if (menuStatus) {
+      if (!snapshot?.git_available) menuStatus.textContent = 'Unavailable';
+      else if (actionable) menuStatus.textContent = `${actionable} attention`;
+      else menuStatus.textContent = 'Current';
+    }
+
+    const compatibility = snapshot?.compatibility || {};
+    const compatibilityText = compatibility.status && compatibility.status !== 'unknown'
+      ? ` · compatibility ${compatibility.status}`
+      : '';
+    if ($('componentVersionsSummary')) {
+      $('componentVersionsSummary').textContent = `${items.length} managed · ${actionable} need attention${compatibilityText}`;
+    }
+    if ($('componentVersionsFreshness')) {
+      $('componentVersionsFreshness').textContent = snapshot?.last_fetch_at
+        ? `Remote status fetched ${new Date(snapshot.last_fetch_at).toLocaleString()}`
+        : 'Local status · remote refs may be cached';
+    }
+
+    for (const item of items) {
+      const row = document.createElement('tr');
+
+      const selectCell = document.createElement('td');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.componentKey = item.key;
+      checkbox.checked = previous.has(item.key) || (!preserveSelection && ['update_available', 'pinned_mismatch'].includes(item.status));
+      checkbox.disabled = !item.ok && item.status !== 'not_initialized';
+      checkbox.setAttribute('aria-label', `Select ${item.label}`);
+      selectCell.appendChild(checkbox);
+      row.appendChild(selectCell);
+
+      const nameCell = document.createElement('td');
+      const name = document.createElement('div');
+      name.className = 'component-name-cell';
+      const strong = document.createElement('strong');
+      strong.textContent = item.label;
+      const path = document.createElement('span');
+      path.className = 'component-path';
+      path.textContent = item.path;
+      name.append(strong, path);
+      nameCell.appendChild(name);
+      row.appendChild(nameCell);
+
+      for (const value of [item.pinned_short, item.checked_out_short, item.remote_head_short]) {
+        const cell = document.createElement('td');
+        const sha = document.createElement('span');
+        sha.className = `component-sha${value ? '' : ' muted'}`;
+        sha.textContent = value || '—';
+        cell.appendChild(sha);
+        row.appendChild(cell);
+      }
+
+      const statusCell = document.createElement('td');
+      const pill = document.createElement('span');
+      pill.className = `component-status-pill ${item.status || 'remote_unknown'}`;
+      pill.textContent = item.status_label || item.status || 'Unknown';
+      statusCell.appendChild(pill);
+      const detailText = componentVersionDetail(item);
+      if (detailText) {
+        const detail = document.createElement('span');
+        detail.className = 'component-version-detail';
+        detail.textContent = detailText;
+        statusCell.appendChild(detail);
+      }
+      row.appendChild(statusCell);
+      rows.appendChild(row);
+    }
+  }
+
+  async function refreshComponentVersions({preserveSelection = true} = {}) {
+    const data = await api('/api/components/status');
+    renderComponentVersions(data, {preserveSelection});
+    return data;
+  }
+
+  async function openComponentVersionsDialog() {
+    closeServiceMenus();
+    const dialog = $('componentVersionsDialog');
+    if (!dialog) return;
+    dialog.showModal();
+    componentVersionResult('Refreshing local component state…');
+    try {
+      await refreshComponentVersions({preserveSelection: false});
+      componentVersionResult('Local refresh does not contact any remote. Fetch and Update are explicit network actions. Recording versions creates local parent Git commits only; it never pushes.');
+    } catch (error) {
+      componentVersionResult(error.message, 'error');
+    }
+  }
+
+  function describeCompatibility(report) {
+    if (!report) return '';
+    const lines = [`Compatibility: ${report.ok ? 'PASS' : 'FAIL'}`];
+    for (const item of report.results || []) {
+      lines.push(`${item.status === 'passed' ? '✓' : item.status === 'skipped' ? '-' : '✗'} ${item.label}: ${item.status}`);
+    }
+    return lines.join('\n');
+  }
+
+  async function componentVersionAction(endpoint, payload, {successMessage = 'Component action complete.'} = {}) {
+    setComponentVersionsBusy(true);
+    componentVersionResult('Working…');
+    try {
+      const data = await api(endpoint, {method: 'POST', body: JSON.stringify(payload || {})});
+      renderComponentVersions(data);
+      const parts = [successMessage];
+      if (data.compatibility_run) parts.push(describeCompatibility(data.compatibility_run));
+      if (data.commits?.length) {
+        parts.push('Local version commits:');
+        for (const commit of data.commits) parts.push(`  ${commit.commit.slice(0, 10)}  ${commit.repo}`);
+        parts.push('No push was performed.');
+      }
+      componentVersionResult(parts.filter(Boolean).join('\n\n'), data.compatibility_run?.ok === false ? 'error' : 'success');
+      return data;
+    } catch (error) {
+      componentVersionResult(error.message, 'error');
+      toast(error.message, true);
+      throw error;
+    } finally {
+      setComponentVersionsBusy(false);
+    }
+  }
+
+  async function fetchComponentRemoteStatus() {
+    const selected = selectedComponentVersionKeys();
+    await componentVersionAction('/api/components/fetch', {keys: selected.length ? selected : null}, {
+      successMessage: 'Remote status refreshed. No component checkout was changed.',
+    });
+  }
+
+  async function updateSelectedComponents(all = false) {
+    const snapshot = state.componentVersions.snapshot;
+    const keys = all ? (snapshot?.components || []).map(item => item.key) : selectedComponentVersionKeys();
+    if (!keys.length) throw new Error('Select at least one component to update.');
+    const label = all ? 'all managed components' : `${keys.length} selected component${keys.length === 1 ? '' : 's'}`;
+    if (!window.confirm(`Fast-forward ${label} to their configured remote branches? Local module working trees must be clean.`)) return;
+    await componentVersionAction('/api/components/update', {
+      keys,
+      run_tests: Boolean($('componentVersionsRunTests')?.checked),
+    }, {successMessage: `Updated ${label}. Review the pinned/checked-out columns, then record the compatible versions when ready.`});
+  }
+
+  async function restorePinnedComponents() {
+    const keys = selectedComponentVersionKeys();
+    if (!keys.length) throw new Error('Select at least one component to restore.');
+    if (!window.confirm(`Restore ${keys.length} selected component${keys.length === 1 ? '' : 's'} to the revisions recorded by their parent repositories?`)) return;
+    await componentVersionAction('/api/components/restore-pinned', {keys}, {
+      successMessage: 'Selected component checkouts restored to their pinned revisions.',
+    });
+  }
+
+  async function testSelectedComponents() {
+    const keys = selectedComponentVersionKeys();
+    await componentVersionAction('/api/components/test', {keys: keys.length ? keys : null}, {
+      successMessage: keys.length ? 'Compatibility checks completed for the selected modules plus PAH.' : 'Compatibility checks completed for all managed modules plus PAH.',
+    });
+  }
+
+  async function recordSelectedComponentVersions() {
+    const keys = selectedComponentVersionKeys();
+    if (!keys.length) throw new Error('Select at least one changed component to record.');
+    const message = String($('componentVersionsCommitMessage')?.value || '').trim();
+    if (!message) throw new Error('Enter a version commit message.');
+    if (!window.confirm('Create local Git commit(s) recording the selected submodule revisions? This does not push anything.')) return;
+    await componentVersionAction('/api/components/record', {keys, message}, {
+      successMessage: 'Selected component revisions recorded in their parent repository commits.',
+    });
+  }
+
   // Terminal / environment / execution
   // ---------------------------------------------------------------------------
   function xtermFitConstructor(scope = window) {
@@ -3720,6 +3940,20 @@
     closeServiceMenus();
     openEnvironmentDialog();
   };
+  $('toolsComponentVersions').onclick = () => openComponentVersionsDialog();
+  $('componentVersionsClose').onclick = () => $('componentVersionsDialog')?.close();
+  $('componentVersionsRefresh').onclick = () => {
+    setComponentVersionsBusy(true);
+    refreshComponentVersions().then(() => componentVersionResult('Local component status refreshed.', 'success')).catch(error => componentVersionResult(error.message, 'error')).finally(() => setComponentVersionsBusy(false));
+  };
+  $('componentVersionsFetch').onclick = () => fetchComponentRemoteStatus().catch(() => {});
+  $('componentVersionsSelectAll').onclick = () => document.querySelectorAll('#componentVersionsRows input[data-component-key]:not(:disabled)').forEach(input => { input.checked = true; });
+  $('componentVersionsClear').onclick = () => document.querySelectorAll('#componentVersionsRows input[data-component-key]').forEach(input => { input.checked = false; });
+  $('componentVersionsUpdateSelected').onclick = () => updateSelectedComponents(false).catch(error => { if (!state.componentVersions.busy) toast(error.message, true); });
+  $('componentVersionsUpdateAll').onclick = () => updateSelectedComponents(true).catch(error => { if (!state.componentVersions.busy) toast(error.message, true); });
+  $('componentVersionsRestore').onclick = () => restorePinnedComponents().catch(error => { if (!state.componentVersions.busy) toast(error.message, true); });
+  $('componentVersionsTest').onclick = () => testSelectedComponents().catch(() => {});
+  $('componentVersionsRecord').onclick = () => recordSelectedComponentVersions().catch(error => { if (!state.componentVersions.busy) toast(error.message, true); });
   $('toolsTerminalWindow').onclick = () => {
     closeServiceMenus();
     detachSurface('terminal').catch(error => toast(error.message, true));
@@ -3831,7 +4065,7 @@
   window.addEventListener('resize', applyLayoutSizes);
   (async () => {
     try {
-      await loadWorkspaceInfo();
+      await Promise.all([loadWorkspaceInfo(), refreshComponentVersions({preserveSelection: false}).catch(() => null)]);
       await restoreLastMode();
     } catch (error) {
       toast(error.message, true);

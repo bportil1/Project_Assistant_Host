@@ -12,6 +12,7 @@ from .core.filesystem import FileSystemError, FileSystemService
 from .core.git import GitError, LocalGitService
 from .core.terminal import TerminalError, TerminalManager
 from .core.workspace import WorkspaceError, WorkspaceManager
+from .component_versions import ComponentVersionError, ComponentVersionManager
 from .full_tools import FullToolManager
 from .contracts import ArtifactRef, ModuleContext, coerce_artifact_ref
 from .labs import (
@@ -59,6 +60,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     analyzer = AnalyzerIntegration()
     documents = DocumentIntegration(state_dir=workspaces.state_dir / "document-engine")
     references = ReferenceIntegration(state_dir=workspaces.state_dir / "references")
+    component_versions = ComponentVersionManager(Path(__file__).resolve().parents[1])
     full_tools = FullToolManager(
         state_dir=workspaces.state_dir / "full-tools",
         analyzer_port=int(os.environ.get("PAH_ANALYSIS_PORT", "8766")),
@@ -89,6 +91,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     app.extensions["pah_lab_registry"] = lab_registry
     app.extensions["pah_lab_artifacts"] = lab_artifacts
     app.extensions["pah_code_analysis_lab"] = code_analysis_lab
+    app.extensions["pah_component_versions"] = component_versions
     if workspaces.root is not None:
         analyzer.bind(workspaces.root)
         documents.bind(workspaces.root)
@@ -258,6 +261,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     @app.errorhandler(AnalysisDiagramBridgeError)
     @app.errorhandler(DocumentationScaffoldError)
     @app.errorhandler(DiagramDocumentBridgeError)
+    @app.errorhandler(ComponentVersionError)
     def handle_known_error(exc):
         return error_response(exc)
 
@@ -268,6 +272,47 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     @app.get("/api/orchestration/modules")
     def orchestration_modules():
         return jsonify({"ok": True, **module_registry.snapshot()})
+
+    @app.get("/api/components/status")
+    def component_versions_status():
+        return jsonify({"ok": True, **component_versions.snapshot()})
+
+    @app.post("/api/components/fetch")
+    def component_versions_fetch():
+        payload = request.get_json(silent=True) or {}
+        return jsonify({"ok": True, **component_versions.fetch(payload.get("keys"))})
+
+    @app.post("/api/components/update")
+    def component_versions_update():
+        payload = request.get_json(silent=True) or {}
+        return jsonify({
+            "ok": True,
+            **component_versions.update(
+                payload.get("keys") or [],
+                run_tests=bool(payload.get("run_tests", True)),
+            ),
+        })
+
+    @app.post("/api/components/restore-pinned")
+    def component_versions_restore_pinned():
+        payload = request.get_json(silent=True) or {}
+        return jsonify({"ok": True, **component_versions.restore_pinned(payload.get("keys") or [])})
+
+    @app.post("/api/components/test")
+    def component_versions_test():
+        payload = request.get_json(silent=True) or {}
+        return jsonify({"ok": True, **component_versions.test(payload.get("keys"))})
+
+    @app.post("/api/components/record")
+    def component_versions_record():
+        payload = request.get_json(silent=True) or {}
+        return jsonify({
+            "ok": True,
+            **component_versions.record(
+                payload.get("keys") or [],
+                message=payload.get("message"),
+            ),
+        })
 
     @app.get("/api/orchestration/labs")
     def orchestration_labs():
@@ -1146,11 +1191,12 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.9.5",
+            "version": "0.9.6",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),
             "full_tools": full_tools.status(),
+            "component_versions": component_versions.snapshot()["summary"],
             "orchestration": {
                 "module_count": len(module_registry.all()),
                 "lab_count": len(lab_registry.all()),
