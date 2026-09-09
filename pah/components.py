@@ -117,28 +117,6 @@ PYTHON_COMPONENTS = (
         install_spec="modules/reference_manager/modules/paper_searcher",
         imports=("paper_searcher", "flask"),
     ),
-    # These scientific modules register themselves with PAH through Python
-    # entry points (``pah.modules`` and optionally ``pah.runtimes``).  They
-    # still need to be installed into PAH's own environment for
-    # importlib.metadata discovery to see those entry points.  Keep the
-    # import probe empty because PAH intentionally does not depend on either
-    # repository's internal package/module naming.
-    PythonComponent(
-        key="pypique",
-        label="pyPIQUE",
-        path="modules/pypique",
-        install_spec="modules/pypique",
-        imports=(),
-        required=False,
-    ),
-    PythonComponent(
-        key="hsqa_dbn",
-        label="EBM / DBN Analysis Lab",
-        path="modules/hsqa_dbn",
-        install_spec="modules/hsqa_dbn",
-        imports=(),
-        required=False,
-    ),
 )
 
 
@@ -177,18 +155,6 @@ GIT_COMPONENTS = (
         key="paper_searcher",
         label="Research Search",
         path="modules/reference_manager/modules/paper_searcher",
-    ),
-    GitComponent(
-        key="pypique",
-        label="pyPIQUE",
-        path="modules/pypique",
-        required=False,
-    ),
-    GitComponent(
-        key="hsqa_dbn",
-        label="EBM / DBN Analysis Lab",
-        path="modules/hsqa_dbn",
-        required=False,
     ),
 )
 
