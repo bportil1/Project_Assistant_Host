@@ -17,6 +17,8 @@ class PythonComponent:
     install_spec: str
     imports: tuple[str, ...]
     required: bool = True
+    compatibility_tests: tuple[str, ...] = ("tests",)
+    pah_entry_points: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,7 @@ class GitComponent:
     key: str
     label: str
     path: str
+    repository_url: str | None = None
     remote: str = "origin"
     default_branch: str = "main"
     required: bool = True
@@ -69,6 +72,24 @@ PYTHON_COMPONENTS = (
         imports=("code_analyzer", "numpy", "flask"),
     ),
     PythonComponent(
+        key="pypique",
+        label="pyPIQUE",
+        path="modules/pypique",
+        install_spec="modules/pypique[full]",
+        imports=("pique_py", "flask", "bandit"),
+        compatibility_tests=("tests/test_pah_integration.py",),
+        pah_entry_points=(("pah.modules", "pypique"), ("pah.runtimes", "pypique")),
+    ),
+    PythonComponent(
+        key="hsqa_dbn",
+        label="HSQA_DBN",
+        path="modules/hsqa_dbn",
+        install_spec="modules/hsqa_dbn[visual]",
+        imports=("hsqa_dbn", "dash", "plotly", "torch", "geomloss"),
+        compatibility_tests=("tests/test_pah_module_adapter.py",),
+        pah_entry_points=(("pah.modules", "hsqa_dbn"), ("pah.runtimes", "hsqa_dbn")),
+    ),
+    PythonComponent(
         key="tech_documents",
         label="Document Workbench",
         path="modules/tech_documents",
@@ -96,6 +117,28 @@ PYTHON_COMPONENTS = (
         install_spec="modules/reference_manager/modules/paper_searcher",
         imports=("paper_searcher", "flask"),
     ),
+    # These scientific modules register themselves with PAH through Python
+    # entry points (``pah.modules`` and optionally ``pah.runtimes``).  They
+    # still need to be installed into PAH's own environment for
+    # importlib.metadata discovery to see those entry points.  Keep the
+    # import probe empty because PAH intentionally does not depend on either
+    # repository's internal package/module naming.
+    PythonComponent(
+        key="pypique",
+        label="pyPIQUE",
+        path="modules/pypique",
+        install_spec="modules/pypique",
+        imports=(),
+        required=False,
+    ),
+    PythonComponent(
+        key="hsqa_dbn",
+        label="EBM / DBN Analysis Lab",
+        path="modules/hsqa_dbn",
+        install_spec="modules/hsqa_dbn",
+        imports=(),
+        required=False,
+    ),
 )
 
 
@@ -107,6 +150,18 @@ GIT_COMPONENTS = (
         key="code_analyzer",
         label="Code Analyzer",
         path="modules/code_analyzer",
+    ),
+    GitComponent(
+        key="pypique",
+        label="pyPIQUE",
+        path="modules/pypique",
+        repository_url="git@github.com:bportil1/pyPIQUE.git",
+    ),
+    GitComponent(
+        key="hsqa_dbn",
+        label="HSQA_DBN",
+        path="modules/hsqa_dbn",
+        repository_url="git@github.com:bportil1/HSQA_DBN.git",
     ),
     GitComponent(
         key="tech_documents",
@@ -122,6 +177,18 @@ GIT_COMPONENTS = (
         key="paper_searcher",
         label="Research Search",
         path="modules/reference_manager/modules/paper_searcher",
+    ),
+    GitComponent(
+        key="pypique",
+        label="pyPIQUE",
+        path="modules/pypique",
+        required=False,
+    ),
+    GitComponent(
+        key="hsqa_dbn",
+        label="EBM / DBN Analysis Lab",
+        path="modules/hsqa_dbn",
+        required=False,
     ),
 )
 

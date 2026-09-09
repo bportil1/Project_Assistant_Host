@@ -75,6 +75,27 @@ class RuntimeRegistry:
         result = _adapter_method(adapter, "launch")(context=context, detached=bool(detached))
         return coerce_runtime_launch(result, module_id=module_id)
 
+    def artifacts(self, module_id: str, context: ModuleContext | None = None) -> tuple[Any, ...] | None:
+        """Return artifacts advertised by a runtime adapter, if it supports discovery.
+
+        ``None`` means the adapter does not implement artifact discovery.  An empty
+        tuple means it does implement discovery and currently has no artifacts.
+        Domain modules return dependency-free mappings; PAH coerces those mappings
+        into its artifact contract at the host boundary.
+        """
+        adapter = self.get(str(module_id))
+        if adapter is None:
+            return None
+        method = adapter.get("artifacts") if isinstance(adapter, Mapping) else getattr(adapter, "artifacts", None)
+        if not callable(method):
+            return None
+        result = method(context=context)
+        if result is None:
+            return ()
+        if isinstance(result, Mapping):
+            result = result.get("artifacts", ())
+        return tuple(result or ())
+
     def shutdown(self, module_id: str, context: ModuleContext | None = None) -> None:
         adapter = self.get(str(module_id))
         if adapter is None:

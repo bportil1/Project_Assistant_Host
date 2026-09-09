@@ -493,3 +493,12 @@ def test_pah091_xterm_terminal_replaces_line_input_shell():
     assert '/api/terminal/resize' in app
     assert 'def resize(self, session_id: str, cols: int, rows: int)' in terminal_core
     assert (ROOT / "scripts" / "vendor_xterm.py").exists()
+
+
+def test_hosted_code_analyzer_receives_optional_state_sync_callback():
+    source = (ROOT / "pah" / "full_tools.py").read_text(encoding="utf-8")
+    app_source = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
+    assert "set_analysis_change_callback" in source
+    assert "on_analysis=self._analysis_change_callback" in source
+    assert "analyzer.synchronize_from_engine(engine)" in app_source
+    assert "sync_code_analysis_artifacts()" in app_source

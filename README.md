@@ -282,6 +282,8 @@ PAH keeps its specialized applications as separate Git submodules:
 ```text
 modules/
 ├── code_analyzer/       → Code Repository Cataloguer
+├── pypique/             → pyPIQUE
+├── hsqa_dbn/            → HSQA_DBN / EBM-DBN Analysis Lab
 ├── tech_documents/      → Research Document Workbench
 └── reference_manager/   → Research Paper Repository Manager
     └── modules/
@@ -329,6 +331,15 @@ Clone the repository with its submodules:
 git clone --recurse-submodules <PAH_REPO_URL>
 cd Project_Assistant_Host
 ```
+
+The Code Analysis Lab providers are normal PAH Git submodules. Add them from their canonical GitHub repositories once in the PAH repository:
+
+```bash
+git submodule add git@github.com:bportil1/pyPIQUE.git modules/pypique
+git submodule add git@github.com:bportil1/HSQA_DBN.git modules/hsqa_dbn
+```
+
+Commit the resulting `.gitmodules` entries and gitlinks in PAH. Thereafter, ordinary clones use `--recurse-submodules`, and `./scripts/setup.sh` installs Code Analyzer, `pyPIQUE[full]`, and `hsqa-dbn[visual]` editable into PAH's `.venv`, allowing their `pah.modules` and `pah.runtimes` entry points to be discovered automatically.
 
 Run the setup script:
 

@@ -27,11 +27,19 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
             label="Quality evidence and model",
             capability="quality_modeling",
             description=(
-                "Build or load the software-quality evidence, operational feature dataset, "
-                "and domain mapping used by downstream representation experiments."
+                "Consume the current Code Analyzer project handoff, then build or load "
+                "pyPIQUE quality evidence and a calibrated project evaluation."
             ),
             provider_module="pypique",
-            produces=("feature_dataset", "domain_mapping", "quality_model"),
+            requires=(
+                ArtifactRequirement(
+                    kind="code_analysis",
+                    schema_id="pah.code-analysis.current",
+                    schema_version="1",
+                    producer_module="code_analyzer",
+                ),
+            ),
+            produces=("quality_model", "quality_evaluation"),
         ),
         WorkflowStep(
             step_id="representation_learning",
@@ -40,8 +48,8 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
             description="Train a representation model from an aligned feature dataset and optional domain semantics.",
             provider_module="hsqa_dbn",
             requires=(
-                ArtifactRequirement(kind="feature_dataset"),
-                ArtifactRequirement(kind="domain_mapping", optional=True),
+                ArtifactRequirement(kind="feature_dataset", producer_module="pypique"),
+                ArtifactRequirement(kind="domain_mapping", optional=True, producer_module="pypique"),
             ),
             produces=("representation",),
         ),
@@ -51,7 +59,7 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
             capability="mutual_information_analysis",
             description="Analyze the learned representation and its information relationship to the supplied domain semantics.",
             provider_module="hsqa_dbn",
-            requires=(ArtifactRequirement(kind="representation"),),
+            requires=(ArtifactRequirement(kind="representation", producer_module="hsqa_dbn"),),
             produces=("representation_analysis",),
         ),
     ),

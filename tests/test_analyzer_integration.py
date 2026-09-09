@@ -76,3 +76,41 @@ def test_real_code_analyzer_integration_when_available(tmp_path: Path):
     assert integration.status()["stale"] is True
     integration.analyze()
     assert integration.status()["stale"] is False
+
+
+def test_hosted_analyzer_engine_can_be_adopted_without_reanalysis(tmp_path: Path):
+    pytest.importorskip("code_analyzer")
+    from code_analyzer import CodeAnalyzer
+
+    (tmp_path / "main.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+    engine = CodeAnalyzer(tmp_path)
+
+    integration = AnalyzerIntegration()
+    integration.bind(tmp_path)
+    assert integration.status()["analyzed"] is False
+
+    overview = integration.synchronize_from_engine(engine)
+    assert overview["summary"]["functions"] == 1
+    assert integration.status()["analyzed"] is True
+    assert integration.status()["generation"] == 1
+
+    engine.reload()
+    integration.synchronize_from_engine(engine)
+    assert integration.status()["generation"] == 2
+
+
+def test_hosted_analyzer_for_different_workspace_is_rejected(tmp_path: Path):
+    pytest.importorskip("code_analyzer")
+    from code_analyzer import CodeAnalyzer
+
+    workspace = tmp_path / "workspace"
+    other = tmp_path / "other"
+    workspace.mkdir()
+    other.mkdir()
+    (workspace / "a.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    (other / "b.py").write_text("def b():\n    return 2\n", encoding="utf-8")
+
+    integration = AnalyzerIntegration()
+    integration.bind(workspace)
+    with pytest.raises(AnalyzerIntegrationError, match="different repository"):
+        integration.synchronize_from_engine(CodeAnalyzer(other))

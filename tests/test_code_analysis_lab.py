@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from pah.contracts import ArtifactRef, ModuleManifest
+from pah.contracts import ArtifactRef, ModuleContext, ModuleManifest
 from pah.labs import (
     ArtifactInventory,
     CODE_ANALYSIS_LAB,
@@ -75,9 +75,24 @@ def test_controller_advances_by_registered_artifacts_not_button_history(tmp_path
     controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
 
     initial = _steps(controller.snapshot())
-    assert initial["quality_modeling"]["state"] == "ready"
+    assert initial["quality_modeling"]["state"] == "blocked"
+    assert initial["quality_modeling"]["blocking_reason"] == (
+        "Missing required artifact: code_analysis (from code_analyzer, schema pah.code-analysis.current@1)."
+    )
     assert initial["representation_learning"]["state"] == "blocked"
     assert initial["latent_analysis"]["state"] == "blocked"
+
+    inventory.register(ArtifactRef(
+        artifact_id="code",
+        kind="code_analysis",
+        producer_module="code_analyzer",
+        location=str(tmp_path),
+        schema_id="pah.code-analysis.current",
+        schema_version="1",
+        validation_state="valid",
+    ))
+    after_code = _steps(controller.snapshot())
+    assert after_code["quality_modeling"]["state"] == "ready"
 
     inventory.register(ArtifactRef(
         artifact_id="benchmark",
@@ -98,6 +113,12 @@ def test_controller_advances_by_registered_artifacts_not_button_history(tmp_path
         kind="quality_model",
         producer_module="pypique",
         location=str(tmp_path / "operational_model.json"),
+    ))
+    inventory.register(ArtifactRef(
+        artifact_id="evaluation",
+        kind="quality_evaluation",
+        producer_module="pypique",
+        location=str(tmp_path / "evaluation.json"),
     ))
 
     aligned = _steps(controller.snapshot())
@@ -169,6 +190,7 @@ def test_code_analysis_lab_frontend_contract_is_host_owned_and_collapsible():
     assert 'id="codeAnalysisLabRail"' in template
     assert ".lab-workflow-rail.collapsed" in css
     assert "/api/orchestration/code-analysis" in js
+    assert "/api/orchestration/code-analysis/steps/${encodeURIComponent(stepId)}/launch" in js
     assert "openCodeAnalysisLab" in js
 
 
@@ -210,3 +232,123 @@ def test_labs_navigation_replaces_analysis_launcher_in_same_position():
     assert 'id="analysisMode"' in template
     assert '/api/orchestration/modules/${encodeURIComponent(moduleId)}/launch' in js
     assert 'provider.metadata?.host_surface' not in js
+
+
+def test_artifact_registry_queries_provenance_and_dependencies():
+    inventory = ArtifactInventory()
+    source = ArtifactRef(
+        artifact_id="source",
+        kind="feature_dataset",
+        producer_module="pypique",
+        capabilities=("quality_modeling",),
+        validation_state="valid",
+    )
+    representation = ArtifactRef(
+        artifact_id="representation",
+        kind="representation",
+        producer_module="hsqa_dbn",
+        parent_artifact_ids=("source",),
+        capabilities=("representation_learning",),
+        validation_state="valid",
+    )
+    inventory.register(source)
+    inventory.register(representation)
+
+    assert inventory.get("source") == source
+    assert inventory.by_producer("pypique") == (source,)
+    assert inventory.by_capability("representation_learning") == (representation,)
+    assert inventory.dependencies("representation") == (source,)
+    assert inventory.dependents("source") == (representation,)
+    assert inventory.registry_snapshot()["summary"]["by_producer"] == {"hsqa_dbn": 1, "pypique": 1}
+
+
+def test_invalid_artifact_does_not_satisfy_workflow_requirement():
+    inventory = ArtifactInventory((ArtifactRef(
+        artifact_id="invalid-benchmark",
+        kind="feature_dataset",
+        producer_module="pypique",
+        validation_state="invalid",
+        validation_errors=("missing feature names",),
+    ),))
+    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
+    step = _steps(controller.snapshot())["representation_learning"]
+    assert step["state"] == "blocked"
+    assert step["missing_requirements"][0]["producer_module"] == "pypique"
+    assert step["blocking_reason"] == "Missing required artifact: feature_dataset (from pypique)."
+
+
+def test_artifact_http_registry_accepts_registered_producer_and_exposes_summary(tmp_path: Path):
+    pytest.importorskip("flask")
+    from pah import create_app
+
+    app = create_app(state_dir=tmp_path / "state")
+    app.config.update(TESTING=True)
+    registry = app.extensions["pah_module_registry"]
+    registry.register(ModuleManifest(
+        module_id="pypique",
+        display_name="pyPIQUE",
+        collections=("code_analysis_lab",),
+        capabilities=("quality_modeling",),
+    ), replace=True)
+
+    with app.test_client() as client:
+        created = client.post("/api/orchestration/artifacts", json={
+            "artifact_id": "benchmark",
+            "kind": "feature_dataset",
+            "producer_module": "pypique",
+            "capabilities": ["quality_modeling"],
+            "validation_state": "valid",
+        })
+        assert created.status_code == 201
+
+        listing = client.get("/api/orchestration/artifacts").get_json()
+        assert listing["summary"]["total"] == 1
+        assert listing["summary"]["by_kind"] == {"feature_dataset": 1}
+
+        fetched = client.get("/api/orchestration/artifacts/benchmark").get_json()
+        assert fetched["artifact"]["producer_module"] == "pypique"
+
+
+def test_step_execution_context_routes_required_artifact_to_provider(tmp_path: Path):
+    inventory = ArtifactInventory((ArtifactRef(
+        artifact_id="code-analyzer-current",
+        kind="code_analysis",
+        producer_module="code_analyzer",
+        location=str(tmp_path),
+        schema_id="pah.code-analysis.current",
+        schema_version="1",
+        validation_state="valid",
+    ),))
+    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
+    module_id, context = controller.execution_context(
+        "quality_modeling",
+        ModuleContext(project_root=tmp_path, working_root=tmp_path, runtime={"state_dir": "state"}),
+    )
+    assert module_id == "pypique"
+    assert context.runtime["pah_step"] == "quality_modeling"
+    assert context.runtime["input_artifacts"]["code_analysis"]["artifact_id"] == "code-analyzer-current"
+    assert context.runtime["state_dir"] == "state"
+
+
+def test_runtime_registry_optional_artifact_provider_boundary(tmp_path: Path):
+    from pah.runtime import RuntimeRegistry
+
+    class Runtime:
+        module_id = "pypique"
+        def status(self, *, context=None):
+            return {"module_id": self.module_id, "available": True, "launchable": True}
+        def launch(self, *, context=None, detached=False):
+            return {"module_id": self.module_id, "launched": True}
+        def artifacts(self, *, context=None):
+            return ({
+                "artifact_id": "eval",
+                "kind": "quality_evaluation",
+                "producer_module": "pypique",
+                "location": str(tmp_path / "evaluation.json"),
+            },)
+
+    registry = RuntimeRegistry((Runtime(),))
+    artifacts = registry.artifacts("pypique", ModuleContext(project_root=tmp_path))
+    assert artifacts is not None
+    assert artifacts[0]["kind"] == "quality_evaluation"
+    assert registry.artifacts("missing") is None

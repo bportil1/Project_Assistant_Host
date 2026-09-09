@@ -13,7 +13,7 @@ from .core.git import GitError, LocalGitService
 from .core.terminal import TerminalError, TerminalManager
 from .core.workspace import WorkspaceError, WorkspaceManager
 from .full_tools import FullToolManager
-from .contracts import ArtifactRef, ModuleContext
+from .contracts import ArtifactRef, ModuleContext, coerce_artifact_ref
 from .labs import (
     ArtifactInventory,
     CodeAnalysisLabController,
@@ -179,6 +179,8 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             location=str(workspaces.root),
             schema_id="pah.code-analysis.current",
             schema_version="1",
+            capabilities=("static_analysis",),
+            validation_state="valid",
             metadata={
                 "workspace": str(workspaces.root),
                 "generation": status.get("generation"),
@@ -186,6 +188,58 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             },
             provenance={"source": "PAH Code Analyzer integration"},
         ))
+
+    def sync_hosted_code_analyzer(engine, event: str) -> None:
+        """Reconcile analysis performed inside the hosted Code Analyzer UI."""
+        try:
+            analyzer.synchronize_from_engine(engine)
+        except AnalyzerIntegrationError:
+            # A hosted analyzer that was manually switched away from the current
+            # PAH workspace must not leave the old workflow artifact looking
+            # current. The module callback itself is advisory and will log this
+            # exception without breaking its standalone operation.
+            analyzer.mark_stale()
+            sync_code_analysis_artifacts()
+            raise
+        sync_code_analysis_artifacts()
+
+    full_tools.set_analysis_change_callback(sync_hosted_code_analyzer)
+
+    def sync_runtime_artifacts(module_id: str, context: ModuleContext | None = None) -> None:
+        """Refresh artifacts that a registered module reports through its runtime adapter."""
+        discovered = runtime_registry.artifacts(module_id, context or orchestration_context())
+        if discovered is None:
+            return
+
+        for artifact in tuple(lab_artifacts.by_producer(module_id)):
+            if artifact.metadata.get("runtime_managed"):
+                lab_artifacts.remove(artifact.artifact_id)
+
+        for raw in discovered:
+            try:
+                artifact = coerce_artifact_ref(raw)
+            except (TypeError, ValueError):
+                continue
+            if artifact.producer_module != module_id:
+                continue
+            if module_registry.get(module_id) is None:
+                continue
+            lab_artifacts.register(artifact)
+
+    def sync_code_analysis_lab_artifacts() -> None:
+        sync_code_analysis_artifacts()
+        try:
+            _, pypique_context = code_analysis_lab.execution_context(
+                "quality_modeling", orchestration_context()
+            )
+        except ValueError:
+            # Without the current Code Analyzer handoff, old managed pyPIQUE
+            # outputs must not satisfy the current workflow by accident.
+            for artifact in tuple(lab_artifacts.by_producer("pypique")):
+                if artifact.metadata.get("runtime_managed"):
+                    lab_artifacts.remove(artifact.artifact_id)
+        else:
+            sync_runtime_artifacts("pypique", pypique_context)
 
     def error_response(exc: Exception, status: int = 400):
         return jsonify({"ok": False, "error": str(exc)}), status
@@ -252,9 +306,65 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         except RegistryError as exc:
             return error_response(exc, 404)
 
+    @app.get("/api/orchestration/artifacts")
+    def orchestration_artifacts():
+        return jsonify({"ok": True, **lab_artifacts.registry_snapshot()})
+
+    @app.get("/api/orchestration/artifacts/<artifact_id>")
+    def orchestration_artifact(artifact_id: str):
+        artifact = lab_artifacts.get(artifact_id)
+        if artifact is None:
+            return error_response(KeyError(f"Unknown PAH artifact {artifact_id!r}"), 404)
+        return jsonify({
+            "ok": True,
+            "artifact": artifact.to_dict(),
+            "dependencies": [item.to_dict() for item in lab_artifacts.dependencies(artifact_id)],
+            "dependents": [item.to_dict() for item in lab_artifacts.dependents(artifact_id)],
+        })
+
+    @app.post("/api/orchestration/artifacts")
+    def orchestration_register_artifact():
+        payload = request.get_json(force=True) or {}
+        try:
+            artifact = coerce_artifact_ref(payload)
+        except (TypeError, ValueError) as exc:
+            return error_response(exc)
+        if module_registry.get(artifact.producer_module) is None:
+            return error_response(
+                ValueError(f"Artifact producer {artifact.producer_module!r} is not registered with PAH")
+            )
+        replace = request.args.get("replace", "true").lower() not in {"0", "false", "no"}
+        try:
+            lab_artifacts.register(artifact, replace=replace)
+        except ValueError as exc:
+            return error_response(exc, 409)
+        return jsonify({"ok": True, "artifact": artifact.to_dict()}), 201
+
+    @app.delete("/api/orchestration/artifacts/<artifact_id>")
+    def orchestration_remove_artifact(artifact_id: str):
+        removed = lab_artifacts.remove(artifact_id)
+        if removed is None:
+            return error_response(KeyError(f"Unknown PAH artifact {artifact_id!r}"), 404)
+        return jsonify({"ok": True, "artifact": removed.to_dict()})
+
+    @app.post("/api/orchestration/code-analysis/steps/<step_id>/launch")
+    def orchestration_code_analysis_step_launch(step_id: str):
+        payload = request.get_json(silent=True) or {}
+        sync_code_analysis_lab_artifacts()
+        try:
+            module_id, context = code_analysis_lab.execution_context(step_id, orchestration_context())
+            launch = runtime_registry.launch(
+                module_id,
+                context,
+                detached=bool(payload.get("detached", False)),
+            )
+        except (ValueError, RuntimeRegistryError) as exc:
+            return error_response(exc, 409)
+        return jsonify({"ok": True, "step_id": step_id, **launch.to_dict()})
+
     @app.get("/api/orchestration/code-analysis")
     def orchestration_code_analysis():
-        sync_code_analysis_artifacts()
+        sync_code_analysis_lab_artifacts()
         return jsonify({
             "ok": True,
             "workspace": str(workspaces.root) if workspaces.root else None,

@@ -115,6 +115,37 @@ class AnalyzerIntegration:
             self._matrix_cache.clear()
             return self.overview()
 
+    def synchronize_from_engine(self, engine: Any) -> dict[str, Any]:
+        """Adopt analysis state produced by a hosted Code Analyzer UI.
+
+        The Code Analyzer remains PAH-independent: its Flask application passes
+        its public ``CodeAnalyzer`` instance to an optional host callback. PAH
+        can then share that exact engine/catalog instead of maintaining a second
+        analyzer session or rerunning the repository analysis.
+        """
+        try:
+            engine_root = Path(engine.project_root).expanduser().resolve()
+            catalog = engine.catalog(refresh=False)
+        except Exception as exc:
+            raise AnalyzerIntegrationError(
+                f"Unable to synchronize hosted Code Analyzer state: {exc}"
+            ) from exc
+
+        with self._lock:
+            if self._root is None:
+                self._root = engine_root
+            elif self._root != engine_root:
+                raise AnalyzerIntegrationError(
+                    "Hosted Code Analyzer is analyzing a different repository "
+                    f"({engine_root}) than the current PAH workspace ({self._root})."
+                )
+            self._engine = engine
+            self._catalog = catalog
+            self._generation += 1
+            self._stale = False
+            self._matrix_cache.clear()
+            return self.overview()
+
     def _require(self) -> tuple[Any, Any]:
         with self._lock:
             if self._engine is None or self._catalog is None:

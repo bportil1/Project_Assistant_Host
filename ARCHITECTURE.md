@@ -41,9 +41,11 @@ Remote Git and Overleaf synchronization are separate capabilities that require e
 
 ### Modular ownership
 
-The Code Repository Cataloguer, Research Document Workbench, and Research Paper Repository Manager are maintained as separate repositories and included through Git submodules.
+The Code Repository Cataloguer, pyPIQUE, HSQA_DBN, Research Document Workbench, and Research Paper Repository Manager are maintained as separate repositories and included through Git submodules.
 
 They do not depend on one another. Cross-module workflows belong to PAH.
+
+Code Analysis Lab provider repositories are installed through the same component lifecycle as the older host services. pyPIQUE is installed with its module-owned `full` extra and HSQA_DBN with its module-owned `visual` extra; PAH does not reproduce their dependency lists. Doctor additionally verifies their `pah.modules` and `pah.runtimes` discovery registrations. The PAH repository records pyPIQUE and HSQA_DBN as ordinary Git submodules using their canonical GitHub remotes; cross-module workflows remain host-owned.
 
 ### Host-owned coordination
 
@@ -91,6 +93,8 @@ Project_Assistant_Host/
 │
 ├── modules/
 │   ├── code_analyzer/        # Git submodule
+│   ├── pypique/              # Git submodule
+│   ├── hsqa_dbn/             # Git submodule
 │   ├── tech_documents/       # Git submodule
 │   └── reference_manager/    # Git submodule
 │       └── modules/

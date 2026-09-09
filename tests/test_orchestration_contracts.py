@@ -181,3 +181,26 @@ def test_orchestration_http_endpoints_expose_collections_without_requiring_modul
 
         missing = client.get("/api/orchestration/labs/not-a-lab")
         assert missing.status_code == 404
+
+
+def test_artifact_contract_carries_generic_routing_and_validation_metadata():
+    artifact = ArtifactRef(
+        artifact_id="representation-7",
+        kind="representation",
+        producer_module="hsqa_dbn",
+        producer_version="0.4.0",
+        project_id="project-a",
+        session_id="session-2",
+        created_at="2026-09-09T09:00:00Z",
+        capabilities=("representation_learning",),
+        parent_artifact_ids=("quality-4",),
+        validation_state="valid",
+    )
+    payload = artifact.to_dict()
+    assert payload["parent_artifact_ids"] == ["quality-4"]
+    assert payload["capabilities"] == ["representation_learning"]
+    assert artifact.matches(ArtifactRequirement(
+        "representation",
+        producer_module="hsqa_dbn",
+        capability="representation_learning",
+    ))

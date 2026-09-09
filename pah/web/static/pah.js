@@ -1374,6 +1374,23 @@
     return data;
   }
 
+  async function launchCodeAnalysisStep(stepId, {detached = false} = {}) {
+    const data = await api(`/api/orchestration/code-analysis/steps/${encodeURIComponent(stepId)}/launch`, {
+      method: 'POST',
+      body: JSON.stringify({detached: Boolean(detached)}),
+    });
+    if (data.presentation === 'host_surface' && data.surface) {
+      await openWindowSurface(data.surface, {detached: Boolean(detached)});
+      return data;
+    }
+    if (data.url) {
+      window.open(data.url, '_blank', 'noopener');
+      return data;
+    }
+    if (data.message) toast(data.message);
+    return data;
+  }
+
   // ---------------------------------------------------------------------------
   // Code Analysis Lab
   // ---------------------------------------------------------------------------
@@ -1502,7 +1519,7 @@
 
     if (step.state === 'complete') banner.textContent = 'Complete — expected output artifacts are registered with PAH.';
     else if (step.state === 'ready') banner.textContent = 'Ready — the provider is registered and required input artifacts are available.';
-    else if (step.state === 'blocked') banner.textContent = 'Blocked — one or more required cross-module artifacts have not been registered yet.';
+    else if (step.state === 'blocked') banner.textContent = `Blocked — ${step.blocking_reason || 'one or more required cross-module artifacts have not been registered yet.'}`;
     else if (step.state === 'missing_provider') banner.textContent = `Blocked — ${step.provider_module || 'a required provider'} is not registered with PAH.`;
     else if (step.state === 'missing_capability') banner.textContent = 'Blocked — the registered provider does not advertise the required capability.';
     else if (step.state === 'ambiguous') banner.textContent = 'Provider choice required — more than one module advertises this capability.';
@@ -1532,17 +1549,18 @@
         );
         if (runtime.message) appendLabContractRow(providerSection, 'Runtime note', runtime.message);
       }
-      if (runtime?.launchable) {
+      const stepLaunchable = runtime?.launchable && ['ready', 'complete'].includes(step.state);
+      if (stepLaunchable) {
         const actions = document.createElement('div');
         actions.className = 'lab-provider-actions';
         const open = document.createElement('button');
         open.type = 'button';
         open.textContent = 'Open Provider';
-        open.addEventListener('click', () => launchRegisteredModule(provider.module_id).catch(error => toast(error.message, true)));
+        open.addEventListener('click', () => launchCodeAnalysisStep(step.step_id).catch(error => toast(error.message, true)));
         const detach = document.createElement('button');
         detach.type = 'button';
         detach.textContent = 'Open Detached';
-        detach.addEventListener('click', () => launchRegisteredModule(provider.module_id, {detached: true}).catch(error => toast(error.message, true)));
+        detach.addEventListener('click', () => launchCodeAnalysisStep(step.step_id, {detached: true}).catch(error => toast(error.message, true)));
         actions.append(open, detach);
         providerSection.appendChild(actions);
       }
@@ -1561,7 +1579,7 @@
     } else {
       for (const requirement of step.requirements || []) {
         const suffix = requirement.optional ? 'optional' : (requirement.satisfied ? 'available' : 'missing');
-        appendLabContractRow(inputs, requirement.kind, suffix);
+        appendLabContractRow(inputs, requirement.expected || requirement.kind, suffix);
       }
     }
 
@@ -1575,7 +1593,19 @@
       appendLabContractRow(outputs, output.kind, output.available ? 'registered' : 'not registered');
     }
 
-    grid.append(providerSection, inputs, outputs);
+    const registry = document.createElement('div');
+    registry.className = 'lab-detail-section';
+    const registryHeading = document.createElement('h3');
+    registryHeading.textContent = 'Registered artifacts';
+    registry.appendChild(registryHeading);
+    const summary = state.codeAnalysisLab.snapshot?.artifact_registry?.summary || {};
+    appendLabContractRow(registry, 'Total', String(summary.total || 0));
+    const byProducer = summary.by_producer || {};
+    for (const [producer, count] of Object.entries(byProducer)) {
+      appendLabContractRow(registry, producer, String(count));
+    }
+
+    grid.append(providerSection, inputs, outputs, registry);
     holder.appendChild(grid);
   }
 

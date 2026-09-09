@@ -350,6 +350,40 @@ def _import_status(python: Path, imports: tuple[str, ...], *, root: Path) -> tup
     return result.returncode == 0, [str(value) for value in missing]
 
 
+def _entry_point_status(
+    python: Path,
+    requirements: tuple[tuple[str, str], ...],
+    *,
+    root: Path,
+) -> tuple[bool, list[str]]:
+    if not requirements:
+        return True, []
+    payload = json.dumps(requirements)
+    code = (
+        "import importlib.metadata,json,sys\n"
+        f"requirements=json.loads({payload!r})\n"
+        "eps=importlib.metadata.entry_points()\n"
+        "missing=[]\n"
+        "for group,name in requirements:\n"
+        "    matches=list(eps.select(group=group,name=name)) if hasattr(eps,'select') else [ep for ep in eps.get(group,[]) if ep.name==name]\n"
+        "    if not matches:\n"
+        "        missing.append(f'{group}:{name}')\n"
+        "        continue\n"
+        "    try:\n"
+        "        matches[0].load()\n"
+        "    except Exception as exc:\n"
+        "        missing.append(f'{group}:{name} (load failed: {type(exc).__name__}: {exc})')\n"
+        "print(json.dumps(missing))\n"
+        "sys.exit(1 if missing else 0)"
+    )
+    result = _run([python, "-c", code], cwd=root, check=False, capture=True)
+    try:
+        missing = json.loads((result.stdout or "[]").strip() or "[]")
+    except json.JSONDecodeError:
+        missing = [f"{group}:{name}" for group, name in requirements]
+    return result.returncode == 0, [str(value) for value in missing]
+
+
 def doctor_report(root: Path) -> dict:
     venv_python = _venv_python(root)
     submodules = _submodule_state(root)
@@ -383,12 +417,17 @@ def doctor_report(root: Path) -> dict:
             "submodule_state": submodules.get(component.path),
             "python_ok": False,
             "missing_imports": [],
+            "entry_points_ok": not component.pah_entry_points,
+            "missing_entry_points": [],
         }
         if present and venv_python.is_file():
             item["python_ok"], item["missing_imports"] = _import_status(
                 venv_python, component.imports, root=root
             )
-        item["ok"] = bool(present and item["python_ok"])
+            item["entry_points_ok"], item["missing_entry_points"] = _entry_point_status(
+                venv_python, component.pah_entry_points, root=root
+            )
+        item["ok"] = bool(present and item["python_ok"] and item["entry_points_ok"])
         if component.required and not item["ok"]:
             report["ok"] = False
         report["components"].append(item)
@@ -451,6 +490,8 @@ def print_doctor(report: dict) -> None:
             detail.append("virtual environment not ready")
         elif not item["python_ok"]:
             detail.append("missing Python: " + ", ".join(item["missing_imports"]))
+        if not item.get("entry_points_ok", True):
+            detail.append("PAH discovery: " + ", ".join(item["missing_entry_points"]))
         if item.get("submodule_state") in {"uninitialized", "conflict", "different_commit"}:
             detail.append(f"submodule={item['submodule_state']}")
         suffix = f" — {'; '.join(detail)}" if detail else ""
@@ -537,6 +578,7 @@ def git_component_snapshot(root: Path, component: GitComponent) -> dict:
         "conflicts": [line for line in conflicts if line],
         "remote": component.remote,
         "remote_url": remote_url,
+        "expected_remote_url": component.repository_url,
         "upstream": upstream,
         "target_branch": component.default_branch,
     }
@@ -563,6 +605,11 @@ def preflight_latest_modules(
             problems.append(f"{component.label}: working tree is dirty ({preview})")
         if snap["remote_url"] is None:
             problems.append(f"{component.label}: remote '{component.remote}' is not configured")
+        elif component.repository_url and snap["remote_url"] != component.repository_url:
+            problems.append(
+                f"{component.label}: remote '{component.remote}' points to {snap['remote_url']!r}; "
+                f"expected {component.repository_url!r}"
+            )
         if snap["branch"] not in {None, component.default_branch}:
             problems.append(
                 f"{component.label}: currently on branch '{snap['branch']}', expected "
@@ -703,22 +750,34 @@ def run_component_tests(root: Path, python: Path) -> dict:
     """Run the test suites that are present in the host and managed modules."""
     ensure_compatibility_test_dependencies(root, python)
     print("\n== Compatibility tests ==")
-    targets = [("PAH host", root)] + [
-        (component.label, root / component.path) for component in PYTHON_COMPONENTS if component.key != "pah"
+    targets = [("PAH host", root, ("tests",))] + [
+        (component.label, root / component.path, component.compatibility_tests)
+        for component in PYTHON_COMPONENTS
+        if component.key != "pah"
     ]
     results: list[dict] = []
     ok = True
-    for label, repo in targets:
-        tests = repo / "tests"
-        if not tests.is_dir():
-            results.append({"label": label, "status": "skipped", "reason": "no tests directory"})
-            print(f"- {label}: skipped (no tests directory)")
+    for label, repo, configured_targets in targets:
+        test_targets = [repo / target for target in configured_targets if (repo / target).exists()]
+        if not test_targets:
+            results.append({"label": label, "status": "skipped", "reason": "no compatibility tests present"})
+            print(f"- {label}: skipped (no compatibility tests present)")
             continue
-        print(f"- {label}: pytest -q")
-        result = _run([python, "-m", "pytest", "-q"], cwd=repo, check=False)
+        display_targets = " ".join(str(target.relative_to(repo)) for target in test_targets)
+        print(f"- {label}: pytest -q {display_targets}")
+        result = _run(
+            [python, "-m", "pytest", "-q", *(str(target.relative_to(repo)) for target in test_targets)],
+            cwd=repo,
+            check=False,
+        )
         passed = result.returncode == 0
         ok = ok and passed
-        results.append({"label": label, "status": "passed" if passed else "failed", "returncode": result.returncode})
+        results.append({
+            "label": label,
+            "status": "passed" if passed else "failed",
+            "returncode": result.returncode,
+            "targets": [str(target.relative_to(repo)) for target in test_targets],
+        })
         print(f"  {'✓ passed' if passed else '✗ failed'}")
     return {"ok": ok, "results": results}
 

@@ -6,6 +6,7 @@ Lab process, while Code Analyzer, pyPIQUE, and HSQA_DBN remain independent.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from pah.contracts import ArtifactRequirement, ModuleContext
@@ -43,8 +44,22 @@ class CodeAnalysisLabController:
 
     def _requirement_snapshot(self, requirement: ArtifactRequirement) -> dict[str, Any]:
         matches = self.artifacts.matching(requirement)
+        expected = requirement.kind
+        qualifiers = []
+        if requirement.producer_module:
+            qualifiers.append(f"from {requirement.producer_module}")
+        if requirement.schema_id:
+            schema = requirement.schema_id
+            if requirement.schema_version:
+                schema += f"@{requirement.schema_version}"
+            qualifiers.append(f"schema {schema}")
+        if requirement.capability:
+            qualifiers.append(f"capability {requirement.capability}")
+        if qualifiers:
+            expected = f"{expected} ({', '.join(qualifiers)})"
         return {
             **requirement.to_dict(),
+            "expected": expected,
             "satisfied": bool(matches) or requirement.optional,
             "matches": [item.to_dict() for item in matches],
         }
@@ -62,6 +77,45 @@ class CodeAnalysisLabController:
             return None
         return self.runtimes.status(module_id, context=context).to_dict()
 
+    def execution_context(self, step_id: str, context: ModuleContext | None = None) -> tuple[str, ModuleContext]:
+        """Build a provider context containing only artifacts required by one lab step.
+
+        PAH owns selection/routing.  The provider receives plain serialized artifact
+        mappings under ``runtime.input_artifacts`` and never needs to import PAH.
+        """
+        step = next((item for item in self.workflow.steps if item.step_id == str(step_id)), None)
+        if step is None:
+            raise ValueError(f"Unknown Code Analysis Lab step {step_id!r}")
+
+        snapshot = self.step_snapshot(step, context=context)
+        resolution = snapshot.get("resolution") or {}
+        provider = resolution.get("provider") or {}
+        module_id = provider.get("module_id") if isinstance(provider, dict) else None
+        if resolution.get("state") != "resolved" or not module_id:
+            raise ValueError(snapshot.get("blocking_reason") or f"Step {step.step_id!r} has no resolved provider")
+        if snapshot.get("missing_requirements"):
+            raise ValueError(snapshot.get("blocking_reason") or f"Step {step.step_id!r} is missing required artifacts")
+
+        selected: dict[str, dict[str, Any]] = {}
+        for requirement in step.requires:
+            matches = self.artifacts.matching(requirement)
+            if not matches:
+                continue
+            # Artifact selection/branching is a later sprint.  Current workflow
+            # contracts yield one deterministic current artifact per required kind.
+            artifact = matches[-1]
+            selected[requirement.kind] = artifact.to_dict()
+
+        base = context or ModuleContext()
+        runtime = dict(base.runtime)
+        runtime.update({
+            "pah_lab": self.lab.lab_id,
+            "pah_workflow": self.workflow.workflow_id,
+            "pah_step": step.step_id,
+            "input_artifacts": selected,
+        })
+        return str(module_id), replace(base, runtime=runtime)
+
     def step_snapshot(self, step, *, context: ModuleContext | None = None) -> dict[str, Any]:
         resolution = self.orchestrator.resolve_step(step)
         requirements = [self._requirement_snapshot(item) for item in step.requires]
@@ -75,12 +129,18 @@ class CodeAnalysisLabController:
 
         if resolution["state"] != "resolved":
             state = resolution["state"]
-        elif step.produces and outputs and all(item["available"] for item in outputs):
-            state = "complete"
         elif missing_required:
             state = "blocked"
+        elif step.produces and outputs and all(item["available"] for item in outputs):
+            state = "complete"
         else:
             state = "ready"
+
+        blocking_reason = None
+        if state == "blocked" and missing_required:
+            expected = ", ".join(item["expected"] for item in missing_required)
+            noun = "artifact" if len(missing_required) == 1 else "artifacts"
+            blocking_reason = f"Missing required {noun}: {expected}."
 
         return {
             **step.to_dict(),
@@ -88,6 +148,7 @@ class CodeAnalysisLabController:
             "resolution": resolution,
             "requirements": requirements,
             "missing_requirements": missing_required,
+            "blocking_reason": blocking_reason,
             "outputs": outputs,
         }
 
@@ -123,5 +184,6 @@ class CodeAnalysisLabController:
             },
             "expected_modules": expected_modules,
             "artifacts": self.artifacts.snapshot(),
+            "artifact_registry": self.artifacts.registry_snapshot(),
             "recommended_step": recommended,
         }

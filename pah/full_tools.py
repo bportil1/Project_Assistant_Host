@@ -5,7 +5,7 @@ import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from werkzeug.serving import WSGIRequestHandler, make_server
 
@@ -106,6 +106,13 @@ class FullToolManager:
             "references": _Server("references", host, references_port),
         }
         self._document_engine = None
+        self._analysis_change_callback: Callable[[Any, str], Any] | None = None
+
+    def set_analysis_change_callback(
+        self, callback: Callable[[Any, str], Any] | None
+    ) -> None:
+        """Receive hosted Code Analyzer lifecycle events without coupling it to PAH."""
+        self._analysis_change_callback = callback
 
     def bind_workspace(self, root: str | Path | None) -> None:
         self._workspace = Path(root).expanduser().resolve() if root else None
@@ -258,7 +265,10 @@ class FullToolManager:
         try:
             from code_analyzer.web.app import create_app
 
-            app = create_app(self._workspace)
+            app = create_app(
+                self._workspace,
+                on_analysis=self._analysis_change_callback,
+            )
             server.start(app)
             self._errors["analysis"] = None
         except Exception as exc:

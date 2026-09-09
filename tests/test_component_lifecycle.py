@@ -20,12 +20,22 @@ from pah.lifecycle import (
 def test_component_registry_covers_nested_modules_and_browser_assets():
     components = {component.key: component for component in PYTHON_COMPONENTS}
     assert components["code_analyzer"].install_spec.endswith("[web]")
+    assert components["pypique"].install_spec == "modules/pypique[full]"
+    assert components["pypique"].pah_entry_points == (("pah.modules", "pypique"), ("pah.runtimes", "pypique"))
+    assert components["pypique"].compatibility_tests == ("tests/test_pah_integration.py",)
+    assert components["hsqa_dbn"].install_spec == "modules/hsqa_dbn[visual]"
+    assert components["hsqa_dbn"].pah_entry_points == (("pah.modules", "hsqa_dbn"), ("pah.runtimes", "hsqa_dbn"))
+    assert components["hsqa_dbn"].compatibility_tests == ("tests/test_pah_module_adapter.py",)
     assert components["tech_documents"].install_spec.endswith("[web]")
     assert components["reference_manager"].install_spec.endswith("[web]")
     assert components["paper_searcher"].path == "modules/reference_manager/modules/paper_searcher"
 
     git_components = {component.key: component for component in GIT_COMPONENTS}
     assert git_components["code_analyzer"].default_branch == "main"
+    assert git_components["pypique"].path == "modules/pypique"
+    assert git_components["pypique"].repository_url == "git@github.com:bportil1/pyPIQUE.git"
+    assert git_components["hsqa_dbn"].path == "modules/hsqa_dbn"
+    assert git_components["hsqa_dbn"].repository_url == "git@github.com:bportil1/HSQA_DBN.git"
     assert git_components["paper_searcher"].path == "modules/reference_manager/modules/paper_searcher"
 
     assets = {asset.key: asset for asset in BROWSER_ASSETS}
@@ -59,6 +69,8 @@ def test_doctor_json_shape_explains_missing_fragments(tmp_path: Path):
     assert {item["key"] for item in report["components"]} >= {
         "pah",
         "code_analyzer",
+        "pypique",
+        "hsqa_dbn",
         "tech_documents",
         "reference_manager",
         "paper_searcher",
@@ -195,6 +207,103 @@ def test_compatibility_tests_install_host_dev_extra_when_pytest_is_missing(monke
 
     assert [str(python), "-m", "pip", "install", "-e", ".[dev]"] in calls
 
+def test_component_compatibility_runner_uses_declared_targets(monkeypatch, tmp_path: Path):
+    import pah.lifecycle as lifecycle
+    from pah.components import PythonComponent
+
+    module = tmp_path / "modules/demo"
+    test_file = module / "tests/test_pah_integration.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_ok(): pass\n", encoding="utf-8")
+    host_tests = tmp_path / "tests"
+    host_tests.mkdir()
+
+    components = (
+        PythonComponent("pah", "PAH host", ".", ".", ("pah",)),
+        PythonComponent(
+            "demo",
+            "Demo",
+            "modules/demo",
+            "modules/demo",
+            ("demo",),
+            compatibility_tests=("tests/test_pah_integration.py",),
+        ),
+    )
+    calls: list[tuple[Path, list[str]]] = []
+
+    monkeypatch.setattr(lifecycle, "PYTHON_COMPONENTS", components)
+    monkeypatch.setattr(lifecycle, "ensure_compatibility_test_dependencies", lambda root, python: None)
+
+    def fake_run(args, *, cwd, check=True, capture=False, env=None):
+        command = [str(value) for value in args]
+        calls.append((Path(cwd), command))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(lifecycle, "_run", fake_run)
+    report = lifecycle.run_component_tests(tmp_path, tmp_path / ".venv/bin/python")
+
+    assert report["ok"] is True
+    demo = next(item for item in report["results"] if item["label"] == "Demo")
+    assert demo["targets"] == ["tests/test_pah_integration.py"]
+    demo_call = next(command for cwd, command in calls if cwd == module)
+    assert demo_call[-1] == "tests/test_pah_integration.py"
+
+
+def test_entry_point_probe_reports_missing_or_unloadable_registrations(monkeypatch, tmp_path: Path):
+    import pah.lifecycle as lifecycle
+
+    python = tmp_path / ".venv/bin/python"
+    observed: list[list[str]] = []
+
+    def fake_run(args, *, cwd, check=True, capture=False, env=None):
+        command = [str(value) for value in args]
+        observed.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout=json.dumps(["pah.runtimes:demo"]),
+            stderr="",
+        )
+
+    monkeypatch.setattr(lifecycle, "_run", fake_run)
+    ok, missing = lifecycle._entry_point_status(
+        python,
+        (("pah.modules", "demo"), ("pah.runtimes", "demo")),
+        root=tmp_path,
+    )
+
+    assert ok is False
+    assert missing == ["pah.runtimes:demo"]
+    assert observed and observed[0][:2] == [str(python), "-c"]
+
+
+
+def test_latest_module_preflight_rejects_wrong_canonical_remote(monkeypatch, tmp_path: Path):
+    import pah.lifecycle as lifecycle
+    from pah.components import GitComponent
+
+    component = GitComponent(
+        key="demo",
+        label="Demo",
+        path="module",
+        repository_url="git@github.com:owner/expected.git",
+    )
+    snapshot = {
+        "key": "demo",
+        "label": "Demo",
+        "path": "module",
+        "ok": True,
+        "conflicts": [],
+        "dirty": False,
+        "changes": [],
+        "remote_url": "git@github.com:owner/wrong.git",
+        "branch": "main",
+    }
+    monkeypatch.setattr(lifecycle, "git_component_snapshot", lambda root, item: snapshot)
+
+    with pytest.raises(lifecycle.LifecycleError, match="expected.*owner/expected.git"):
+        lifecycle.preflight_latest_modules(tmp_path, (component,))
+
 def test_recommended_graphviz_and_quarto_tools_have_automatic_installers():
     from pah.components import SYSTEM_TOOLS
 
@@ -280,14 +389,20 @@ def test_fresh_clone_recursive_submodule_bootstrap_includes_nested_research_sear
     _git(reference, "commit", "-am", "nested search module")
 
     analyzer = sources / "code_analyzer"
+    pypique = sources / "pypique"
+    hsqa = sources / "hsqa_dbn"
     documents = sources / "tech_documents"
     _init_simple_repo(analyzer)
+    _init_simple_repo(pypique)
+    _init_simple_repo(hsqa)
     _init_simple_repo(documents)
 
     host_source = sources / "host"
     _init_simple_repo(host_source)
     for source, destination in (
         (analyzer, "modules/code_analyzer"),
+        (pypique, "modules/pypique"),
+        (hsqa, "modules/hsqa_dbn"),
         (documents, "modules/tech_documents"),
         (reference, "modules/reference_manager"),
     ):
@@ -301,6 +416,8 @@ def test_fresh_clone_recursive_submodule_bootstrap_includes_nested_research_sear
     ensure_submodules(checkout)
 
     assert (checkout / "modules/code_analyzer/pyproject.toml").is_file()
+    assert (checkout / "modules/pypique/pyproject.toml").is_file()
+    assert (checkout / "modules/hsqa_dbn/pyproject.toml").is_file()
     assert (checkout / "modules/tech_documents/pyproject.toml").is_file()
     assert (checkout / "modules/reference_manager/pyproject.toml").is_file()
     assert (checkout / "modules/reference_manager/modules/paper_searcher/run.py").is_file()
