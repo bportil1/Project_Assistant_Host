@@ -135,6 +135,7 @@ def test_controller_advances_by_registered_artifacts_not_button_history(tmp_path
         location=str(tmp_path / "representation_bundle"),
         schema_id="hsqa_dbn.representation_bundle",
         schema_version="1",
+        capabilities=("representation_learning",),
     ))
     represented = _steps(controller.snapshot())
     assert represented["representation_learning"]["state"] == "complete"
@@ -391,3 +392,91 @@ def test_representation_execution_context_routes_neutral_pypique_handoff(tmp_pat
     assert module_id == "hsqa_dbn"
     assert context.runtime["input_artifacts"]["feature_dataset"]["artifact_id"] == "feature"
     assert context.runtime["input_artifacts"]["domain_mapping"]["artifact_id"] == "domain"
+
+
+def test_invalid_representation_output_does_not_complete_learning_step(tmp_path: Path):
+    inventory = ArtifactInventory((
+        ArtifactRef(
+            artifact_id="feature",
+            kind="feature_dataset",
+            producer_module="pypique",
+            schema_id="pah.feature-dataset.matrix",
+            schema_version="1",
+            validation_state="valid",
+        ),
+        ArtifactRef(
+            artifact_id="bad-representation",
+            kind="representation",
+            producer_module="hsqa_dbn",
+            schema_id="hsqa_dbn.representation_bundle",
+            schema_version="1",
+            capabilities=("representation_learning",),
+            validation_state="invalid",
+            validation_errors=("stale dataset",),
+        ),
+    ))
+    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
+    steps = _steps(controller.snapshot())
+    assert steps["representation_learning"]["state"] == "ready"
+    assert steps["representation_learning"]["outputs"][0]["available"] is False
+    assert steps["latent_analysis"]["state"] == "blocked"
+
+
+def test_latent_analysis_requires_schema_valid_hsqa_representation(tmp_path: Path):
+    inventory = ArtifactInventory((ArtifactRef(
+        artifact_id="representation",
+        kind="representation",
+        producer_module="hsqa_dbn",
+        schema_id="hsqa_dbn.representation_bundle",
+        schema_version="1",
+        capabilities=("representation_learning",),
+        validation_state="valid",
+    ),))
+    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
+    latent = _steps(controller.snapshot())["latent_analysis"]
+    assert latent["state"] == "ready"
+    requirement = latent["requirements"][0]
+    assert requirement["schema_id"] == "hsqa_dbn.representation_bundle"
+    assert requirement["schema_version"] == "1"
+    assert requirement["capability"] == "representation_learning"
+
+
+def test_latent_analysis_only_completes_with_schema_valid_hsqa_analysis():
+    representation = ArtifactRef(
+        artifact_id="representation",
+        kind="representation",
+        producer_module="hsqa_dbn",
+        schema_id="hsqa_dbn.representation_bundle",
+        schema_version="1",
+        capabilities=("representation_learning",),
+        validation_state="valid",
+    )
+    wrong = ArtifactRef(
+        artifact_id="analysis-wrong",
+        kind="representation_analysis",
+        producer_module="hsqa_dbn",
+        schema_id="hsqa_dbn.other_analysis",
+        schema_version="1",
+        capabilities=("mutual_information_analysis",),
+        validation_state="valid",
+    )
+    inventory = ArtifactInventory((representation, wrong))
+    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
+    latent = _steps(controller.snapshot())["latent_analysis"]
+    assert latent["state"] == "ready"
+    assert latent["outputs"][0]["available"] is False
+    assert latent["outputs"][0]["requirement"]["schema_id"] == "hsqa_dbn.representation_analysis"
+
+    inventory.register(ArtifactRef(
+        artifact_id="analysis-current",
+        kind="representation_analysis",
+        producer_module="hsqa_dbn",
+        schema_id="hsqa_dbn.representation_analysis",
+        schema_version="1",
+        capabilities=("experiment_analysis", "mutual_information_analysis"),
+        parent_artifact_ids=("representation",),
+        validation_state="valid",
+    ))
+    latent = _steps(controller.snapshot())["latent_analysis"]
+    assert latent["state"] == "complete"
+    assert latent["outputs"][0]["available"] is True

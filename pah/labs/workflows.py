@@ -70,8 +70,21 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
             capability="mutual_information_analysis",
             description="Analyze the learned representation and its information relationship to the supplied domain semantics.",
             provider_module="hsqa_dbn",
-            requires=(ArtifactRequirement(kind="representation", producer_module="hsqa_dbn"),),
+            requires=(ArtifactRequirement(
+                kind="representation",
+                producer_module="hsqa_dbn",
+                schema_id="hsqa_dbn.representation_bundle",
+                schema_version="1",
+                capability="representation_learning",
+            ),),
             produces=("representation_analysis",),
+            output_requirements=(ArtifactRequirement(
+                kind="representation_analysis",
+                producer_module="hsqa_dbn",
+                schema_id="hsqa_dbn.representation_analysis",
+                schema_version="1",
+                capability="mutual_information_analysis",
+            ),),
         ),
     ),
 )

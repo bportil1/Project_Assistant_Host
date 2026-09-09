@@ -204,3 +204,23 @@ def test_artifact_contract_carries_generic_routing_and_validation_metadata():
         producer_module="hsqa_dbn",
         capability="representation_learning",
     ))
+
+
+def test_workflow_step_can_declare_schema_validated_output_requirements():
+    requirement = ArtifactRequirement(
+        kind="representation_analysis",
+        schema_id="hsqa_dbn.representation_analysis",
+        schema_version="1",
+        producer_module="hsqa_dbn",
+        capability="mutual_information_analysis",
+    )
+    step = WorkflowStep(
+        "latent",
+        "Inspect latent information",
+        "mutual_information_analysis",
+        produces=("representation_analysis",),
+        output_requirements=(requirement,),
+    )
+    payload = step.to_dict()
+    assert payload["produces"] == ["representation_analysis"]
+    assert payload["output_requirements"] == [requirement.to_dict()]

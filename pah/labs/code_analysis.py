@@ -64,13 +64,28 @@ class CodeAnalysisLabController:
             "matches": [item.to_dict() for item in matches],
         }
 
-    def _output_snapshot(self, kind: str, provider_module: str | None) -> dict[str, Any]:
-        artifacts = [item for item in self.artifacts.by_kind(kind) if not provider_module or item.producer_module == provider_module]
-        return {
+    def _output_snapshot(
+        self,
+        kind: str,
+        provider_module: str | None,
+        requirement: ArtifactRequirement | None = None,
+    ) -> dict[str, Any]:
+        if requirement is not None:
+            artifacts = list(self.artifacts.matching(requirement))
+        else:
+            artifacts = [
+                item for item in self.artifacts.by_kind(kind)
+                if (not provider_module or item.producer_module == provider_module)
+                and item.validation_state != "invalid"
+            ]
+        payload = {
             "kind": kind,
             "available": bool(artifacts),
             "artifacts": [item.to_dict() for item in artifacts],
         }
+        if requirement is not None:
+            payload["requirement"] = requirement.to_dict()
+        return payload
 
     def _runtime_snapshot(self, module_id: str | None, context: ModuleContext | None) -> dict[str, Any] | None:
         if not module_id or self.runtimes is None:
@@ -125,7 +140,15 @@ class CodeAnalysisLabController:
         if provider_id and isinstance(provider, dict):
             resolution = dict(resolution)
             resolution["provider"] = {**provider, "runtime": self._runtime_snapshot(provider_id, context)}
-        outputs = [self._output_snapshot(kind, provider_id or step.provider_module) for kind in step.produces]
+        output_requirements = {item.kind: item for item in step.output_requirements}
+        outputs = [
+            self._output_snapshot(
+                kind,
+                provider_id or step.provider_module,
+                output_requirements.get(kind),
+            )
+            for kind in step.produces
+        ]
 
         if resolution["state"] != "resolved":
             state = resolution["state"]

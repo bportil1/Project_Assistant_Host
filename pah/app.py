@@ -244,6 +244,20 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         else:
             sync_runtime_artifacts("pypique", pypique_context)
 
+        try:
+            _, hsqa_context = code_analysis_lab.execution_context(
+                "representation_learning", orchestration_context()
+            )
+        except ValueError:
+            # A representation bundle is only current while its pyPIQUE feature
+            # dataset handoff is current. Remove only runtime-managed HSQA
+            # registrations; manually registered artifacts remain untouched.
+            for artifact in tuple(lab_artifacts.by_producer("hsqa_dbn")):
+                if artifact.metadata.get("runtime_managed"):
+                    lab_artifacts.remove(artifact.artifact_id)
+        else:
+            sync_runtime_artifacts("hsqa_dbn", hsqa_context)
+
     def error_response(exc: Exception, status: int = 400):
         return jsonify({"ok": False, "error": str(exc)}), status
 
