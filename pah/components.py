@@ -140,7 +140,7 @@ GIT_COMPONENTS = (
         label="HSQA_DBN",
         path="modules/hsqa_dbn",
         repository_url="git@github.com:bportil1/HSQA_DBN.git",
-        branch="refactor",
+        default_branch="refactor",
     ),
     GitComponent(
         key="tech_documents",
