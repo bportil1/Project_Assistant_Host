@@ -99,7 +99,7 @@ def test_controller_advances_by_registered_artifacts_not_button_history(tmp_path
         kind="feature_dataset",
         producer_module="pypique",
         location=str(tmp_path / "benchmark.json"),
-        schema_id="pypique.operational-benchmark",
+        schema_id="pah.feature-dataset.matrix",
         schema_version="1",
     ))
     inventory.register(ArtifactRef(
@@ -107,6 +107,8 @@ def test_controller_advances_by_registered_artifacts_not_button_history(tmp_path
         kind="domain_mapping",
         producer_module="pypique",
         location=str(tmp_path / "domain.json"),
+        schema_id="pah.domain-mapping.feature-groups",
+        schema_version="1",
     ))
     inventory.register(ArtifactRef(
         artifact_id="quality",
@@ -145,6 +147,8 @@ def test_optional_domain_mapping_does_not_block_representation(tmp_path: Path):
         kind="feature_dataset",
         producer_module="pypique",
         location=str(tmp_path / "benchmark.json"),
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
     ),))
     controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
     step = _steps(controller.snapshot())["representation_learning"]
@@ -267,6 +271,8 @@ def test_invalid_artifact_does_not_satisfy_workflow_requirement():
         artifact_id="invalid-benchmark",
         kind="feature_dataset",
         producer_module="pypique",
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
         validation_state="invalid",
         validation_errors=("missing feature names",),
     ),))
@@ -274,7 +280,9 @@ def test_invalid_artifact_does_not_satisfy_workflow_requirement():
     step = _steps(controller.snapshot())["representation_learning"]
     assert step["state"] == "blocked"
     assert step["missing_requirements"][0]["producer_module"] == "pypique"
-    assert step["blocking_reason"] == "Missing required artifact: feature_dataset (from pypique)."
+    assert step["blocking_reason"] == (
+        "Missing required artifact: feature_dataset (from pypique, schema pah.feature-dataset.matrix@1)."
+    )
 
 
 def test_artifact_http_registry_accepts_registered_producer_and_exposes_summary(tmp_path: Path):
@@ -352,3 +360,34 @@ def test_runtime_registry_optional_artifact_provider_boundary(tmp_path: Path):
     assert artifacts is not None
     assert artifacts[0]["kind"] == "quality_evaluation"
     assert registry.artifacts("missing") is None
+
+
+def test_representation_execution_context_routes_neutral_pypique_handoff(tmp_path: Path):
+    inventory = ArtifactInventory((
+        ArtifactRef(
+            artifact_id="feature",
+            kind="feature_dataset",
+            producer_module="pypique",
+            location=str(tmp_path / "feature_dataset.json"),
+            schema_id="pah.feature-dataset.matrix",
+            schema_version="1",
+            validation_state="valid",
+        ),
+        ArtifactRef(
+            artifact_id="domain",
+            kind="domain_mapping",
+            producer_module="pypique",
+            location=str(tmp_path / "domain_mapping.json"),
+            schema_id="pah.domain-mapping.feature-groups",
+            schema_version="1",
+            validation_state="valid",
+        ),
+    ))
+    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
+    module_id, context = controller.execution_context(
+        "representation_learning",
+        ModuleContext(project_root=tmp_path, working_root=tmp_path),
+    )
+    assert module_id == "hsqa_dbn"
+    assert context.runtime["input_artifacts"]["feature_dataset"]["artifact_id"] == "feature"
+    assert context.runtime["input_artifacts"]["domain_mapping"]["artifact_id"] == "domain"

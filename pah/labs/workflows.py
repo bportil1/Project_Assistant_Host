@@ -48,8 +48,19 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
             description="Train a representation model from an aligned feature dataset and optional domain semantics.",
             provider_module="hsqa_dbn",
             requires=(
-                ArtifactRequirement(kind="feature_dataset", producer_module="pypique"),
-                ArtifactRequirement(kind="domain_mapping", optional=True, producer_module="pypique"),
+                ArtifactRequirement(
+                    kind="feature_dataset",
+                    schema_id="pah.feature-dataset.matrix",
+                    schema_version="1",
+                    producer_module="pypique",
+                ),
+                ArtifactRequirement(
+                    kind="domain_mapping",
+                    schema_id="pah.domain-mapping.feature-groups",
+                    schema_version="1",
+                    optional=True,
+                    producer_module="pypique",
+                ),
             ),
             produces=("representation",),
         ),
