@@ -502,3 +502,12 @@ def test_hosted_code_analyzer_receives_optional_state_sync_callback():
     assert "on_analysis=self._analysis_change_callback" in source
     assert "analyzer.synchronize_from_engine(engine)" in app_source
     assert "sync_code_analysis_artifacts()" in app_source
+
+
+def test_code_analysis_lab_exposes_focused_mi_launch_controls():
+    root = Path(__file__).parents[1]
+    javascript = (root / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    assert "Open MI Analysis" in javascript
+    assert "Open full pyPIQUE" in javascript
+    assert "fullWorkspace" in javascript
+    assert "searchParams.delete('focused')" in javascript

@@ -112,7 +112,8 @@
 .lab-step-led.blocked,
 .lab-step-led.missing_provider,
 .lab-step-led.missing_capability { background: var(--pah-danger); }
-.lab-step-led.ambiguous { background: var(--pah-warning); }
+.lab-step-led.ambiguous,
+.lab-step-led.stale { background: var(--pah-warning); }
 
 .lab-step-copy strong,
 .lab-step-copy span {
@@ -307,7 +308,8 @@
   background: #eef7ef;
 }
 
-.lab-step-banner.ambiguous {
+.lab-step-banner.ambiguous,
+.lab-step-banner.stale {
   border-left-color: var(--pah-warning);
   background: #fbf6e8;
 }
@@ -335,4 +337,31 @@
   flex-wrap: wrap;
   gap: 0.45rem;
   margin-top: 0.65rem;
+}
+
+
+.lab-artifact-choice {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 10px;
+  padding: 8px;
+  border: 1px solid var(--pah-border);
+  background: var(--pah-surface);
+  border-radius: var(--pah-radius-sm);
+}
+
+.lab-artifact-choice > span {
+  color: var(--pah-navy-900);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.lab-artifact-choice select {
+  width: 100%;
+  min-width: 0;
+}
+
+.lab-artifact-choice small {
+  color: var(--pah-muted);
+  font-size: 9px;
 }

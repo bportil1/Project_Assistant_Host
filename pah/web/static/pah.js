@@ -1375,7 +1375,7 @@
     return data;
   }
 
-  async function launchCodeAnalysisStep(stepId, {detached = false} = {}) {
+  async function launchCodeAnalysisStep(stepId, {detached = false, fullWorkspace = false} = {}) {
     const data = await api(`/api/orchestration/code-analysis/steps/${encodeURIComponent(stepId)}/launch`, {
       method: 'POST',
       body: JSON.stringify({detached: Boolean(detached)}),
@@ -1385,7 +1385,16 @@
       return data;
     }
     if (data.url) {
-      window.open(data.url, '_blank', 'noopener');
+      let targetUrl = data.url;
+      if (fullWorkspace) {
+        try {
+          const parsed = new URL(targetUrl, window.location.href);
+          parsed.searchParams.delete('view');
+          parsed.searchParams.delete('focused');
+          targetUrl = parsed.toString();
+        } catch (_) {}
+      }
+      window.open(targetUrl, '_blank', 'noopener');
       return data;
     }
     if (data.message) toast(data.message);
@@ -1402,6 +1411,7 @@
     missing_provider: 'Module unavailable',
     missing_capability: 'Capability unavailable',
     ambiguous: 'Provider choice required',
+    stale: 'Stale — rerun required',
   };
 
   function codeAnalysisStep(stepId) {
@@ -1520,6 +1530,7 @@
 
     if (step.state === 'complete') banner.textContent = 'Complete — expected output artifacts are registered with PAH.';
     else if (step.state === 'ready') banner.textContent = 'Ready — the provider is registered and required input artifacts are available.';
+    else if (step.state === 'stale') banner.textContent = `Stale — ${step.blocking_reason || 'the registered output belongs to a different input lineage. Re-run this stage.'}`;
     else if (step.state === 'blocked') banner.textContent = `Blocked — ${step.blocking_reason || 'one or more required cross-module artifacts have not been registered yet.'}`;
     else if (step.state === 'missing_provider') banner.textContent = `Blocked — ${step.provider_module || 'a required provider'} is not registered with PAH.`;
     else if (step.state === 'missing_capability') banner.textContent = 'Blocked — the registered provider does not advertise the required capability.';
@@ -1550,18 +1561,21 @@
         );
         if (runtime.message) appendLabContractRow(providerSection, 'Runtime note', runtime.message);
       }
-      const stepLaunchable = runtime?.launchable && ['ready', 'complete'].includes(step.state);
+      const stepLaunchable = runtime?.launchable && ['ready', 'stale', 'complete'].includes(step.state);
       if (stepLaunchable) {
         const actions = document.createElement('div');
         actions.className = 'lab-provider-actions';
         const open = document.createElement('button');
         open.type = 'button';
-        open.textContent = 'Open Provider';
-        open.addEventListener('click', () => launchCodeAnalysisStep(step.step_id).catch(error => toast(error.message, true)));
+        const focusedMi = step.step_id === 'mi_informed_analysis';
+        open.textContent = focusedMi ? 'Open MI Analysis' : 'Open Provider';
+        open.addEventListener('click', () => launchCodeAnalysisStep(step.step_id, {detached: focusedMi}).catch(error => toast(error.message, true)));
         const detach = document.createElement('button');
         detach.type = 'button';
-        detach.textContent = 'Open Detached';
-        detach.addEventListener('click', () => launchCodeAnalysisStep(step.step_id, {detached: true}).catch(error => toast(error.message, true)));
+        detach.textContent = focusedMi ? 'Open full pyPIQUE' : 'Open Detached';
+        detach.addEventListener('click', () => launchCodeAnalysisStep(step.step_id, focusedMi
+          ? {detached: true, fullWorkspace: true}
+          : {detached: true}).catch(error => toast(error.message, true)));
         actions.append(open, detach);
         providerSection.appendChild(actions);
       }
@@ -1579,8 +1593,54 @@
       appendLabContractRow(inputs, 'Inputs', 'No cross-module artifact required');
     } else {
       for (const requirement of step.requirements || []) {
-        const suffix = requirement.optional ? 'optional' : (requirement.satisfied ? 'available' : 'missing');
+        const suffix = requirement.optional
+          ? (requirement.selected ? `optional · ${requirement.selection_mode}` : 'optional')
+          : (requirement.satisfied ? `available · ${requirement.selection_mode}` : 'missing');
         appendLabContractRow(inputs, requirement.expected || requirement.kind, suffix);
+
+        const history = requirement.history || [];
+        const selectable = history.filter(item => item.selectable);
+        if (selectable.length || requirement.selection_mode === 'pinned') {
+          const chooser = document.createElement('label');
+          chooser.className = 'lab-artifact-choice';
+          const caption = document.createElement('span');
+          caption.textContent = `${requirement.kind} input`;
+          const select = document.createElement('select');
+          const current = document.createElement('option');
+          current.value = '';
+          current.textContent = 'Current (automatic)';
+          select.appendChild(current);
+          for (const artifact of history) {
+            const option = document.createElement('option');
+            option.value = artifact.artifact_id;
+            const stamp = artifact.created_at ? new Date(artifact.created_at).toLocaleString() : 'unknown time';
+            const status = artifact.metadata?.superseded ? 'historical' : 'latest snapshot';
+            const branches = artifact.dependents ? ` · ${artifact.dependents} descendant${artifact.dependents === 1 ? '' : 's'}` : '';
+            option.textContent = `${stamp} · ${status}${branches} · ${artifact.artifact_id}`;
+            option.disabled = !artifact.selectable;
+            select.appendChild(option);
+          }
+          select.value = requirement.selection_mode === 'pinned' ? (requirement.selected_artifact_id || '') : '';
+          select.addEventListener('change', async () => {
+            try {
+              await api(`/api/orchestration/code-analysis/steps/${encodeURIComponent(step.step_id)}/inputs/${encodeURIComponent(requirement.kind)}/select`, {
+                method: 'POST',
+                body: JSON.stringify({artifact_id: select.value || null}),
+              });
+              await refreshCodeAnalysisLab();
+              toast(select.value ? `Pinned ${requirement.kind} to historical artifact.` : `${requirement.kind} restored to current selection.`);
+            } catch (error) {
+              toast(error.message, true);
+              await refreshCodeAnalysisLab();
+            }
+          });
+          const note = document.createElement('small');
+          note.textContent = requirement.selection_mode === 'pinned'
+            ? 'Pinned branch: downstream outputs must descend from this artifact.'
+            : 'Choose a preserved snapshot to branch from earlier results.';
+          chooser.append(caption, select, note);
+          inputs.appendChild(chooser);
+        }
       }
     }
 
@@ -1591,7 +1651,11 @@
     outputs.appendChild(outputsHeading);
     if (!(step.outputs || []).length) appendLabContractRow(outputs, 'Outputs', 'None declared');
     for (const output of step.outputs || []) {
-      appendLabContractRow(outputs, output.kind, output.available ? 'registered' : 'not registered');
+      let status = output.available ? 'registered' : 'not registered';
+      if (!output.available && (output.stale_artifacts || []).length) status = `stale (${output.stale_artifacts.length})`;
+      const historyCount = (output.history || []).length;
+      if (historyCount) status += ` · history ${historyCount}`;
+      appendLabContractRow(outputs, output.kind, status);
     }
 
     const registry = document.createElement('div');
@@ -1600,7 +1664,9 @@
     registryHeading.textContent = 'Registered artifacts';
     registry.appendChild(registryHeading);
     const summary = state.codeAnalysisLab.snapshot?.artifact_registry?.summary || {};
-    appendLabContractRow(registry, 'Total', String(summary.total || 0));
+    appendLabContractRow(registry, 'Total records', String(summary.total || 0));
+    appendLabContractRow(registry, 'Current aliases', String(summary.current || 0));
+    appendLabContractRow(registry, 'Historical snapshots', String(summary.history || 0));
     const byProducer = summary.by_producer || {};
     for (const [producer, count] of Object.entries(byProducer)) {
       appendLabContractRow(registry, producer, String(count));

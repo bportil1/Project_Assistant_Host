@@ -574,3 +574,160 @@ def test_information_network_preserves_mi_correlation_sign_and_signed_pmi(tmp_pa
     signed = [edge for edge in payload["edges"] if edge["relationship"] == "signed_information"]
     assert {edge["signed_score"] for edge in signed} == {0.7, -0.6}
     assert all(edge["metric"] == "normalized_pmi" for edge in signed)
+
+
+def test_artifact_registry_preserves_immutable_file_history_and_persists_selection(tmp_path: Path):
+    state_path = tmp_path / "state" / "artifact-registry.json"
+    source = tmp_path / "feature_dataset.json"
+    source.write_text('{"version": 1}\n', encoding="utf-8")
+    registry = ArtifactInventory(state_path=state_path)
+
+    alias1, snapshot1 = registry.register_current(ArtifactRef(
+        artifact_id="pypique-feature-dataset-current",
+        kind="feature_dataset",
+        producer_module="pypique",
+        location=str(source),
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
+        project_id=str(tmp_path),
+        validation_state="valid",
+        metadata={"runtime_managed": True},
+    ))
+    assert alias1.metadata["registry_alias"] is True
+    assert snapshot1.metadata["history_snapshot"] is True
+    assert Path(snapshot1.location).read_text(encoding="utf-8") == '{"version": 1}\n'
+
+    source.write_text('{"version": 2}\n', encoding="utf-8")
+    alias2, snapshot2 = registry.register_current(ArtifactRef(
+        artifact_id="pypique-feature-dataset-current",
+        kind="feature_dataset",
+        producer_module="pypique",
+        location=str(source),
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
+        project_id=str(tmp_path),
+        validation_state="valid",
+        metadata={"runtime_managed": True},
+    ))
+    assert snapshot2.artifact_id != snapshot1.artifact_id
+    assert registry.get(snapshot1.artifact_id).metadata["superseded"] is True
+    assert registry.resolve_alias(alias2.artifact_id) == snapshot2.artifact_id
+    assert Path(snapshot1.location).read_text(encoding="utf-8") == '{"version": 1}\n'
+    assert Path(snapshot2.location).read_text(encoding="utf-8") == '{"version": 2}\n'
+
+    registry.select(
+        project_id=str(tmp_path),
+        workflow_id=CODE_ANALYSIS_WORKFLOW.workflow_id,
+        step_id="representation_analysis",
+        kind="feature_dataset",
+        artifact_id=snapshot1.artifact_id,
+    )
+    restored = ArtifactInventory(state_path=state_path)
+    assert restored.get(snapshot1.artifact_id) is not None
+    assert restored.get(snapshot2.artifact_id) is not None
+    assert restored.selected_id(
+        project_id=str(tmp_path),
+        workflow_id=CODE_ANALYSIS_WORKFLOW.workflow_id,
+        step_id="representation_analysis",
+        kind="feature_dataset",
+    ) == snapshot1.artifact_id
+
+
+def test_historical_input_selection_routes_branch_and_marks_current_descendants_stale(tmp_path: Path):
+    context = ModuleContext(project_root=tmp_path, working_root=tmp_path)
+    registry = ArtifactInventory(state_path=tmp_path / "state" / "artifact-registry.json")
+    feature_path = tmp_path / "feature.json"
+    feature_path.write_text('{"dataset": "A"}\n', encoding="utf-8")
+    _, feature_a = registry.register_current(ArtifactRef(
+        artifact_id="pypique-feature-dataset-current",
+        kind="feature_dataset",
+        producer_module="pypique",
+        location=str(feature_path),
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
+        project_id=str(tmp_path),
+        validation_state="valid",
+        metadata={"runtime_managed": True},
+    ))
+    _, representation_a = registry.register_current(ArtifactRef(
+        artifact_id="hsqa-dbn-representation-current",
+        kind="representation",
+        producer_module="hsqa_dbn",
+        schema_id="hsqa_dbn.representation_bundle",
+        schema_version="1",
+        project_id=str(tmp_path),
+        capabilities=("representation_learning",),
+        parent_artifact_ids=("pypique-feature-dataset-current",),
+        validation_state="valid",
+        metadata={"runtime_managed": True},
+    ))
+    registry.register_current(ArtifactRef(
+        artifact_id="hsqa-dbn-representation-analysis-current",
+        kind="representation_analysis",
+        producer_module="hsqa_dbn",
+        schema_id="hsqa_dbn.representation_analysis",
+        schema_version="1",
+        project_id=str(tmp_path),
+        capabilities=("mutual_information_analysis",),
+        parent_artifact_ids=("hsqa-dbn-representation-current",),
+        validation_state="valid",
+        metadata={"runtime_managed": True},
+    ))
+
+    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=registry)
+    assert _steps(controller.snapshot(context=context))["representation_analysis"]["state"] == "complete"
+
+    feature_path.write_text('{"dataset": "B"}\n', encoding="utf-8")
+    _, feature_b = registry.register_current(ArtifactRef(
+        artifact_id="pypique-feature-dataset-current",
+        kind="feature_dataset",
+        producer_module="pypique",
+        location=str(feature_path),
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
+        project_id=str(tmp_path),
+        validation_state="valid",
+        metadata={"runtime_managed": True},
+    ))
+    assert feature_b.artifact_id != feature_a.artifact_id
+    stale = _steps(controller.snapshot(context=context))["representation_analysis"]
+    assert stale["state"] == "stale"
+    assert stale["outputs"][0]["stale_artifacts"]
+
+    selection = controller.select_input(
+        "representation_analysis", "feature_dataset", feature_a.artifact_id, context=context
+    )
+    assert selection["selection_mode"] == "pinned"
+    branched = _steps(controller.snapshot(context=context))["representation_analysis"]
+    assert branched["state"] == "complete"
+    assert branched["branch_mode"] is True
+    assert branched["requirements"][0]["selected_artifact_id"] == feature_a.artifact_id
+
+    module_id, launch_context = controller.execution_context("representation_analysis", context)
+    assert module_id == "hsqa_dbn"
+    selected = launch_context.runtime["input_artifacts"]["feature_dataset"]
+    assert selected["artifact_id"] == feature_a.artifact_id
+    assert Path(selected["location"]).read_text(encoding="utf-8") == '{"dataset": "A"}\n'
+
+    controller.select_input("representation_analysis", "feature_dataset", None, context=context)
+    current = _steps(controller.snapshot(context=context))["representation_analysis"]
+    assert current["state"] == "stale"
+    assert current["requirements"][0]["selection_mode"] == "current"
+
+
+def test_mi_informed_execution_context_requests_focused_pypique_view():
+    code = ArtifactRef(
+        artifact_id="code-focus", kind="code_analysis", producer_module="code_analyzer",
+        schema_id="pah.code-analysis.current", schema_version="1", validation_state="valid",
+    )
+    network = ArtifactRef(
+        artifact_id="network-focus", kind="information_network", producer_module="pah",
+        schema_id="pah.information-network", schema_version="1", validation_state="valid",
+    )
+    controller = CodeAnalysisLabController(
+        _integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=ArtifactInventory((code, network))
+    )
+    module_id, context = controller.execution_context("mi_informed_analysis", ModuleContext())
+    assert module_id == "pypique"
+    assert context.runtime["requested_view"] == "mi-informed"
+    assert context.runtime["focused_view"] is True

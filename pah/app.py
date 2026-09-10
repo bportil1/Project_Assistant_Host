@@ -14,7 +14,7 @@ from .core.terminal import TerminalError, TerminalManager
 from .core.workspace import WorkspaceError, WorkspaceManager
 from .component_versions import ComponentVersionError, ComponentVersionManager
 from .full_tools import FullToolManager
-from .contracts import ArtifactRef, ModuleContext, coerce_artifact_ref
+from .contracts import ArtifactRef, ArtifactRequirement, ModuleContext, coerce_artifact_ref
 from .labs import (
     ArtifactInventory,
     CodeAnalysisLabController,
@@ -78,7 +78,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     runtime_registry.register(HostSurfaceRuntimeAdapter("tech_documents", "documents", full_tools), replace=True)
     runtime_registry.register(HostSurfaceRuntimeAdapter("reference_manager", "references", full_tools), replace=True)
     lab_registry = default_lab_registry()
-    lab_artifacts = ArtifactInventory()
+    lab_artifacts = ArtifactInventory(state_path=workspaces.state_dir / "artifact-registry.json")
     code_analysis_lab = CodeAnalysisLabController(
         module_registry,
         lab=lab_registry.get("code_analysis_lab"),
@@ -174,9 +174,9 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         artifact_id = "code-analyzer-current"
         status = analyzer.status()
         if workspaces.root is None or not status.get("analyzed") or status.get("stale"):
-            lab_artifacts.remove(artifact_id)
+            lab_artifacts.deactivate_current(artifact_id)
             return
-        lab_artifacts.register(ArtifactRef(
+        lab_artifacts.register_current(ArtifactRef(
             artifact_id=artifact_id,
             kind="code_analysis",
             producer_module="code_analyzer",
@@ -189,6 +189,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
                 "workspace": str(workspaces.root),
                 "generation": status.get("generation"),
                 "summary": status.get("summary"),
+                "history_selectable": False,
             },
             provenance={"source": "PAH Code Analyzer integration"},
         ))
@@ -209,16 +210,25 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
 
     full_tools.set_analysis_change_callback(sync_hosted_code_analyzer)
 
+    def deactivate_runtime_aliases(module_id: str) -> None:
+        project_id = str(workspaces.root) if workspaces.root is not None else None
+        for artifact in tuple(lab_artifacts.by_producer(module_id)):
+            if not artifact.metadata.get("runtime_managed"):
+                continue
+            if not artifact.metadata.get("registry_alias"):
+                continue
+            if project_id is not None and artifact.project_id not in {None, project_id}:
+                continue
+            lab_artifacts.deactivate_current(artifact.artifact_id)
+
     def sync_runtime_artifacts(module_id: str, context: ModuleContext | None = None) -> None:
-        """Refresh artifacts that a registered module reports through its runtime adapter."""
+        """Refresh provider aliases while preserving immutable historical snapshots."""
         discovered = runtime_registry.artifacts(module_id, context or orchestration_context())
         if discovered is None:
             return
 
-        for artifact in tuple(lab_artifacts.by_producer(module_id)):
-            if artifact.metadata.get("runtime_managed"):
-                lab_artifacts.remove(artifact.artifact_id)
-
+        project_id = str(workspaces.root) if workspaces.root is not None else None
+        active_ids: set[str] = set()
         for raw in discovered:
             try:
                 artifact = coerce_artifact_ref(raw)
@@ -228,7 +238,19 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
                 continue
             if module_registry.get(module_id) is None:
                 continue
-            lab_artifacts.register(artifact)
+            active_ids.add(artifact.artifact_id)
+            if artifact.metadata.get("runtime_managed"):
+                lab_artifacts.register_current(artifact)
+            else:
+                lab_artifacts.register(artifact)
+
+        for artifact in tuple(lab_artifacts.by_producer(module_id)):
+            if not artifact.metadata.get("registry_alias"):
+                continue
+            if project_id is not None and artifact.project_id not in {None, project_id}:
+                continue
+            if artifact.artifact_id not in active_ids:
+                lab_artifacts.deactivate_current(artifact.artifact_id)
 
     def sync_code_analysis_lab_artifacts() -> None:
         sync_code_analysis_artifacts()
@@ -239,9 +261,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         except ValueError:
             # Without the current Code Analyzer handoff, old managed pyPIQUE
             # outputs must not satisfy the current workflow by accident.
-            for artifact in tuple(lab_artifacts.by_producer("pypique")):
-                if artifact.metadata.get("runtime_managed"):
-                    lab_artifacts.remove(artifact.artifact_id)
+            deactivate_runtime_aliases("pypique")
         else:
             sync_runtime_artifacts("pypique", pypique_context)
 
@@ -253,26 +273,24 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             # A representation bundle is only current while its pyPIQUE feature
             # dataset handoff is current. Remove only runtime-managed HSQA
             # registrations; manually registered artifacts remain untouched.
-            for artifact in tuple(lab_artifacts.by_producer("hsqa_dbn")):
-                if artifact.metadata.get("runtime_managed"):
-                    lab_artifacts.remove(artifact.artifact_id)
+            deactivate_runtime_aliases("hsqa_dbn")
         else:
             sync_runtime_artifacts("hsqa_dbn", hsqa_context)
 
         # Translate HSQA's provider-specific post-ML analysis into a neutral signed
         # information network that pyPIQUE can consume without importing HSQA_DBN.
-        lab_artifacts.remove("pah-information-network-current")
-        analyses = lab_artifacts.find(
+        lab_artifacts.deactivate_current("pah-information-network-current")
+        analyses = lab_artifacts.matching(ArtifactRequirement(
             kind="representation_analysis",
             producer_module="hsqa_dbn",
             schema_id="hsqa_dbn.representation_analysis",
             schema_version="1",
-            validation_state="valid",
-        )
+            capability="mutual_information_analysis",
+        ), project_id=(str(workspaces.root) if workspaces.root is not None else None))
         if analyses and workspaces.root is not None:
             network_path = Path(workspaces.root) / "pyPIQUE_results" / "pah_handoff" / "information_network.json"
             network = build_information_network(analyses[-1], output_path=network_path)
-            lab_artifacts.register(network)
+            lab_artifacts.register_current(network)
 
         try:
             _, feedback_context = code_analysis_lab.execution_context(
@@ -283,8 +301,9 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
                 "pypique-mi-informed-analysis-current",
                 "pypique-mi-informed-model-experiment-current",
                 "pypique-mi-informed-quality-model-current",
+                "pypique-mi-informed-validation-current",
             ):
-                lab_artifacts.remove(artifact_id)
+                lab_artifacts.deactivate_current(artifact_id)
         else:
             sync_runtime_artifacts("pypique", feedback_context)
 
@@ -407,8 +426,11 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "artifact": artifact.to_dict(),
+            "canonical_artifact_id": lab_artifacts.resolve_alias(artifact_id),
             "dependencies": [item.to_dict() for item in lab_artifacts.dependencies(artifact_id)],
             "dependents": [item.to_dict() for item in lab_artifacts.dependents(artifact_id)],
+            "ancestors": list(lab_artifacts.ancestor_ids(artifact_id)),
+            "siblings": [item.to_dict() for item in lab_artifacts.siblings(artifact_id)],
         })
 
     @app.post("/api/orchestration/artifacts")
@@ -435,6 +457,27 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         if removed is None:
             return error_response(KeyError(f"Unknown PAH artifact {artifact_id!r}"), 404)
         return jsonify({"ok": True, "artifact": removed.to_dict()})
+
+    @app.post("/api/orchestration/code-analysis/steps/<step_id>/inputs/<kind>/select")
+    def orchestration_code_analysis_select_input(step_id: str, kind: str):
+        payload = request.get_json(silent=True) or {}
+        sync_code_analysis_lab_artifacts()
+        artifact_id = payload.get("artifact_id")
+        try:
+            selection = code_analysis_lab.select_input(
+                step_id,
+                kind,
+                str(artifact_id) if artifact_id else None,
+                context=orchestration_context(),
+            )
+        except (KeyError, ValueError) as exc:
+            return error_response(exc, 409)
+        sync_code_analysis_lab_artifacts()
+        return jsonify({
+            "ok": True,
+            "selection": selection,
+            **code_analysis_lab.snapshot(context=orchestration_context()),
+        })
 
     @app.post("/api/orchestration/code-analysis/steps/<step_id>/launch")
     def orchestration_code_analysis_step_launch(step_id: str):
