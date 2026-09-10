@@ -9,8 +9,8 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
     display_name="Code Analysis Research Workflow",
     description=(
         "Move from repository analysis to software-quality evidence, learned "
-        "representations, and latent-information inspection without coupling "
-        "the underlying scientific modules to one another."
+        "representations, signed information analysis, and MI-informed quality "
+        "inspection without coupling the scientific modules to one another."
     ),
     steps=(
         WorkflowStep(
@@ -31,59 +31,69 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
                 "pyPIQUE quality evidence and a calibrated project evaluation."
             ),
             provider_module="pypique",
-            requires=(
-                ArtifactRequirement(
-                    kind="code_analysis",
-                    schema_id="pah.code-analysis.current",
-                    schema_version="1",
-                    producer_module="code_analyzer",
-                ),
-            ),
+            requires=(ArtifactRequirement(
+                kind="code_analysis", schema_id="pah.code-analysis.current", schema_version="1",
+                producer_module="code_analyzer",
+            ),),
             produces=("quality_model", "quality_evaluation"),
         ),
         WorkflowStep(
-            step_id="representation_learning",
-            label="Learn representation",
+            step_id="representation_analysis",
+            label="Representation & information analysis",
             capability="representation_learning",
-            description="Train a representation model from an aligned feature dataset and optional domain semantics.",
+            description=(
+                "Use HSQA_DBN to learn a representation and run its MI/domain analysis in one "
+                "provider session. Representation and analysis remain separately tracked artifacts."
+            ),
             provider_module="hsqa_dbn",
             requires=(
                 ArtifactRequirement(
-                    kind="feature_dataset",
-                    schema_id="pah.feature-dataset.matrix",
-                    schema_version="1",
+                    kind="feature_dataset", schema_id="pah.feature-dataset.matrix", schema_version="1",
                     producer_module="pypique",
                 ),
                 ArtifactRequirement(
-                    kind="domain_mapping",
-                    schema_id="pah.domain-mapping.feature-groups",
-                    schema_version="1",
-                    optional=True,
-                    producer_module="pypique",
+                    kind="domain_mapping", schema_id="pah.domain-mapping.feature-groups", schema_version="1",
+                    optional=True, producer_module="pypique",
                 ),
             ),
-            produces=("representation",),
+            produces=("representation", "representation_analysis"),
+            output_requirements=(
+                ArtifactRequirement(
+                    kind="representation", producer_module="hsqa_dbn",
+                    schema_id="hsqa_dbn.representation_bundle", schema_version="1",
+                    capability="representation_learning",
+                ),
+                ArtifactRequirement(
+                    kind="representation_analysis", producer_module="hsqa_dbn",
+                    schema_id="hsqa_dbn.representation_analysis", schema_version="1",
+                    capability="mutual_information_analysis",
+                ),
+            ),
         ),
         WorkflowStep(
-            step_id="latent_analysis",
-            label="Inspect latent information",
-            capability="mutual_information_analysis",
-            description="Analyze the learned representation and its information relationship to the supplied domain semantics.",
-            provider_module="hsqa_dbn",
-            requires=(ArtifactRequirement(
-                kind="representation",
-                producer_module="hsqa_dbn",
-                schema_id="hsqa_dbn.representation_bundle",
-                schema_version="1",
-                capability="representation_learning",
-            ),),
-            produces=("representation_analysis",),
+            step_id="mi_informed_analysis",
+            label="MI-informed quality analysis",
+            capability="mi_informed_analysis",
+            description=(
+                "Inspect HSQA-derived dependence strength, signed PMI topology, positive/negative "
+                "feature correlation, and domain projections inside pyPIQUE without modifying the baseline model."
+            ),
+            provider_module="pypique",
+            requires=(
+                ArtifactRequirement(
+                    kind="code_analysis", schema_id="pah.code-analysis.current", schema_version="1",
+                    producer_module="code_analyzer",
+                ),
+                ArtifactRequirement(
+                    kind="information_network", schema_id="pah.information-network", schema_version="1",
+                    producer_module="pah",
+                ),
+            ),
+            produces=("mi_informed_analysis",),
             output_requirements=(ArtifactRequirement(
-                kind="representation_analysis",
-                producer_module="hsqa_dbn",
-                schema_id="hsqa_dbn.representation_analysis",
-                schema_version="1",
-                capability="mutual_information_analysis",
+                kind="mi_informed_analysis", producer_module="pypique",
+                schema_id="pypique.mi_informed_analysis", schema_version="1",
+                capability="mi_informed_analysis",
             ),),
         ),
     ),

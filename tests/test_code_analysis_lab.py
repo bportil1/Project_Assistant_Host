@@ -28,7 +28,7 @@ def _integrated_modules() -> ModuleRegistry:
             module_id="pypique",
             display_name="pyPIQUE",
             collections=("code_analysis_lab",),
-            capabilities=("quality_modeling",),
+            capabilities=("quality_modeling", "mi_informed_analysis"),
             interfaces=("callable_api", "standalone_ui"),
         ),
         ModuleManifest(
@@ -50,8 +50,8 @@ def test_code_analysis_lab_catalog_contains_real_workflow():
     assert [step.step_id for step in CODE_ANALYSIS_WORKFLOW.steps] == [
         "repository_analysis",
         "quality_modeling",
-        "representation_learning",
-        "latent_analysis",
+        "representation_analysis",
+        "mi_informed_analysis",
     ]
 
 
@@ -66,7 +66,8 @@ def test_controller_reports_unregistered_scientific_modules_without_importing_th
     steps = _steps(snapshot)
     assert steps["repository_analysis"]["state"] == "ready"
     assert steps["quality_modeling"]["state"] == "missing_provider"
-    assert steps["representation_learning"]["state"] == "missing_provider"
+    assert steps["representation_analysis"]["state"] == "missing_provider"
+    assert steps["mi_informed_analysis"]["state"] == "missing_provider"
     assert snapshot["recommended_step"] == "quality_modeling"
 
 
@@ -79,8 +80,8 @@ def test_controller_advances_by_registered_artifacts_not_button_history(tmp_path
     assert initial["quality_modeling"]["blocking_reason"] == (
         "Missing required artifact: code_analysis (from code_analyzer, schema pah.code-analysis.current@1)."
     )
-    assert initial["representation_learning"]["state"] == "blocked"
-    assert initial["latent_analysis"]["state"] == "blocked"
+    assert initial["representation_analysis"]["state"] == "blocked"
+    assert initial["mi_informed_analysis"]["state"] == "blocked"
 
     inventory.register(ArtifactRef(
         artifact_id="code",
@@ -125,8 +126,8 @@ def test_controller_advances_by_registered_artifacts_not_button_history(tmp_path
 
     aligned = _steps(controller.snapshot())
     assert aligned["quality_modeling"]["state"] == "complete"
-    assert aligned["representation_learning"]["state"] == "ready"
-    assert aligned["representation_learning"]["missing_requirements"] == []
+    assert aligned["representation_analysis"]["state"] == "ready"
+    assert aligned["representation_analysis"]["missing_requirements"] == []
 
     inventory.register(ArtifactRef(
         artifact_id="representation",
@@ -138,8 +139,10 @@ def test_controller_advances_by_registered_artifacts_not_button_history(tmp_path
         capabilities=("representation_learning",),
     ))
     represented = _steps(controller.snapshot())
-    assert represented["representation_learning"]["state"] == "complete"
-    assert represented["latent_analysis"]["state"] == "ready"
+    assert represented["representation_analysis"]["state"] == "ready"
+    assert represented["representation_analysis"]["outputs"][0]["available"] is True
+    assert represented["representation_analysis"]["outputs"][1]["available"] is False
+    assert represented["mi_informed_analysis"]["state"] == "blocked"
 
 
 def test_optional_domain_mapping_does_not_block_representation(tmp_path: Path):
@@ -152,7 +155,7 @@ def test_optional_domain_mapping_does_not_block_representation(tmp_path: Path):
         schema_version="1",
     ),))
     controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
-    step = _steps(controller.snapshot())["representation_learning"]
+    step = _steps(controller.snapshot())["representation_analysis"]
     assert step["state"] == "ready"
     domain = next(item for item in step["requirements"] if item["kind"] == "domain_mapping")
     assert domain["optional"] is True
@@ -278,7 +281,7 @@ def test_invalid_artifact_does_not_satisfy_workflow_requirement():
         validation_errors=("missing feature names",),
     ),))
     controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
-    step = _steps(controller.snapshot())["representation_learning"]
+    step = _steps(controller.snapshot())["representation_analysis"]
     assert step["state"] == "blocked"
     assert step["missing_requirements"][0]["producer_module"] == "pypique"
     assert step["blocking_reason"] == (
@@ -386,7 +389,7 @@ def test_representation_execution_context_routes_neutral_pypique_handoff(tmp_pat
     ))
     controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
     module_id, context = controller.execution_context(
-        "representation_learning",
+        "representation_analysis",
         ModuleContext(project_root=tmp_path, working_root=tmp_path),
     )
     assert module_id == "hsqa_dbn"
@@ -417,66 +420,144 @@ def test_invalid_representation_output_does_not_complete_learning_step(tmp_path:
     ))
     controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
     steps = _steps(controller.snapshot())
-    assert steps["representation_learning"]["state"] == "ready"
-    assert steps["representation_learning"]["outputs"][0]["available"] is False
-    assert steps["latent_analysis"]["state"] == "blocked"
+    assert steps["representation_analysis"]["state"] == "ready"
+    assert steps["representation_analysis"]["outputs"][0]["available"] is False
+    assert steps["mi_informed_analysis"]["state"] == "blocked"
 
 
-def test_latent_analysis_requires_schema_valid_hsqa_representation(tmp_path: Path):
-    inventory = ArtifactInventory((ArtifactRef(
-        artifact_id="representation",
-        kind="representation",
-        producer_module="hsqa_dbn",
-        schema_id="hsqa_dbn.representation_bundle",
-        schema_version="1",
-        capabilities=("representation_learning",),
-        validation_state="valid",
-    ),))
-    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
-    latent = _steps(controller.snapshot())["latent_analysis"]
-    assert latent["state"] == "ready"
-    requirement = latent["requirements"][0]
-    assert requirement["schema_id"] == "hsqa_dbn.representation_bundle"
-    assert requirement["schema_version"] == "1"
-    assert requirement["capability"] == "representation_learning"
-
-
-def test_latent_analysis_only_completes_with_schema_valid_hsqa_analysis():
+def test_combined_hsqa_stage_requires_both_schema_valid_outputs():
+    feature = ArtifactRef(
+        artifact_id="feature", kind="feature_dataset", producer_module="pypique",
+        schema_id="pah.feature-dataset.matrix", schema_version="1", validation_state="valid",
+    )
     representation = ArtifactRef(
-        artifact_id="representation",
-        kind="representation",
-        producer_module="hsqa_dbn",
-        schema_id="hsqa_dbn.representation_bundle",
-        schema_version="1",
-        capabilities=("representation_learning",),
-        validation_state="valid",
+        artifact_id="representation", kind="representation", producer_module="hsqa_dbn",
+        schema_id="hsqa_dbn.representation_bundle", schema_version="1",
+        capabilities=("representation_learning",), validation_state="valid",
     )
-    wrong = ArtifactRef(
-        artifact_id="analysis-wrong",
-        kind="representation_analysis",
-        producer_module="hsqa_dbn",
-        schema_id="hsqa_dbn.other_analysis",
-        schema_version="1",
-        capabilities=("mutual_information_analysis",),
-        validation_state="valid",
-    )
-    inventory = ArtifactInventory((representation, wrong))
+    inventory = ArtifactInventory((feature, representation))
     controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
-    latent = _steps(controller.snapshot())["latent_analysis"]
-    assert latent["state"] == "ready"
-    assert latent["outputs"][0]["available"] is False
-    assert latent["outputs"][0]["requirement"]["schema_id"] == "hsqa_dbn.representation_analysis"
+    step = _steps(controller.snapshot())["representation_analysis"]
+    assert step["state"] == "ready"
+    assert [item["available"] for item in step["outputs"]] == [True, False]
 
     inventory.register(ArtifactRef(
-        artifact_id="analysis-current",
-        kind="representation_analysis",
-        producer_module="hsqa_dbn",
-        schema_id="hsqa_dbn.representation_analysis",
-        schema_version="1",
+        artifact_id="analysis-current", kind="representation_analysis", producer_module="hsqa_dbn",
+        schema_id="hsqa_dbn.representation_analysis", schema_version="1",
         capabilities=("experiment_analysis", "mutual_information_analysis"),
-        parent_artifact_ids=("representation",),
-        validation_state="valid",
+        parent_artifact_ids=("representation",), validation_state="valid",
     ))
-    latent = _steps(controller.snapshot())["latent_analysis"]
-    assert latent["state"] == "complete"
-    assert latent["outputs"][0]["available"] is True
+    step = _steps(controller.snapshot())["representation_analysis"]
+    assert step["state"] == "complete"
+    assert [item["available"] for item in step["outputs"]] == [True, True]
+
+
+def test_mi_informed_stage_requires_neutral_information_network_and_routes_to_pypique():
+    code = ArtifactRef(
+        artifact_id="code", kind="code_analysis", producer_module="code_analyzer",
+        schema_id="pah.code-analysis.current", schema_version="1", validation_state="valid",
+    )
+    network = ArtifactRef(
+        artifact_id="network", kind="information_network", producer_module="pah",
+        schema_id="pah.information-network", schema_version="1", validation_state="valid",
+    )
+    controller = CodeAnalysisLabController(
+        _integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=ArtifactInventory((code, network))
+    )
+    step = _steps(controller.snapshot())["mi_informed_analysis"]
+    assert step["state"] == "ready"
+    module_id, context = controller.execution_context("mi_informed_analysis", ModuleContext())
+    assert module_id == "pypique"
+    assert context.runtime["input_artifacts"]["information_network"]["artifact_id"] == "network"
+    assert context.runtime["input_artifacts"]["code_analysis"]["artifact_id"] == "code"
+
+
+def test_mi_informed_stage_only_completes_with_schema_valid_pypique_output():
+    code = ArtifactRef(
+        artifact_id="code", kind="code_analysis", producer_module="code_analyzer",
+        schema_id="pah.code-analysis.current", schema_version="1", validation_state="valid",
+    )
+    network = ArtifactRef(
+        artifact_id="network", kind="information_network", producer_module="pah",
+        schema_id="pah.information-network", schema_version="1", validation_state="valid",
+    )
+    wrong = ArtifactRef(
+        artifact_id="wrong", kind="mi_informed_analysis", producer_module="pypique",
+        schema_id="pypique.other", schema_version="1",
+        capabilities=("mi_informed_analysis",), validation_state="valid",
+    )
+    inventory = ArtifactInventory((code, network, wrong))
+    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
+    assert _steps(controller.snapshot())["mi_informed_analysis"]["state"] == "ready"
+    inventory.register(ArtifactRef(
+        artifact_id="mi-current", kind="mi_informed_analysis", producer_module="pypique",
+        schema_id="pypique.mi_informed_analysis", schema_version="1",
+        capabilities=("mi_informed_analysis",), parent_artifact_ids=("network",), validation_state="valid",
+    ))
+    assert _steps(controller.snapshot())["mi_informed_analysis"]["state"] == "complete"
+
+
+def test_information_network_preserves_mi_correlation_sign_and_signed_pmi(tmp_path: Path):
+    import csv
+    import json
+    from pah.labs.information_network import build_information_network
+
+    vis = tmp_path / "vis_data"
+    vis.mkdir()
+    (vis / "dataset_metadata.json").write_text(json.dumps({
+        "dataset_name": "fixture",
+        "domain": "software_security",
+        "semantic_adapter": "cwe",
+        "features": [
+            {"index": 0, "id": "CWE-1", "label": "CWE-1", "groups": ["Conf"]},
+            {"index": 1, "id": "CWE-2", "label": "CWE-2", "groups": ["Int"]},
+        ],
+    }) + "\n", encoding="utf-8")
+    (vis / "nodes.csv").write_text(
+        "raw_layer,node_idx,x,y,label\n0,0,0,0,0\n0,1,1,0,0\n1,0,0,1,1\n2,0,0,2,2\n",
+        encoding="utf-8",
+    )
+    (vis / "scope_index.csv").write_text("idx,scope\n0,Conf\n", encoding="utf-8")
+    (vis / "edges_pos.csv").write_text(
+        "src_layer,src_idx,tgt_layer,tgt_idx,weight\n0,0,1,0,0.7\n",
+        encoding="utf-8",
+    )
+    (vis / "edges_neg.csv").write_text(
+        "src_layer,src_idx,tgt_layer,tgt_idx,weight\n0,1,1,0,-0.6\n",
+        encoding="utf-8",
+    )
+    (vis / "contributions_pos.csv").write_text("layer,node,scope,val\n1,0,Conf,0.4\n", encoding="utf-8")
+    (vis / "contributions_neg.csv").write_text("layer,node,scope,val\n1,0,Int,-0.2\n", encoding="utf-8")
+
+    dep = tmp_path / "input_dependency"
+    dep.mkdir()
+    for name, rows in {
+        "pearson_visible_visible.csv": [[1.0, -0.8], [-0.8, 1.0]],
+        "spearman_visible_visible.csv": [[1.0, -0.7], [-0.7, 1.0]],
+        "mi_visible_visible.csv": [[0.0, 0.55], [0.55, 0.0]],
+    }.items():
+        with (dep / name).open("w", newline="", encoding="utf-8") as handle:
+            csv.writer(handle).writerows(rows)
+
+    manifest = tmp_path / "representation_analysis.json"
+    manifest.write_text(json.dumps({
+        "schema": "hsqa_dbn.representation_analysis",
+        "schema_version": 1,
+        "artifacts": {"visualizer_data": str(vis), "visible_dependency": str(dep)},
+    }) + "\n", encoding="utf-8")
+    source = ArtifactRef(
+        artifact_id="hsqa-analysis", kind="representation_analysis", producer_module="hsqa_dbn",
+        location=str(manifest), schema_id="hsqa_dbn.representation_analysis", schema_version="1",
+        capabilities=("mutual_information_analysis",), parent_artifact_ids=("representation",),
+        validation_state="valid",
+    )
+    artifact = build_information_network(source, output_path=tmp_path / "information_network.json")
+    assert artifact.validation_state == "valid"
+    payload = json.loads(Path(artifact.location).read_text(encoding="utf-8"))
+    dependency = next(edge for edge in payload["edges"] if edge["relationship"] == "feature_dependency")
+    assert dependency["mutual_information"] == 0.55
+    assert dependency["pearson"] == -0.8
+    assert dependency["correlation_sign"] == "opposing"
+    signed = [edge for edge in payload["edges"] if edge["relationship"] == "signed_information"]
+    assert {edge["signed_score"] for edge in signed} == {0.7, -0.6}
+    assert all(edge["metric"] == "normalized_pmi" for edge in signed)

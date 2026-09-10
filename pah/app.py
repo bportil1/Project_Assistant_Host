@@ -21,6 +21,7 @@ from .labs import (
     RegistryError,
     default_lab_registry,
 )
+from .labs.information_network import build_information_network
 from .module_catalog import default_module_registry
 from .runtime import HostSurfaceRuntimeAdapter, RuntimeRegistry, RuntimeRegistryError
 from .integrations import (
@@ -246,7 +247,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
 
         try:
             _, hsqa_context = code_analysis_lab.execution_context(
-                "representation_learning", orchestration_context()
+                "representation_analysis", orchestration_context()
             )
         except ValueError:
             # A representation bundle is only current while its pyPIQUE feature
@@ -257,6 +258,30 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
                     lab_artifacts.remove(artifact.artifact_id)
         else:
             sync_runtime_artifacts("hsqa_dbn", hsqa_context)
+
+        # Translate HSQA's provider-specific post-ML analysis into a neutral signed
+        # information network that pyPIQUE can consume without importing HSQA_DBN.
+        lab_artifacts.remove("pah-information-network-current")
+        analyses = lab_artifacts.find(
+            kind="representation_analysis",
+            producer_module="hsqa_dbn",
+            schema_id="hsqa_dbn.representation_analysis",
+            schema_version="1",
+            validation_state="valid",
+        )
+        if analyses and workspaces.root is not None:
+            network_path = Path(workspaces.root) / "pyPIQUE_results" / "pah_handoff" / "information_network.json"
+            network = build_information_network(analyses[-1], output_path=network_path)
+            lab_artifacts.register(network)
+
+        try:
+            _, feedback_context = code_analysis_lab.execution_context(
+                "mi_informed_analysis", orchestration_context()
+            )
+        except ValueError:
+            lab_artifacts.remove("pypique-mi-informed-analysis-current")
+        else:
+            sync_runtime_artifacts("pypique", feedback_context)
 
     def error_response(exc: Exception, status: int = 400):
         return jsonify({"ok": False, "error": str(exc)}), status
