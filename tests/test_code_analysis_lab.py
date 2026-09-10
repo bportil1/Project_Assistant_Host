@@ -28,7 +28,7 @@ def _integrated_modules() -> ModuleRegistry:
             module_id="pypique",
             display_name="pyPIQUE",
             collections=("code_analysis_lab",),
-            capabilities=("quality_modeling", "mi_informed_analysis"),
+            capabilities=("quality_modeling", "mi_informed_analysis", "mi_informed_modeling"),
             interfaces=("callable_api", "standalone_ui"),
         ),
         ModuleManifest(
@@ -494,7 +494,20 @@ def test_mi_informed_stage_only_completes_with_schema_valid_pypique_output():
         schema_id="pypique.mi_informed_analysis", schema_version="1",
         capabilities=("mi_informed_analysis",), parent_artifact_ids=("network",), validation_state="valid",
     ))
-    assert _steps(controller.snapshot())["mi_informed_analysis"]["state"] == "complete"
+    assert _steps(controller.snapshot())["mi_informed_analysis"]["state"] == "ready"
+    inventory.register(ArtifactRef(
+        artifact_id="mi-experiment", kind="mi_informed_model_experiment", producer_module="pypique",
+        schema_id="pypique.mi_informed_model_experiment", schema_version="1",
+        capabilities=("mi_informed_modeling",), parent_artifact_ids=("network",), validation_state="valid",
+    ))
+    inventory.register(ArtifactRef(
+        artifact_id="mi-model", kind="mi_informed_quality_model", producer_module="pypique",
+        schema_id="pypique.mi_informed_quality_model", schema_version="1",
+        capabilities=("mi_informed_modeling",), parent_artifact_ids=("network",), validation_state="valid",
+    ))
+    step = _steps(controller.snapshot())["mi_informed_analysis"]
+    assert step["state"] == "complete"
+    assert [item["available"] for item in step["outputs"]] == [True, True, True]
 
 
 def test_information_network_preserves_mi_correlation_sign_and_signed_pmi(tmp_path: Path):

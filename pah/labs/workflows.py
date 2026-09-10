@@ -73,10 +73,10 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
         WorkflowStep(
             step_id="mi_informed_analysis",
             label="MI-informed quality analysis",
-            capability="mi_informed_analysis",
+            capability="mi_informed_modeling",
             description=(
-                "Inspect HSQA-derived dependence strength, signed PMI topology, positive/negative "
-                "feature correlation, and domain projections inside pyPIQUE without modifying the baseline model."
+                "Inspect HSQA-derived dependence and signed topology, then generate an experimental "
+                "non-negative PIQUE weighting candidate with explicit aggregation and weight-effect controls."
             ),
             provider_module="pypique",
             requires=(
@@ -89,12 +89,24 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
                     producer_module="pah",
                 ),
             ),
-            produces=("mi_informed_analysis",),
-            output_requirements=(ArtifactRequirement(
-                kind="mi_informed_analysis", producer_module="pypique",
-                schema_id="pypique.mi_informed_analysis", schema_version="1",
-                capability="mi_informed_analysis",
-            ),),
+            produces=("mi_informed_analysis", "mi_informed_model_experiment", "mi_informed_quality_model"),
+            output_requirements=(
+                ArtifactRequirement(
+                    kind="mi_informed_analysis", producer_module="pypique",
+                    schema_id="pypique.mi_informed_analysis", schema_version="1",
+                    capability="mi_informed_analysis",
+                ),
+                ArtifactRequirement(
+                    kind="mi_informed_model_experiment", producer_module="pypique",
+                    schema_id="pypique.mi_informed_model_experiment", schema_version="1",
+                    capability="mi_informed_modeling",
+                ),
+                ArtifactRequirement(
+                    kind="mi_informed_quality_model", producer_module="pypique",
+                    schema_id="pypique.mi_informed_quality_model", schema_version="1",
+                    capability="mi_informed_modeling",
+                ),
+            ),
         ),
     ),
 )

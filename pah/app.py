@@ -279,7 +279,12 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
                 "mi_informed_analysis", orchestration_context()
             )
         except ValueError:
-            lab_artifacts.remove("pypique-mi-informed-analysis-current")
+            for artifact_id in (
+                "pypique-mi-informed-analysis-current",
+                "pypique-mi-informed-model-experiment-current",
+                "pypique-mi-informed-quality-model-current",
+            ):
+                lab_artifacts.remove(artifact_id)
         else:
             sync_runtime_artifacts("pypique", feedback_context)
 
