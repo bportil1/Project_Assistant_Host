@@ -40,7 +40,8 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
             label="Representation & information analysis",
             capability="representation_learning",
             description=(
-                "Use HSQA_DBN with the pyPIQUE feature dataset from this repository workflow. "
+                "Use HSQA_DBN with the pyPIQUE feature dataset from this workflow. Select a compatible "
+                "exported RepresentationBundle when analysis already exists, or open HSQA_DBN to create/run one. "
                 "Representation and analysis remain separately tracked artifacts."
             ),
             provider_module="hsqa_dbn",
@@ -52,6 +53,10 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
                 ArtifactRequirement(
                     kind="domain_mapping", schema_id="pah.domain-mapping.feature-groups", schema_version="1",
                     optional=True, producer_module="pypique",
+                ),
+                ArtifactRequirement(
+                    kind="representation", schema_id="hsqa_dbn.representation_bundle", schema_version="1",
+                    optional=True, producer_module="hsqa_dbn", capability="representation_learning",
                 ),
             ),
             produces=("representation", "representation_analysis"),

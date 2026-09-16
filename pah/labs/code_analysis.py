@@ -7,7 +7,9 @@ Lab process, while Code Analyzer, pyPIQUE, and HSQA_DBN remain independent.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+import hashlib
+from pathlib import Path
+from typing import Any, Mapping
 
 from pah.contracts import ArtifactRef, ArtifactRequirement, ModuleContext, WorkflowManifest
 
@@ -80,6 +82,13 @@ class CodeAnalysisLabController:
             # A persisted pin whose artifact disappeared or no longer satisfies the
             # contract is intentionally not replaced silently by a current artifact.
             return None, "pinned_missing", selected_id
+
+        # Existing RepresentationBundles are an explicit user choice.  Do not
+        # silently select whichever HSQA bundle happens to be newest on disk; that
+        # can route analysis from the wrong trial even when several bundles share
+        # the same feature-dataset lineage.
+        if step.step_id == "representation_analysis" and requirement.kind == "representation":
+            return None, "manual", None
 
         matches = self.artifacts.matching(requirement, project_id=project_id)
         return self._prefer_current(matches), "current", None
@@ -251,6 +260,94 @@ class CodeAnalysisLabController:
             "selection_mode": "pinned" if selected else "current",
             "artifact_id": selected,
         }
+
+
+    def select_discovered_representation(
+        self,
+        bundle: Mapping[str, Any],
+        *,
+        context: ModuleContext | None = None,
+    ) -> dict[str, Any]:
+        """Register and pin one HSQA-discovered bundle for the representation step.
+
+        HSQA remains responsible for filesystem discovery and bundle validation.
+        PAH accepts only a bundle that the provider classified as compatible with
+        the feature_dataset currently selected for this workflow branch.
+        """
+        if str(bundle.get("compatibility") or "") != "current":
+            raise ValueError("Only a bundle compatible with the currently selected feature_dataset can be used")
+        raw_path = str(bundle.get("path") or "").strip()
+        if not raw_path:
+            raise ValueError("Discovered RepresentationBundle does not expose a path")
+        bundle_path = Path(raw_path).expanduser().resolve()
+        if not bundle_path.is_dir() or not (bundle_path / "manifest.json").is_file():
+            raise ValueError(f"RepresentationBundle is no longer available: {bundle_path}")
+
+        step = next(item for item in self.workflow.steps if item.step_id == "representation_analysis")
+        representation_requirement = next(
+            item for item in step.requires if item.kind == "representation"
+        )
+        feature_requirement = next(
+            item for item in step.requires if item.kind == "feature_dataset"
+        )
+        feature_artifact, _, _ = self._selected_artifact(step, feature_requirement, context=context)
+        if feature_artifact is None:
+            raise ValueError("A pyPIQUE feature_dataset must be selected before choosing an exported bundle")
+
+        parent_ids = [feature_artifact.artifact_id]
+        domain_requirement = next(
+            (item for item in step.requires if item.kind == "domain_mapping"), None
+        )
+        if domain_requirement is not None:
+            domain_artifact, _, _ = self._selected_artifact(step, domain_requirement, context=context)
+            if domain_artifact is not None:
+                parent_ids.append(domain_artifact.artifact_id)
+
+        identity = bundle.get("trial_identity") or {}
+        if not isinstance(identity, Mapping):
+            identity = {}
+        source_sha256 = str(bundle.get("source_sha256") or "").strip() or None
+        digest_source = f"{bundle_path}|{source_sha256 or ''}".encode("utf-8")
+        artifact_id = f"hsqa-dbn-representation-selected-{hashlib.sha256(digest_source).hexdigest()[:12]}"
+        provider = self.modules.get("hsqa_dbn")
+        artifact = ArtifactRef(
+            artifact_id=artifact_id,
+            kind="representation",
+            producer_module="hsqa_dbn",
+            producer_version=(provider.version if provider is not None else None),
+            location=str(bundle_path),
+            schema_id="hsqa_dbn.representation_bundle",
+            schema_version="1",
+            media_type="application/vnd.hsqa-dbn.representation-bundle",
+            project_id=self._project_id(context),
+            capabilities=(
+                "representation_learning",
+                "mutual_information_analysis",
+                "domain_projection",
+                "representation_export",
+            ),
+            parent_artifact_ids=tuple(parent_ids),
+            validation_state="valid",
+            metadata={
+                "user_selected_export": True,
+                "trial_identity": dict(identity),
+                "input_source_sha256": source_sha256,
+                "history_selectable": True,
+            },
+            provenance={
+                "source": "HSQA_DBN discovered RepresentationBundle",
+                "bundle_path": str(bundle_path),
+                "feature_dataset_artifact_id": feature_artifact.artifact_id,
+            },
+        )
+        self.artifacts.register(artifact)
+        selection = self.select_input(
+            step.step_id,
+            representation_requirement.kind,
+            artifact.artifact_id,
+            context=context,
+        )
+        return {**selection, "artifact": artifact.to_dict()}
 
     def execution_context(self, step_id: str, context: ModuleContext | None = None) -> tuple[str, ModuleContext]:
         """Build a provider context containing the explicitly selected step inputs."""

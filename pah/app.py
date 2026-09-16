@@ -481,6 +481,58 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             **code_analysis_lab.snapshot(context=orchestration_context()),
         })
 
+    @app.post("/api/orchestration/code-analysis/steps/representation_analysis/bundles/select")
+    def orchestration_code_analysis_select_representation_bundle():
+        payload = request.get_json(silent=True) or {}
+        raw_path = str(payload.get("path") or "").strip()
+        if not raw_path:
+            return error_response(ValueError("RepresentationBundle path is required"))
+
+        sync_code_analysis_lab_artifacts()
+        context = orchestration_context()
+        snapshot = code_analysis_lab.snapshot(context=context)
+        step = next(
+            (item for item in snapshot["workflow"]["steps"] if item["step_id"] == "representation_analysis"),
+            None,
+        )
+        runtime = ((step or {}).get("resolution") or {}).get("provider", {}).get("runtime") or {}
+        discovery = ((runtime.get("metadata") or {}).get("handoff") or {}).get("artifact_discovery") or {}
+        bundles = discovery.get("bundles") or []
+        requested = Path(raw_path).expanduser().resolve()
+        selected_bundle = None
+        for bundle in bundles:
+            if not isinstance(bundle, dict) or not bundle.get("path"):
+                continue
+            try:
+                candidate = Path(str(bundle["path"])).expanduser().resolve()
+            except OSError:
+                continue
+            if candidate == requested:
+                selected_bundle = bundle
+                break
+        if selected_bundle is None:
+            return error_response(
+                ValueError("The requested RepresentationBundle is not in HSQA_DBN's current discovery set"),
+                409,
+            )
+
+        try:
+            selection = code_analysis_lab.select_discovered_representation(
+                selected_bundle, context=context
+            )
+        except (KeyError, ValueError) as exc:
+            return error_response(exc, 409)
+
+        # Re-sync with the selected representation in the HSQA context.  If that
+        # bundle already has completed analysis, HSQA advertises it immediately
+        # and PAH can build the neutral information_network without a rerun.
+        sync_code_analysis_lab_artifacts()
+        return jsonify({
+            "ok": True,
+            "selection": selection,
+            **code_analysis_lab.snapshot(context=context),
+        })
+
     @app.post("/api/orchestration/code-analysis/steps/<step_id>/launch")
     def orchestration_code_analysis_step_launch(step_id: str):
         payload = request.get_json(silent=True) or {}

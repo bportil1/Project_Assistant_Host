@@ -201,6 +201,8 @@ def test_code_analysis_lab_frontend_contract_is_host_owned_and_collapsible():
     assert ".lab-workflow-rail.collapsed" in css
     assert "/api/orchestration/code-analysis" in js
     assert "/api/orchestration/code-analysis/steps/${encodeURIComponent(stepId)}/launch" in js
+    assert "/api/orchestration/code-analysis/steps/representation_analysis/bundles/select" in js
+    assert "Use bundle" in js
     assert "openCodeAnalysisLab" in js
 
 
@@ -826,3 +828,68 @@ def test_repository_analysis_is_optional_and_not_routed_into_pypique(tmp_path: P
     assert step["requirements"] == []
     _, launch_context = controller.execution_context("quality_modeling", context)
     assert launch_context.runtime["input_artifacts"] == {}
+
+
+def test_existing_hsqa_bundle_can_be_selected_as_step3_input(tmp_path: Path):
+    bundle = tmp_path / "results" / "campaign" / "trial-0" / "representation_bundle"
+    bundle.mkdir(parents=True)
+    (bundle / "manifest.json").write_text('{"schema":"hsqa_dbn.representation_bundle","schema_version":1}\n', encoding="utf-8")
+    feature = ArtifactRef(
+        artifact_id="feature-current",
+        kind="feature_dataset",
+        producer_module="pypique",
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
+        project_id=str(tmp_path),
+        validation_state="valid",
+    )
+    inventory = ArtifactInventory((feature,))
+    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
+    context = ModuleContext(project_root=tmp_path, working_root=tmp_path, results_root=tmp_path / "results")
+
+    before = _steps(controller.snapshot(context=context))["representation_analysis"]
+    representation_input = next(item for item in before["requirements"] if item["kind"] == "representation")
+    assert representation_input["optional"] is True
+    assert representation_input["selected"] is None
+    assert representation_input["selection_mode"] == "manual"
+
+    selected = controller.select_discovered_representation({
+        "path": str(bundle),
+        "compatibility": "current",
+        "source_sha256": "abc123",
+        "trial_identity": {"dataset": "NIST SARD", "trial": 0},
+    }, context=context)
+    assert selected["selection_mode"] == "pinned"
+    selected_id = selected["artifact_id"]
+
+    step = _steps(controller.snapshot(context=context))["representation_analysis"]
+    representation_input = next(item for item in step["requirements"] if item["kind"] == "representation")
+    assert representation_input["selected_artifact_id"] == selected_id
+    assert representation_input["selected"]["location"] == str(bundle.resolve())
+    assert step["outputs"][0]["available"] is True
+
+    module_id, launch_context = controller.execution_context("representation_analysis", context)
+    assert module_id == "hsqa_dbn"
+    routed = launch_context.runtime["input_artifacts"]["representation"]
+    assert routed["artifact_id"] == selected_id
+    assert routed["location"] == str(bundle.resolve())
+    assert routed["parent_artifact_ids"] == ["feature-current"]
+
+
+def test_incompatible_discovered_hsqa_bundle_cannot_be_selected(tmp_path: Path):
+    bundle = tmp_path / "representation_bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text('{}\n', encoding="utf-8")
+    feature = ArtifactRef(
+        artifact_id="feature-current", kind="feature_dataset", producer_module="pypique",
+        schema_id="pah.feature-dataset.matrix", schema_version="1", project_id=str(tmp_path),
+        validation_state="valid",
+    )
+    controller = CodeAnalysisLabController(
+        _integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=ArtifactInventory((feature,))
+    )
+    with pytest.raises(ValueError, match="currently selected feature_dataset"):
+        controller.select_discovered_representation(
+            {"path": str(bundle), "compatibility": "historical"},
+            context=ModuleContext(project_root=tmp_path),
+        )

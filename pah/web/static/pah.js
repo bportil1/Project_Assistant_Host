@@ -1583,7 +1583,7 @@
           table.className = 'pah-data-table';
           const head = document.createElement('thead');
           const headRow = document.createElement('tr');
-          for (const label of ['Trial', 'Compatibility', 'Matching feature_dataset', 'Source fingerprint']) {
+          for (const label of ['Trial', 'Compatibility', 'Matching feature_dataset', 'Source fingerprint', 'Use']) {
             const th = document.createElement('th');
             th.textContent = label;
             headRow.appendChild(th);
@@ -1629,12 +1629,71 @@
             fingerprintCell.textContent = fingerprint ? `${fingerprint.slice(0, 12)}…` : 'unrecorded';
             fingerprintCell.title = fingerprint;
             row.appendChild(fingerprintCell);
+
+            const actionCell = document.createElement('td');
+            const representationInput = (step.requirements || []).find(item => item.kind === 'representation');
+            const selectedPath = representationInput?.selected?.location || '';
+            if (selectedPath && selectedPath === (bundle.path || '')) {
+              const selected = document.createElement('strong');
+              selected.textContent = 'Selected';
+              actionCell.appendChild(selected);
+            } else if (compatibility === 'current') {
+              const use = document.createElement('button');
+              use.type = 'button';
+              use.textContent = 'Use bundle';
+              use.addEventListener('click', async () => {
+                try {
+                  await api('/api/orchestration/code-analysis/steps/representation_analysis/bundles/select', {
+                    method: 'POST',
+                    body: JSON.stringify({path: bundle.path}),
+                  });
+                  await refreshCodeAnalysisLab();
+                  toast('Selected exported RepresentationBundle. Existing HSQA analysis will be reused when available.');
+                } catch (error) {
+                  toast(error.message, true);
+                  await refreshCodeAnalysisLab();
+                }
+              });
+              actionCell.appendChild(use);
+            } else {
+              const note = document.createElement('small');
+              note.textContent = compatibility === 'historical'
+                ? 'Select its matching feature_dataset first'
+                : 'Not compatible';
+              actionCell.appendChild(note);
+            }
+            row.appendChild(actionCell);
             body.appendChild(row);
           }
           table.appendChild(body);
           wrap.appendChild(table);
           details.appendChild(wrap);
           providerSection.appendChild(details);
+
+          const representationInput = (step.requirements || []).find(item => item.kind === 'representation');
+          if (representationInput?.selected) {
+            const selectedActions = document.createElement('div');
+            selectedActions.className = 'lab-provider-actions';
+            const selectedNote = document.createElement('small');
+            selectedNote.textContent = 'Using the selected exported bundle; completed HSQA analysis can be registered without rerunning it.';
+            const clear = document.createElement('button');
+            clear.type = 'button';
+            clear.textContent = 'Clear bundle selection';
+            clear.addEventListener('click', async () => {
+              try {
+                await api('/api/orchestration/code-analysis/steps/representation_analysis/inputs/representation/select', {
+                  method: 'POST',
+                  body: JSON.stringify({artifact_id: null}),
+                });
+                await refreshCodeAnalysisLab();
+                toast('Exported bundle selection cleared.');
+              } catch (error) {
+                toast(error.message, true);
+              }
+            });
+            selectedActions.append(selectedNote, clear);
+            providerSection.appendChild(selectedActions);
+          }
         }
       }
       const stepLaunchable = runtime?.launchable && ['ready', 'stale', 'complete'].includes(step.state);
@@ -1690,6 +1749,15 @@
           ? (requirement.selected ? `optional · ${requirement.selection_mode}` : 'optional')
           : (requirement.satisfied ? `available · ${requirement.selection_mode}` : 'missing');
         appendLabContractRow(inputs, requirement.expected || requirement.kind, suffix);
+
+        if (step.step_id === 'representation_analysis' && requirement.kind === 'representation') {
+          const hint = document.createElement('small');
+          hint.textContent = requirement.selected
+            ? 'Selected from the compatible exported bundles shown above.'
+            : 'Optional: choose a compatible exported bundle above to reuse completed HSQA analysis, or open HSQA_DBN to create/run a representation.';
+          inputs.appendChild(hint);
+          continue;
+        }
 
         const history = requirement.history || [];
         const selectable = history.filter(item => item.selectable);
