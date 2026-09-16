@@ -9,7 +9,6 @@ from pah.labs import (
     ArtifactInventory,
     CODE_ANALYSIS_LAB,
     CODE_ANALYSIS_WORKFLOW,
-    EXISTING_FINDINGS_WORKFLOW,
     CodeAnalysisLabController,
     ModuleRegistry,
 )
@@ -46,8 +45,8 @@ def _steps(snapshot):
     return {step["step_id"]: step for step in snapshot["workflow"]["steps"]}
 
 
-def test_code_analysis_lab_catalog_contains_separate_repository_and_findings_workflows():
-    assert CODE_ANALYSIS_LAB.workflows == (CODE_ANALYSIS_WORKFLOW, EXISTING_FINDINGS_WORKFLOW)
+def test_code_analysis_lab_catalog_contains_repository_workflow():
+    assert CODE_ANALYSIS_LAB.workflows == (CODE_ANALYSIS_WORKFLOW,)
     assert [step.step_id for step in CODE_ANALYSIS_WORKFLOW.steps] == [
         "repository_analysis",
         "quality_modeling",
@@ -799,36 +798,6 @@ def test_representation_execution_context_exposes_feature_dataset_history_to_pro
     history = context.runtime["artifact_history"]["feature_dataset"]
     assert [item["artifact_id"] for item in history] == ["feature-history-123"]
 
-
-def test_existing_findings_workflow_consumes_pah_matrix_without_code_analyzer_or_pypique(tmp_path: Path):
-    feature_path = tmp_path / "feature_dataset.json"
-    feature_path.write_text('{"schema":"pah.feature-dataset.matrix","schema_version":1}\n', encoding="utf-8")
-    imported = ArtifactRef(
-        artifact_id="pah-findings-feature-dataset-current",
-        kind="feature_dataset",
-        producer_module="pah",
-        location=str(feature_path),
-        schema_id="pah.feature-dataset.matrix",
-        schema_version="1",
-        project_id=str(tmp_path),
-        validation_state="valid",
-        metadata={"registry_alias": True, "workflow_id": EXISTING_FINDINGS_WORKFLOW.workflow_id},
-    )
-    controller = CodeAnalysisLabController(
-        _integrated_modules(),
-        lab=CODE_ANALYSIS_LAB,
-        artifacts=ArtifactInventory((imported,)),
-        workflow=EXISTING_FINDINGS_WORKFLOW,
-        expected_modules=(("hsqa_dbn", "EBM / DBN Analysis Lab"),),
-    )
-    context = ModuleContext(project_root=tmp_path, working_root=tmp_path)
-    step = _steps(controller.snapshot(context=context))["representation_analysis"]
-    assert step["state"] == "ready"
-    assert step["requirements"][0]["selected"]["artifact_id"] == imported.artifact_id
-    module_id, launch_context = controller.execution_context("representation_analysis", context)
-    assert module_id == "hsqa_dbn"
-    assert launch_context.runtime["input_artifacts"]["feature_dataset"]["artifact_id"] == imported.artifact_id
-    assert set(item["module_id"] for item in controller.snapshot(context=context)["expected_modules"]) == {"hsqa_dbn"}
 
 
 def test_repository_workflow_does_not_accept_findings_matrix_as_quality_input(tmp_path: Path):

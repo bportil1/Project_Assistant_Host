@@ -3,7 +3,7 @@
 from .artifacts import ArtifactInventory, ArtifactRegistry
 from .catalog import CODE_ANALYSIS_LAB, ML_WORKFLOW_LAB, default_lab_registry
 from .code_analysis import CodeAnalysisLabController
-from .workflows import CODE_ANALYSIS_WORKFLOW, EXISTING_FINDINGS_WORKFLOW
+from .workflows import CODE_ANALYSIS_WORKFLOW
 from .registry import LabManifest, LabOrchestrator, LabRegistry, ModuleRegistry, RegistryError
 
 __all__ = [
@@ -11,7 +11,6 @@ __all__ = [
     "ArtifactRegistry",
     "CODE_ANALYSIS_LAB",
     "CODE_ANALYSIS_WORKFLOW",
-    "EXISTING_FINDINGS_WORKFLOW",
     "CodeAnalysisLabController",
     "ML_WORKFLOW_LAB",
     "LabManifest",

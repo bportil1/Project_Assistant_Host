@@ -513,17 +513,10 @@ def test_code_analysis_lab_exposes_focused_mi_launch_controls():
     assert "searchParams.delete('focused')" in javascript
 
 
-def test_code_analysis_lab_exposes_separate_existing_findings_workflow():
+def test_code_analysis_lab_keeps_single_repository_workflow_surface():
     root = Path(__file__).resolve().parents[1]
     template = (root / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
     javascript = (root / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
-    css = (root / "pah" / "web" / "static" / "pah-workspace.css").read_text(encoding="utf-8")
-    assert 'id="codeAnalysisRepositoryWorkflow"' in template
-    assert 'id="codeAnalysisFindingsWorkflow"' in template
-    assert 'id="findingsDatasetPath"' in template
-    assert 'id="findingsNextActionLabel"' in template
-    assert "/api/orchestration/findings/inspect" in javascript
-    assert "/api/orchestration/findings/import" in javascript
-    assert "/api/orchestration/findings/steps/representation_analysis/launch" in javascript
-    assert ".lab-mode input" in css
-    assert "color: var(--pah-text" in css
+    assert 'id="codeAnalysisFindingsWorkflow"' not in template
+    assert 'id="existingFindingsPanel"' not in template
+    assert "/api/orchestration/findings/" not in javascript

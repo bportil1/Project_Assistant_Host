@@ -228,18 +228,7 @@
   opacity: .8;
 }
 
-/* Code Analysis Lab precomputed dataset source */
-.lab-dataset-source { margin-bottom: 14px; }
-.lab-dataset-source-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-.lab-dataset-source-heading h2 { margin: 3px 0 4px; }
-.lab-dataset-source-heading p { margin: 0; }
-.lab-precomputed-grid { display: grid; grid-template-columns: minmax(260px, 2fr) minmax(180px, 1fr) minmax(180px, 1fr); gap: 10px; margin-top: 14px; align-items: end; }
-.lab-precomputed-grid label { display: grid; gap: 5px; font-size: 0.88rem; }
-.lab-precomputed-actions { align-self: end; }
-.lab-dataset-source button.active { font-weight: 700; }
-@media (max-width: 1050px) { .lab-precomputed-grid { grid-template-columns: 1fr; } .lab-dataset-source-heading { flex-direction: column; } }
-
-/* Existing Findings workflow ------------------------------------------------ */
+/* Code Analysis Lab form controls */
 .lab-mode input,
 .lab-mode select,
 .lab-mode textarea {
@@ -250,26 +239,3 @@
 }
 .lab-mode input::placeholder,
 .lab-mode textarea::placeholder { color: #788690 !important; opacity: 1; }
-
-.lab-workflow-switch { display: inline-flex; gap: 6px; flex-wrap: wrap; }
-.lab-workflow-switch button.active { font-weight: 800; border-color: var(--pah-blue-600, #247eb0); background: #e6f2f8; }
-#codeAnalysisLabMode.findings-view { grid-template-columns: minmax(0, 1fr); }
-#codeAnalysisLabMode.findings-view #codeAnalysisLabRail { display: none; }
-.findings-workflow { display: grid; gap: 14px; }
-.findings-card { margin: 0; }
-.findings-card-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
-.findings-card-heading h2, .findings-next-action h2 { margin: 4px 0 6px; }
-.findings-card-heading p, .findings-next-action p { margin: 0; }
-.findings-import-grid { display: grid; grid-template-columns: minmax(280px, 2fr) minmax(180px, 1fr) minmax(180px, 1fr); gap: 10px; margin-top: 14px; }
-.findings-import-grid label, .findings-history-row label { display: grid; gap: 5px; font-size: 0.88rem; }
-.findings-import-actions { margin-top: 10px; }
-.findings-history-row { margin-top: 12px; max-width: 760px; }
-.findings-status-badge { display: inline-flex; align-items: center; min-height: 26px; padding: 3px 8px; border: 1px solid var(--pah-border-strong, #9aa8b3); border-radius: 999px; font-size: 0.78rem; font-weight: 800; white-space: nowrap; }
-.findings-status-badge.complete { background: #e5f4e8; color: #215d2d; border-color: #8ab596; }
-.findings-status-badge.ready { background: #e8f2f8; color: #205c7e; border-color: #91b6ca; }
-.findings-status-badge.stale { background: #fff4d8; color: #765819; border-color: #cbb36b; }
-.findings-status-badge.blocked { background: #f5e7e7; color: #7a2e2e; border-color: #c99b9b; }
-.findings-next-action { border-width: 2px; }
-.findings-advanced summary { cursor: pointer; font-weight: 700; }
-.findings-advanced[open] summary { margin-bottom: 10px; }
-@media (max-width: 1050px) { .findings-import-grid { grid-template-columns: 1fr; } }
