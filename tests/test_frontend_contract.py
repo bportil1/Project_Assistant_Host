@@ -511,3 +511,15 @@ def test_code_analysis_lab_exposes_focused_mi_launch_controls():
     assert "Open full pyPIQUE" in javascript
     assert "fullWorkspace" in javascript
     assert "searchParams.delete('focused')" in javascript
+
+
+def test_code_analysis_lab_exposes_precomputed_dataset_source_controls():
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    javascript = (root / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    assert 'id="codeAnalysisDatasetPath"' in template
+    assert 'id="codeAnalysisInspectDataset"' in template
+    assert 'id="codeAnalysisImportDataset"' in template
+    assert "/api/orchestration/code-analysis/precomputed/inspect" in javascript
+    assert "/api/orchestration/code-analysis/precomputed/import" in javascript
+    assert "/api/orchestration/code-analysis/dataset-source" in javascript

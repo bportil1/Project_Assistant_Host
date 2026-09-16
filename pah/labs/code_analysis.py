@@ -220,7 +220,10 @@ class CodeAnalysisLabController:
         step = next((item for item in self.workflow.steps if item.step_id == str(step_id)), None)
         if step is None:
             raise ValueError(f"Unknown Code Analysis Lab step {step_id!r}")
-        requirement = next((item for item in step.requires if item.kind == str(kind)), None)
+        requirement = next(
+            (item for item in (*step.requires, *step.requires_any) if item.kind == str(kind)),
+            None,
+        )
         if requirement is None:
             raise ValueError(f"Step {step_id!r} does not consume artifact kind {kind!r}")
         if artifact_id is not None:
@@ -258,7 +261,7 @@ class CodeAnalysisLabController:
         module_id = provider.get("module_id") if isinstance(provider, dict) else None
         if resolution.get("state") != "resolved" or not module_id:
             raise ValueError(snapshot.get("blocking_reason") or f"Step {step.step_id!r} has no resolved provider")
-        if snapshot.get("missing_requirements"):
+        if snapshot.get("missing_requirements") or (step.requires_any and not snapshot.get("selected_alternative_kind")):
             raise ValueError(snapshot.get("blocking_reason") or f"Step {step.step_id!r} is missing required artifacts")
 
         selected: dict[str, dict[str, Any]] = {}
@@ -294,7 +297,13 @@ class CodeAnalysisLabController:
     def step_snapshot(self, step, *, context: ModuleContext | None = None) -> dict[str, Any]:
         resolution = self.orchestrator.resolve_step(step)
         requirements = [self._requirement_snapshot(step, item, context=context) for item in step.requires]
+        alternatives = [self._requirement_snapshot(step, item, context=context) for item in step.requires_any]
+        selected_alternative = next((item for item in alternatives if item.get("selected") is not None), None)
+        if selected_alternative is not None:
+            selected_alternative = {**selected_alternative, "alternative_input": True}
+            requirements.append(selected_alternative)
         missing_required = [item for item in requirements if not item["optional"] and not item["satisfied"]]
+        missing_alternative = bool(step.requires_any) and selected_alternative is None
         provider = resolution.get("provider") or {}
         provider_id = provider.get("module_id") if isinstance(provider, dict) else None
         if provider_id and isinstance(provider, dict):
@@ -329,7 +338,7 @@ class CodeAnalysisLabController:
 
         if resolution["state"] != "resolved":
             state = resolution["state"]
-        elif missing_required:
+        elif missing_required or missing_alternative:
             state = "blocked"
         elif step.produces and outputs and all(item["available"] for item in outputs):
             state = "complete"
@@ -339,10 +348,16 @@ class CodeAnalysisLabController:
             state = "ready"
 
         blocking_reason = None
-        if state == "blocked" and missing_required:
-            expected = ", ".join(item["expected"] for item in missing_required)
-            noun = "artifact" if len(missing_required) == 1 else "artifacts"
-            blocking_reason = f"Missing required {noun}: {expected}."
+        if state == "blocked" and (missing_required or missing_alternative):
+            parts: list[str] = []
+            if missing_required:
+                expected = ", ".join(item["expected"] for item in missing_required)
+                noun = "artifact" if len(missing_required) == 1 else "artifacts"
+                parts.append(f"Missing required {noun}: {expected}.")
+            if missing_alternative:
+                expected = " OR ".join(item["expected"] for item in alternatives)
+                parts.append(f"Provide one input source: {expected}.")
+            blocking_reason = " ".join(parts)
         elif state == "stale":
             stale_kinds = ", ".join(item["kind"] for item in stale_outputs)
             selected_ids = [item.artifact_id for item in selected_inputs]
@@ -356,6 +371,8 @@ class CodeAnalysisLabController:
             "state": state,
             "resolution": resolution,
             "requirements": requirements,
+            "input_alternatives": alternatives,
+            "selected_alternative_kind": selected_alternative.get("kind") if selected_alternative else None,
             "missing_requirements": missing_required,
             "blocking_reason": blocking_reason,
             "outputs": outputs,

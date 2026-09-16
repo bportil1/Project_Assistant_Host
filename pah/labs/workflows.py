@@ -27,14 +27,20 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
             label="Quality evidence and model",
             capability="quality_modeling",
             description=(
-                "Consume the current Code Analyzer project handoff, then build or load "
-                "pyPIQUE quality evidence and a calibrated project evaluation."
+                "Build or load pyPIQUE quality evidence from either the current Code Analyzer "
+                "project handoff or an explicitly imported precomputed feature dataset."
             ),
             provider_module="pypique",
-            requires=(ArtifactRequirement(
-                kind="code_analysis", schema_id="pah.code-analysis.current", schema_version="1",
-                producer_module="code_analyzer",
-            ),),
+            requires_any=(
+                ArtifactRequirement(
+                    kind="feature_dataset", schema_id="pah.feature-dataset.matrix", schema_version="1",
+                    producer_module="pah",
+                ),
+                ArtifactRequirement(
+                    kind="code_analysis", schema_id="pah.code-analysis.current", schema_version="1",
+                    producer_module="code_analyzer",
+                ),
+            ),
             produces=("quality_model", "quality_evaluation"),
         ),
         WorkflowStep(
@@ -49,7 +55,6 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
             requires=(
                 ArtifactRequirement(
                     kind="feature_dataset", schema_id="pah.feature-dataset.matrix", schema_version="1",
-                    producer_module="pypique",
                 ),
                 ArtifactRequirement(
                     kind="domain_mapping", schema_id="pah.domain-mapping.feature-groups", schema_version="1",
@@ -76,17 +81,23 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
             capability="mi_informed_modeling",
             description=(
                 "Inspect HSQA-derived dependence and signed topology, then generate an experimental "
-                "non-negative PIQUE weighting candidate with explicit aggregation and weight-effect controls."
+                "non-negative PIQUE weighting candidate with explicit aggregation and weight-effect controls. "
+                "A precomputed feature dataset can replace repository analysis as the pyPIQUE target input."
             ),
             provider_module="pypique",
             requires=(
                 ArtifactRequirement(
-                    kind="code_analysis", schema_id="pah.code-analysis.current", schema_version="1",
-                    producer_module="code_analyzer",
-                ),
-                ArtifactRequirement(
                     kind="information_network", schema_id="pah.information-network", schema_version="1",
                     producer_module="pah",
+                ),
+            ),
+            requires_any=(
+                ArtifactRequirement(
+                    kind="feature_dataset", schema_id="pah.feature-dataset.matrix", schema_version="1",
+                ),
+                ArtifactRequirement(
+                    kind="code_analysis", schema_id="pah.code-analysis.current", schema_version="1",
+                    producer_module="code_analyzer",
                 ),
             ),
             produces=("mi_informed_analysis", "mi_informed_model_experiment", "mi_informed_quality_model"),

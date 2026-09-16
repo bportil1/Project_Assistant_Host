@@ -362,6 +362,38 @@
 
       <div id="codeAnalysisModuleHealth" class="lab-module-health"></div>
 
+      <section id="codeAnalysisDatasetSource" class="lab-step-detail lab-dataset-source">
+        <div class="lab-dataset-source-heading">
+          <div>
+            <span class="lab-kicker">WORKFLOW INPUT</span>
+            <h2>Dataset source</h2>
+            <p id="codeAnalysisDatasetSourceStatus">Choose repository analysis or import an existing numeric CSV/TSV matrix.</p>
+          </div>
+          <div class="inline-actions">
+            <button id="codeAnalysisUseRepository" type="button">Repository analysis</button>
+            <button id="codeAnalysisUsePrecomputed" type="button">Precomputed dataset</button>
+          </div>
+        </div>
+        <div class="lab-precomputed-grid">
+          <label>CSV / TSV path
+            <input id="codeAnalysisDatasetPath" class="wide-input" type="text" placeholder="/path/to/nist_sard_complete.csv" spellcheck="false">
+          </label>
+          <label>Dataset name
+            <input id="codeAnalysisDatasetName" class="wide-input" type="text" placeholder="Optional; defaults to filename">
+          </label>
+          <label>Identifier column
+            <select id="codeAnalysisDatasetIdColumn" class="wide-input" disabled>
+              <option value="">Inspect the dataset first</option>
+            </select>
+          </label>
+          <div class="inline-actions lab-precomputed-actions">
+            <button id="codeAnalysisInspectDataset" type="button">Inspect dataset</button>
+            <button id="codeAnalysisImportDataset" type="button" disabled>Register &amp; use dataset</button>
+          </div>
+        </div>
+        <div id="codeAnalysisDatasetInspection" class="small-muted">Import is non-destructive: PAH validates numeric values and preserves row/feature order without cleaning or imputation.</div>
+      </section>
+
       <section id="codeAnalysisStepDetail" class="lab-step-detail">
         <div class="analysis-placeholder">Select a workflow step.</div>
       </section>

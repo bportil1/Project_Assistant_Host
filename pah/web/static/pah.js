@@ -43,7 +43,7 @@
       selected: null,
     },
     mode: 'workspace',
-    codeAnalysisLab: {snapshot: null, selectedStep: null, railCollapsed: false},
+    codeAnalysisLab: {snapshot: null, selectedStep: null, railCollapsed: false, datasetInspection: null},
     git: {git_available: false, workspace: null, is_repository: false, repository_root: null, branch: null, detached: false, head: null, changes: [], staged_count: 0, unstaged_count: 0, untracked_count: 0, submodules: [], remotes: [], tracking: null, connectivity_mode: 'local_only', local_only: true, remote_enabled: false},
     overleaf: {lastImport: null, sync: null},
     componentVersions: {snapshot: null, busy: false},
@@ -1456,6 +1456,108 @@
     }
   }
 
+  function renderCodeAnalysisDatasetSource() {
+    const snapshot = state.codeAnalysisLab.snapshot;
+    if (!snapshot) return;
+    const source = snapshot.dataset_source || {mode: 'repository', active: null, history: []};
+    const mode = source.mode || 'repository';
+    const active = source.active || null;
+    const status = $('codeAnalysisDatasetSourceStatus');
+    const repo = $('codeAnalysisUseRepository');
+    const precomputed = $('codeAnalysisUsePrecomputed');
+    repo?.classList.toggle('active', mode === 'repository');
+    precomputed?.classList.toggle('active', mode === 'precomputed');
+    if (precomputed) precomputed.disabled = mode !== 'precomputed' && !(source.history || []).length;
+    if (status) {
+      if (mode === 'precomputed' && active) {
+        const meta = active.metadata || {};
+        status.textContent = `Precomputed · ${meta.dataset_name || 'dataset'} · ${meta.rows ?? '?'} samples × ${meta.features ?? '?'} features · repository analysis bypassed`;
+      } else {
+        status.textContent = 'Repository analysis · Code Analyzer supplies the project handoff to pyPIQUE.';
+      }
+    }
+  }
+
+  function renderCodeAnalysisDatasetInspection(result) {
+    const holder = $('codeAnalysisDatasetInspection');
+    const select = $('codeAnalysisDatasetIdColumn');
+    const importButton = $('codeAnalysisImportDataset');
+    if (!holder || !select || !importButton) return;
+    state.codeAnalysisLab.datasetInspection = result || null;
+    select.replaceChildren();
+    if (!result) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'Inspect the dataset first';
+      select.appendChild(option);
+      select.disabled = true;
+      importButton.disabled = true;
+      holder.textContent = 'Import is non-destructive: PAH validates numeric values and preserves row/feature order without cleaning or imputation.';
+      return;
+    }
+    const generated = document.createElement('option');
+    generated.value = '__generated__';
+    generated.textContent = '(generated row IDs — no identifier column)';
+    select.appendChild(generated);
+    for (const column of result.columns || []) {
+      const option = document.createElement('option');
+      option.value = column;
+      option.textContent = column;
+      select.appendChild(option);
+    }
+    const suggested = result.effective_id_column || result.suggested_id_column || '__generated__';
+    select.value = suggested;
+    select.disabled = false;
+    importButton.disabled = !result.valid;
+    const delimiter = result.delimiter === 'TAB' ? 'tab' : JSON.stringify(result.delimiter || ',');
+    const problems = (result.errors || []).length ? ` · ${result.errors.length} issue(s): ${(result.errors || []).slice(0, 3).join('; ')}` : '';
+    holder.textContent = `${result.row_count} rows · ${result.column_count} columns · ${result.feature_count} proposed features · delimiter ${delimiter} · ID ${suggested === '__generated__' ? 'generated' : suggested}${problems}`;
+  }
+
+  async function inspectCodeAnalysisPrecomputedDataset() {
+    const path = $('codeAnalysisDatasetPath')?.value?.trim();
+    if (!path) return toast('Choose a CSV/TSV path first.');
+    try {
+      const data = await api('/api/orchestration/code-analysis/precomputed/inspect', {
+        method: 'POST', body: JSON.stringify({path}),
+      });
+      renderCodeAnalysisDatasetInspection(data);
+    } catch (error) {
+      renderCodeAnalysisDatasetInspection(null);
+      toast(error.message || String(error));
+    }
+  }
+
+  async function importCodeAnalysisPrecomputedDataset() {
+    const path = $('codeAnalysisDatasetPath')?.value?.trim();
+    if (!path) return toast('Choose a CSV/TSV path first.');
+    const idColumn = $('codeAnalysisDatasetIdColumn')?.value || '__generated__';
+    const datasetName = $('codeAnalysisDatasetName')?.value?.trim() || null;
+    try {
+      const data = await api('/api/orchestration/code-analysis/precomputed/import', {
+        method: 'POST', body: JSON.stringify({path, id_column: idColumn, dataset_name: datasetName}),
+      });
+      state.codeAnalysisLab.snapshot = data;
+      renderCodeAnalysisLab();
+      toast('Precomputed dataset registered. Code Analyzer is bypassed for this branch.');
+    } catch (error) {
+      toast(error.message || String(error));
+    }
+  }
+
+  async function setCodeAnalysisDatasetSource(mode) {
+    try {
+      const data = await api('/api/orchestration/code-analysis/dataset-source', {
+        method: 'POST', body: JSON.stringify({mode}),
+      });
+      state.codeAnalysisLab.snapshot = data;
+      renderCodeAnalysisLab();
+      toast(mode === 'repository' ? 'Using repository analysis.' : 'Using the most recent precomputed dataset.');
+    } catch (error) {
+      toast(error.message || String(error));
+    }
+  }
+
   function renderCodeAnalysisWorkflowRail() {
     const holder = $('codeAnalysisWorkflowSteps');
     const summary = $('codeAnalysisWorkflowSummary');
@@ -1664,7 +1766,24 @@
     const inputsHeading = document.createElement('h3');
     inputsHeading.textContent = 'Required artifacts';
     inputs.appendChild(inputsHeading);
-    if (!(step.requirements || []).length) {
+    const inputAlternatives = step.input_alternatives || [];
+    if (inputAlternatives.length) {
+      const selectedAlternative = step.selected_alternative_kind || null;
+      appendLabContractRow(
+        inputs,
+        'Input source',
+        selectedAlternative ? `${selectedAlternative} selected` : 'choose one of the alternatives below',
+      );
+      for (const alternative of inputAlternatives) {
+        const selected = alternative.kind === selectedAlternative && alternative.selected;
+        appendLabContractRow(
+          inputs,
+          `Alternative · ${alternative.expected || alternative.kind}`,
+          selected ? 'ACTIVE' : (alternative.selected ? 'available' : 'not available'),
+        );
+      }
+    }
+    if (!(step.requirements || []).length && !inputAlternatives.length) {
       appendLabContractRow(inputs, 'Inputs', 'No cross-module artifact required');
     } else {
       for (const requirement of step.requirements || []) {
@@ -3993,6 +4112,10 @@
   $('refreshCodeAnalysisLab')?.addEventListener('click', () => refreshCodeAnalysisLab().catch(error => toast(error.message, true)));
   $('codeAnalysisBackWorkspace')?.addEventListener('click', () => setMode('workspace').catch(error => toast(error.message, true)));
   $('codeAnalysisRailToggle')?.addEventListener('click', () => setCodeAnalysisRailCollapsed(!state.codeAnalysisLab.railCollapsed));
+  $('codeAnalysisInspectDataset')?.addEventListener('click', inspectCodeAnalysisPrecomputedDataset);
+  $('codeAnalysisImportDataset')?.addEventListener('click', importCodeAnalysisPrecomputedDataset);
+  $('codeAnalysisUseRepository')?.addEventListener('click', () => setCodeAnalysisDatasetSource('repository'));
+  $('codeAnalysisUsePrecomputed')?.addEventListener('click', () => setCodeAnalysisDatasetSource('precomputed'));
 
   document.querySelectorAll('.mode-button[data-mode]').forEach(button => {
     button.addEventListener('click', () => openWindowSurface(button.dataset.mode).catch(error => toast(error.message, true)));

@@ -22,6 +22,11 @@ from .labs import (
     default_lab_registry,
 )
 from .labs.information_network import build_information_network
+from .labs.precomputed_dataset import (
+    PrecomputedDatasetError,
+    inspect_precomputed_table,
+    materialize_precomputed_feature_dataset,
+)
 from .module_catalog import default_module_registry
 from .runtime import HostSurfaceRuntimeAdapter, RuntimeRegistry, RuntimeRegistryError
 from .integrations import (
@@ -163,6 +168,64 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             raise AnalyzerIntegrationError("Analyze the current project before generating analyzer-backed artifacts.")
         if status.get("stale"):
             raise AnalyzerIntegrationError("Re-analyze the project before generating or refreshing analyzer-backed artifacts.")
+
+    precomputed_alias_id = "pah-precomputed-feature-dataset-current"
+    precomputed_requirement = ArtifactRequirement(
+        kind="feature_dataset",
+        producer_module="pah",
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
+    )
+
+    def precomputed_dataset_snapshot() -> dict:
+        current = lab_artifacts.get(precomputed_alias_id)
+        history = lab_artifacts.history(
+            precomputed_requirement,
+            project_id=str(workspaces.root) if workspaces.root is not None else None,
+        )
+        return {
+            "mode": "precomputed" if current is not None else "repository",
+            "active": current.to_dict() if current is not None else None,
+            "history": [item.to_dict() for item in history],
+        }
+
+    def register_precomputed_dataset(
+        path: str, *, id_column: str | None = None, dataset_name: str | None = None
+    ) -> ArtifactRef:
+        root = workspaces.require_root()
+        output, payload, metadata = materialize_precomputed_feature_dataset(
+            path,
+            output_root=workspaces.state_dir / "code-analysis" / "precomputed",
+            id_column=id_column,
+            dataset_name=dataset_name,
+        )
+        artifact = ArtifactRef(
+            artifact_id=precomputed_alias_id,
+            kind="feature_dataset",
+            producer_module="pah",
+            location=str(output),
+            schema_id="pah.feature-dataset.matrix",
+            schema_version="1",
+            media_type="application/vnd.pah.feature-dataset+json",
+            project_id=str(root),
+            capabilities=("quality_modeling", "representation_learning"),
+            validation_state="valid",
+            metadata={
+                **metadata,
+                "runtime_managed": True,
+                "imported_feature_ids": list(payload.get("feature_ids") or []),
+            },
+            provenance={
+                "source": "PAH Code Analysis Lab precomputed dataset import",
+                "source_type": metadata.get("source_type"),
+                "source_path": metadata.get("source_path"),
+                "source_sha256": metadata.get("source_sha256"),
+                "analysis_bypassed": True,
+                "transformations": [],
+            },
+        )
+        lab_artifacts.register_current(artifact)
+        return lab_artifacts.get(precomputed_alias_id) or artifact
 
     def sync_code_analysis_artifacts() -> None:
         """Reflect host-owned Code Analyzer readiness in the lab inventory.
@@ -325,6 +388,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     @app.errorhandler(DocumentationScaffoldError)
     @app.errorhandler(DiagramDocumentBridgeError)
     @app.errorhandler(ComponentVersionError)
+    @app.errorhandler(PrecomputedDatasetError)
     def handle_known_error(exc):
         return error_response(exc)
 
@@ -458,6 +522,98 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             return error_response(KeyError(f"Unknown PAH artifact {artifact_id!r}"), 404)
         return jsonify({"ok": True, "artifact": removed.to_dict()})
 
+    @app.post("/api/orchestration/code-analysis/precomputed/inspect")
+    def orchestration_precomputed_inspect():
+        payload = request.get_json(silent=True) or {}
+        path = str(payload.get("path") or "").strip()
+        if not path:
+            return error_response(PrecomputedDatasetError("Choose a CSV/TSV path first"))
+        id_column = payload.get("id_column")
+        result = inspect_precomputed_table(
+            path, id_column=str(id_column) if id_column is not None else None
+        )
+        return jsonify({"ok": True, **result})
+
+    @app.post("/api/orchestration/code-analysis/precomputed/import")
+    def orchestration_precomputed_import():
+        payload = request.get_json(silent=True) or {}
+        path = str(payload.get("path") or "").strip()
+        if not path:
+            return error_response(PrecomputedDatasetError("Choose a CSV/TSV path first"))
+        id_column = payload.get("id_column")
+        artifact = register_precomputed_dataset(
+            path,
+            id_column=str(id_column) if id_column is not None else None,
+            dataset_name=str(payload.get("dataset_name") or "").strip() or None,
+        )
+        # Providers are target-bound. Stop any old repository-backed sessions so
+        # reopening pyPIQUE/HSQA cannot silently keep the previous data source.
+        runtime_registry.shutdown("pypique", orchestration_context())
+        runtime_registry.shutdown("hsqa_dbn", orchestration_context())
+        # Switching source invalidates only mutable downstream aliases; immutable
+        # history remains available for intentional branching.
+        sync_code_analysis_lab_artifacts()
+        return jsonify({
+            "ok": True,
+            "artifact": artifact.to_dict(),
+            "dataset_source": precomputed_dataset_snapshot(),
+            **code_analysis_lab.snapshot(context=orchestration_context()),
+        }), 201
+
+    @app.post("/api/orchestration/code-analysis/dataset-source")
+    def orchestration_dataset_source():
+        payload = request.get_json(silent=True) or {}
+        mode = str(payload.get("mode") or "").strip().lower()
+        if mode == "repository":
+            lab_artifacts.deactivate_current(precomputed_alias_id)
+        elif mode == "precomputed":
+            if lab_artifacts.get(precomputed_alias_id) is None:
+                history = lab_artifacts.history(
+                    precomputed_requirement,
+                    project_id=str(workspaces.root) if workspaces.root is not None else None,
+                )
+                if not history:
+                    return error_response(
+                        PrecomputedDatasetError("Import a precomputed dataset before selecting precomputed mode"),
+                        409,
+                    )
+                latest = history[0]
+                clean_metadata = {
+                    key: value for key, value in dict(latest.metadata).items()
+                    if key not in {
+                        "registry_alias", "snapshot_artifact_id", "history_snapshot",
+                        "source_alias", "superseded", "archived_copy", "archived_from",
+                    }
+                }
+                lab_artifacts.register_current(ArtifactRef(
+                    artifact_id=precomputed_alias_id,
+                    kind=latest.kind,
+                    producer_module=latest.producer_module,
+                    location=latest.location,
+                    schema_id=latest.schema_id,
+                    schema_version=latest.schema_version,
+                    media_type=latest.media_type,
+                    producer_version=latest.producer_version,
+                    project_id=latest.project_id,
+                    session_id=latest.session_id,
+                    capabilities=latest.capabilities,
+                    parent_artifact_ids=latest.parent_artifact_ids,
+                    validation_state=latest.validation_state,
+                    validation_errors=latest.validation_errors,
+                    metadata=clean_metadata,
+                    provenance=latest.provenance,
+                ))
+        else:
+            return error_response(PrecomputedDatasetError("Dataset source must be 'repository' or 'precomputed'"))
+        runtime_registry.shutdown("pypique", orchestration_context())
+        runtime_registry.shutdown("hsqa_dbn", orchestration_context())
+        sync_code_analysis_lab_artifacts()
+        return jsonify({
+            "ok": True,
+            "dataset_source": precomputed_dataset_snapshot(),
+            **code_analysis_lab.snapshot(context=orchestration_context()),
+        })
+
     @app.post("/api/orchestration/code-analysis/steps/<step_id>/inputs/<kind>/select")
     def orchestration_code_analysis_select_input(step_id: str, kind: str):
         payload = request.get_json(silent=True) or {}
@@ -500,6 +656,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "workspace": str(workspaces.root) if workspaces.root else None,
+            "dataset_source": precomputed_dataset_snapshot(),
             **code_analysis_lab.snapshot(context=orchestration_context()),
         })
 

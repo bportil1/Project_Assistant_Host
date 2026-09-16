@@ -15,6 +15,7 @@ class WorkflowStep:
     description: str = ""
     provider_module: str | None = None
     requires: tuple[ArtifactRequirement, ...] = ()
+    requires_any: tuple[ArtifactRequirement, ...] = ()
     produces: tuple[str, ...] = ()
     output_requirements: tuple[ArtifactRequirement, ...] = ()
     optional: bool = False
@@ -27,6 +28,7 @@ class WorkflowStep:
             "description": self.description,
             "provider_module": self.provider_module,
             "requires": [item.to_dict() for item in self.requires],
+            "requires_any": [item.to_dict() for item in self.requires_any],
             "produces": list(self.produces),
             "output_requirements": [item.to_dict() for item in self.output_requirements],
             "optional": self.optional,
