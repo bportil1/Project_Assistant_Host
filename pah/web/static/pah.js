@@ -1560,6 +1560,8 @@
           runtime.running ? 'Running' : (runtime.launchable ? 'Ready' : 'Unavailable'),
         );
         if (runtime.message) appendLabContractRow(providerSection, 'Runtime note', runtime.message);
+        const discovery = runtime.metadata?.handoff?.artifact_discovery || null;
+        if (discovery?.message) appendLabContractRow(providerSection, 'Artifact discovery', discovery.message);
       }
       const stepLaunchable = runtime?.launchable && ['ready', 'stale', 'complete'].includes(step.state);
       if (stepLaunchable) {
@@ -1651,11 +1653,17 @@
     outputs.appendChild(outputsHeading);
     if (!(step.outputs || []).length) appendLabContractRow(outputs, 'Outputs', 'None declared');
     for (const output of step.outputs || []) {
+      const invalid = output.invalid_artifacts || [];
       let status = output.available ? 'registered' : 'not registered';
-      if (!output.available && (output.stale_artifacts || []).length) status = `stale (${output.stale_artifacts.length})`;
+      if (!output.available && invalid.length) status = `registered but invalid (${invalid.length})`;
+      else if (!output.available && (output.stale_artifacts || []).length) status = `stale (${output.stale_artifacts.length})`;
       const historyCount = (output.history || []).length;
       if (historyCount) status += ` · history ${historyCount}`;
       appendLabContractRow(outputs, output.kind, status);
+      if (!output.available && invalid.length) {
+        const errors = invalid[0]?.validation_errors || [];
+        if (errors.length) appendLabContractRow(outputs, `${output.kind} diagnostic`, errors[0]);
+      }
     }
 
     const registry = document.createElement('div');

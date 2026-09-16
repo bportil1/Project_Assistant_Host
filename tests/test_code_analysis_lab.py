@@ -731,3 +731,35 @@ def test_mi_informed_execution_context_requests_focused_pypique_view():
     assert module_id == "pypique"
     assert context.runtime["requested_view"] == "mi-informed"
     assert context.runtime["focused_view"] is True
+
+
+def test_representation_output_reports_registered_but_invalid_provider_artifact(tmp_path: Path):
+    feature = ArtifactRef(
+        artifact_id="feature-current",
+        kind="feature_dataset",
+        producer_module="pypique",
+        location=str(tmp_path / "feature.json"),
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
+        validation_state="valid",
+    )
+    invalid_representation = ArtifactRef(
+        artifact_id="hsqa-dbn-representation-current",
+        kind="representation",
+        producer_module="hsqa_dbn",
+        location=str(tmp_path / "representation_bundle"),
+        schema_id="hsqa_dbn.representation_bundle",
+        schema_version="1",
+        capabilities=("representation_learning",),
+        parent_artifact_ids=("feature-current",),
+        validation_state="invalid",
+        validation_errors=("representation bundle was trained from a different feature dataset",),
+        metadata={"runtime_managed": True},
+    )
+    inventory = ArtifactInventory((feature, invalid_representation))
+    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
+    step = _steps(controller.snapshot())["representation_analysis"]
+    output = next(item for item in step["outputs"] if item["kind"] == "representation")
+    assert output["available"] is False
+    assert len(output["invalid_artifacts"]) == 1
+    assert "different feature dataset" in output["invalid_artifacts"][0]["validation_errors"][0]

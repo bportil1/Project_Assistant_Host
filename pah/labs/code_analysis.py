@@ -140,6 +140,16 @@ class CodeAnalysisLabController:
             include_history=False,
             project_id=project_id,
         ))
+        invalid_current = list(self.artifacts.find(
+            kind=history_requirement.kind,
+            producer_module=history_requirement.producer_module,
+            capability=history_requirement.capability,
+            schema_id=history_requirement.schema_id,
+            schema_version=history_requirement.schema_version,
+            project_id=project_id,
+            validation_state="invalid",
+            include_history=False,
+        ))
         history = list(self.artifacts.history(history_requirement, project_id=project_id))
         candidates = current_artifacts + history if allow_history else current_artifacts
 
@@ -178,6 +188,7 @@ class CodeAnalysisLabController:
             "kind": kind,
             "available": bool(fresh),
             "artifacts": [item.to_dict() for item in fresh],
+            "invalid_artifacts": [item.to_dict() for item in invalid_current],
             "stale_artifacts": [item.to_dict() for item in stale],
             "history": [
                 {
