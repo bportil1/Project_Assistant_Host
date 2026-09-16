@@ -76,13 +76,14 @@ def test_controller_advances_by_registered_artifacts_not_button_history(tmp_path
     controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
 
     initial = _steps(controller.snapshot())
-    assert initial["quality_modeling"]["state"] == "blocked"
-    assert initial["quality_modeling"]["blocking_reason"] == (
-        "Missing required artifact: code_analysis (from code_analyzer, schema pah.code-analysis.current@1)."
-    )
+    assert initial["repository_analysis"]["optional"] is True
+    assert initial["quality_modeling"]["state"] == "ready"
+    assert initial["quality_modeling"]["requirements"] == []
     assert initial["representation_analysis"]["state"] == "blocked"
     assert initial["mi_informed_analysis"]["state"] == "blocked"
 
+    # Repository analysis is an optional side wing. Registering its output does
+    # not gate or otherwise change pyPIQUE readiness.
     inventory.register(ArtifactRef(
         artifact_id="code",
         kind="code_analysis",
@@ -94,6 +95,7 @@ def test_controller_advances_by_registered_artifacts_not_button_history(tmp_path
     ))
     after_code = _steps(controller.snapshot())
     assert after_code["quality_modeling"]["state"] == "ready"
+    assert after_code["quality_modeling"]["requirements"] == []
 
     inventory.register(ArtifactRef(
         artifact_id="benchmark",
@@ -321,24 +323,15 @@ def test_artifact_http_registry_accepts_registered_producer_and_exposes_summary(
         assert fetched["artifact"]["producer_module"] == "pypique"
 
 
-def test_step_execution_context_routes_required_artifact_to_provider(tmp_path: Path):
-    inventory = ArtifactInventory((ArtifactRef(
-        artifact_id="code-analyzer-current",
-        kind="code_analysis",
-        producer_module="code_analyzer",
-        location=str(tmp_path),
-        schema_id="pah.code-analysis.current",
-        schema_version="1",
-        validation_state="valid",
-    ),))
-    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
+def test_quality_modeling_execution_context_does_not_require_code_analysis(tmp_path: Path):
+    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=ArtifactInventory())
     module_id, context = controller.execution_context(
         "quality_modeling",
         ModuleContext(project_root=tmp_path, working_root=tmp_path, runtime={"state_dir": "state"}),
     )
     assert module_id == "pypique"
     assert context.runtime["pah_step"] == "quality_modeling"
-    assert context.runtime["input_artifacts"]["code_analysis"]["artifact_id"] == "code-analyzer-current"
+    assert context.runtime["input_artifacts"] == {}
     assert context.runtime["state_dir"] == "state"
 
 
@@ -453,30 +446,22 @@ def test_combined_hsqa_stage_requires_both_schema_valid_outputs():
 
 
 def test_mi_informed_stage_requires_neutral_information_network_and_routes_to_pypique():
-    code = ArtifactRef(
-        artifact_id="code", kind="code_analysis", producer_module="code_analyzer",
-        schema_id="pah.code-analysis.current", schema_version="1", validation_state="valid",
-    )
     network = ArtifactRef(
         artifact_id="network", kind="information_network", producer_module="pah",
         schema_id="pah.information-network", schema_version="1", validation_state="valid",
     )
     controller = CodeAnalysisLabController(
-        _integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=ArtifactInventory((code, network))
+        _integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=ArtifactInventory((network,))
     )
     step = _steps(controller.snapshot())["mi_informed_analysis"]
     assert step["state"] == "ready"
     module_id, context = controller.execution_context("mi_informed_analysis", ModuleContext())
     assert module_id == "pypique"
     assert context.runtime["input_artifacts"]["information_network"]["artifact_id"] == "network"
-    assert context.runtime["input_artifacts"]["code_analysis"]["artifact_id"] == "code"
+    assert "code_analysis" not in context.runtime["input_artifacts"]
 
 
 def test_mi_informed_stage_only_completes_with_schema_valid_pypique_output():
-    code = ArtifactRef(
-        artifact_id="code", kind="code_analysis", producer_module="code_analyzer",
-        schema_id="pah.code-analysis.current", schema_version="1", validation_state="valid",
-    )
     network = ArtifactRef(
         artifact_id="network", kind="information_network", producer_module="pah",
         schema_id="pah.information-network", schema_version="1", validation_state="valid",
@@ -486,7 +471,7 @@ def test_mi_informed_stage_only_completes_with_schema_valid_pypique_output():
         schema_id="pypique.other", schema_version="1",
         capabilities=("mi_informed_analysis",), validation_state="valid",
     )
-    inventory = ArtifactInventory((code, network, wrong))
+    inventory = ArtifactInventory((network, wrong))
     controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
     assert _steps(controller.snapshot())["mi_informed_analysis"]["state"] == "ready"
     inventory.register(ArtifactRef(
@@ -800,7 +785,7 @@ def test_representation_execution_context_exposes_feature_dataset_history_to_pro
 
 
 
-def test_repository_workflow_does_not_accept_findings_matrix_as_quality_input(tmp_path: Path):
+def test_old_host_findings_artifact_does_not_become_a_hidden_quality_input(tmp_path: Path):
     imported = ArtifactRef(
         artifact_id="pah-findings-feature-dataset-current",
         kind="feature_dataset",
@@ -814,12 +799,14 @@ def test_repository_workflow_does_not_accept_findings_matrix_as_quality_input(tm
         _integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=ArtifactInventory((imported,))
     )
     context = ModuleContext(project_root=tmp_path, working_root=tmp_path)
-    quality = _steps(controller.snapshot(context=context))["quality_modeling"]
-    assert quality["state"] == "blocked"
-    assert "code_analysis" in quality["blocking_reason"]
+    steps = _steps(controller.snapshot(context=context))
+    assert steps["quality_modeling"]["state"] == "ready"
+    assert steps["quality_modeling"]["requirements"] == []
+    # Downstream HSQA still requires the canonical pyPIQUE-produced feature dataset.
+    assert steps["representation_analysis"]["state"] == "blocked"
 
 
-def test_repository_analysis_remains_quality_input(tmp_path: Path):
+def test_repository_analysis_is_optional_and_not_routed_into_pypique(tmp_path: Path):
     code = ArtifactRef(
         artifact_id="code-analyzer-current",
         kind="code_analysis",
@@ -836,6 +823,6 @@ def test_repository_analysis_remains_quality_input(tmp_path: Path):
     context = ModuleContext(project_root=tmp_path, working_root=tmp_path)
     step = _steps(controller.snapshot(context=context))["quality_modeling"]
     assert step["state"] == "ready"
-    assert step["requirements"][0]["selected"]["artifact_id"] == code.artifact_id
+    assert step["requirements"] == []
     _, launch_context = controller.execution_context("quality_modeling", context)
-    assert launch_context.runtime["input_artifacts"]["code_analysis"]["artifact_id"] == code.artifact_id
+    assert launch_context.runtime["input_artifacts"] == {}

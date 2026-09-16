@@ -8,15 +8,18 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
     workflow_id="code_analysis_research",
     display_name="Repository Analysis",
     description=(
-        "Analyze source repositories through Code Analyzer and pyPIQUE, then route the resulting "
-        "quality evidence into learned-representation and MI-informed workflows."
+        "Build quality evidence in pyPIQUE, route it into learned-representation and MI-informed workflows, "
+        "and optionally use Code Analyzer as a separate repository-analysis wing."
     ),
     steps=(
         WorkflowStep(
             step_id="repository_analysis",
-            label="Repository analysis",
+            label="Repository analysis (optional)",
             capability="static_analysis",
-            description="Inspect repository structure, dependencies, similarity, and code-level evidence.",
+            description=(
+                "Optional repository-analysis wing for structure, dependencies, similarity, and code-level evidence. "
+                "It does not gate pyPIQUE or later scientific stages."
+            ),
             provider_module="code_analyzer",
             produces=("code_analysis",),
             optional=True,
@@ -26,14 +29,10 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
             label="Quality evidence and model",
             capability="quality_modeling",
             description=(
-                "Consume the current Code Analyzer project handoff, then build or load "
-                "pyPIQUE quality evidence and a calibrated project evaluation."
+                "Start directly in pyPIQUE to acquire or import benchmark findings, then build or load "
+                "quality evidence and a calibrated project evaluation. Code Analyzer is not required."
             ),
             provider_module="pypique",
-            requires=(ArtifactRequirement(
-                kind="code_analysis", schema_id="pah.code-analysis.current", schema_version="1",
-                producer_module="code_analyzer",
-            ),),
             produces=("quality_model", "quality_evaluation"),
         ),
         WorkflowStep(
@@ -79,10 +78,6 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
             ),
             provider_module="pypique",
             requires=(
-                ArtifactRequirement(
-                    kind="code_analysis", schema_id="pah.code-analysis.current", schema_version="1",
-                    producer_module="code_analyzer",
-                ),
                 ArtifactRequirement(
                     kind="information_network", schema_id="pah.information-network", schema_version="1",
                     producer_module="pah",

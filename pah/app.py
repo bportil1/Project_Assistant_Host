@@ -259,8 +259,9 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
                 "quality_modeling", orchestration_context()
             )
         except ValueError:
-            # Without the current Code Analyzer handoff, old managed pyPIQUE
-            # outputs must not satisfy the current workflow by accident.
+            # pyPIQUE is intentionally independent of the optional Code Analyzer wing.
+            # Only deactivate its managed aliases when pyPIQUE itself cannot resolve
+            # a usable runtime context for the current workspace.
             deactivate_runtime_aliases("pypique")
         else:
             sync_runtime_artifacts("pypique", pypique_context)
