@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 from pah.labs.registry import LabManifest, LabRegistry
-from pah.labs.workflows import CODE_ANALYSIS_WORKFLOW
+from pah.labs.workflows import CODE_ANALYSIS_WORKFLOW, EXISTING_FINDINGS_WORKFLOW
 
 
 CODE_ANALYSIS_LAB = LabManifest(
     lab_id="code_analysis_lab",
     display_name="Code Analysis Lab",
     description="Software structure, security, quality-modeling, and learned-representation workflows.",
-    workflows=(CODE_ANALYSIS_WORKFLOW,),
+    workflows=(CODE_ANALYSIS_WORKFLOW, EXISTING_FINDINGS_WORKFLOW),
 )
 
 # Lab IDs and module IDs live in separate registries. Keep ``ml_lab`` as the

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from pah.contracts import ArtifactRef, ArtifactRequirement, ModuleContext
+from pah.contracts import ArtifactRef, ArtifactRequirement, ModuleContext, WorkflowManifest
 
 from .artifacts import ArtifactInventory
 from .registry import LabManifest, LabOrchestrator, ModuleRegistry
@@ -34,12 +34,15 @@ class CodeAnalysisLabController:
         lab: LabManifest,
         artifacts: ArtifactInventory | None = None,
         runtimes: RuntimeRegistry | None = None,
+        workflow: WorkflowManifest | None = None,
+        expected_modules: tuple[tuple[str, str], ...] | None = None,
     ) -> None:
         self.modules = modules
         self.lab = lab
         self.artifacts = artifacts or ArtifactInventory()
         self.runtimes = runtimes
-        self.workflow = CODE_ANALYSIS_WORKFLOW
+        self.workflow = workflow or CODE_ANALYSIS_WORKFLOW
+        self.expected_modules = expected_modules or EXPECTED_MODULES
         self.orchestrator = LabOrchestrator(lab, modules)
 
     @staticmethod
@@ -219,7 +222,7 @@ class CodeAnalysisLabController:
     ) -> dict[str, Any]:
         step = next((item for item in self.workflow.steps if item.step_id == str(step_id)), None)
         if step is None:
-            raise ValueError(f"Unknown Code Analysis Lab step {step_id!r}")
+            raise ValueError(f"Unknown workflow step {step_id!r}")
         requirement = next(
             (item for item in (*step.requires, *step.requires_any) if item.kind == str(kind)),
             None,
@@ -253,7 +256,7 @@ class CodeAnalysisLabController:
         """Build a provider context containing the explicitly selected step inputs."""
         step = next((item for item in self.workflow.steps if item.step_id == str(step_id)), None)
         if step is None:
-            raise ValueError(f"Unknown Code Analysis Lab step {step_id!r}")
+            raise ValueError(f"Unknown workflow step {step_id!r}")
 
         snapshot = self.step_snapshot(step, context=context)
         resolution = snapshot.get("resolution") or {}
@@ -392,7 +395,7 @@ class CodeAnalysisLabController:
                 None,
             )
         expected_modules = []
-        for module_id, display_name in EXPECTED_MODULES:
+        for module_id, display_name in self.expected_modules:
             manifest = self.modules.get(module_id)
             expected_modules.append({
                 "module_id": module_id,

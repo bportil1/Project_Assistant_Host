@@ -356,47 +356,84 @@
           <p id="codeAnalysisLabDescription">Software structure, security, quality modeling, and learned representation analysis.</p>
         </div>
         <div class="lab-header-actions">
+          <div class="lab-workflow-switch" role="group" aria-label="Code Analysis Lab workflow">
+            <button id="codeAnalysisRepositoryWorkflow" type="button" class="active">Repository Analysis</button>
+            <button id="codeAnalysisFindingsWorkflow" type="button">Existing Findings</button>
+          </div>
           <button id="codeAnalysisBackWorkspace" type="button">Back to Workspace</button>
         </div>
       </header>
 
-      <div id="codeAnalysisModuleHealth" class="lab-module-health"></div>
+      <div id="codeAnalysisRepositoryPanel">
+        <div id="codeAnalysisModuleHealth" class="lab-module-health"></div>
+        <section id="codeAnalysisStepDetail" class="lab-step-detail">
+          <div class="analysis-placeholder">Select a repository workflow step.</div>
+        </section>
+      </div>
 
-      <section id="codeAnalysisDatasetSource" class="lab-step-detail lab-dataset-source">
-        <div class="lab-dataset-source-heading">
-          <div>
-            <span class="lab-kicker">WORKFLOW INPUT</span>
-            <h2>Dataset source</h2>
-            <p id="codeAnalysisDatasetSourceStatus">Choose repository analysis or import an existing numeric CSV/TSV matrix.</p>
+      <div id="existingFindingsPanel" class="findings-workflow hidden">
+        <section class="lab-step-detail findings-card">
+          <div class="findings-card-heading">
+            <div>
+              <span class="lab-kicker">EXISTING FINDINGS INPUT</span>
+              <h2>Findings dataset</h2>
+              <p id="findingsDatasetStatus">Import a CSV/TSV findings or count matrix. Repository analysis is not part of this workflow.</p>
+            </div>
           </div>
+          <div class="findings-import-grid">
+            <label>CSV / TSV path
+              <input id="findingsDatasetPath" class="wide-input" type="text" placeholder="/path/to/nist_sard_complete.csv" spellcheck="false">
+            </label>
+            <label>Dataset name
+              <input id="findingsDatasetName" class="wide-input" type="text" placeholder="Optional; defaults to filename">
+            </label>
+            <label>Identifier column
+              <select id="findingsDatasetIdColumn" class="wide-input" disabled>
+                <option value="">Inspect the findings sheet first</option>
+              </select>
+            </label>
+          </div>
+          <div class="inline-actions findings-import-actions">
+            <button id="findingsInspectDataset" type="button">Inspect findings</button>
+            <button id="findingsImportDataset" type="button" disabled>Import findings dataset</button>
+          </div>
+          <div id="findingsDatasetInspection" class="small-muted">PAH preserves row/feature order and rejects nonnumeric findings rather than silently cleaning them.</div>
+          <div class="findings-history-row">
+            <label>Selected findings branch
+              <select id="findingsDatasetHistory" class="wide-input">
+                <option value="">Current imported dataset</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="lab-step-detail findings-card">
+          <div class="findings-card-heading">
+            <div>
+              <span class="lab-kicker">HSQA_DBN</span>
+              <h2>Representation &amp; information</h2>
+            </div>
+            <span id="findingsRepresentationBadge" class="findings-status-badge">Waiting</span>
+          </div>
+          <p id="findingsRepresentationStatus">Import a findings dataset first.</p>
           <div class="inline-actions">
-            <button id="codeAnalysisUseRepository" type="button">Repository analysis</button>
-            <button id="codeAnalysisUsePrecomputed" type="button">Precomputed dataset</button>
+            <button id="findingsOpenHsqa" type="button" disabled>Open HSQA for this dataset</button>
+            <button id="findingsRefresh" type="button">Refresh findings status</button>
           </div>
-        </div>
-        <div class="lab-precomputed-grid">
-          <label>CSV / TSV path
-            <input id="codeAnalysisDatasetPath" class="wide-input" type="text" placeholder="/path/to/nist_sard_complete.csv" spellcheck="false">
-          </label>
-          <label>Dataset name
-            <input id="codeAnalysisDatasetName" class="wide-input" type="text" placeholder="Optional; defaults to filename">
-          </label>
-          <label>Identifier column
-            <select id="codeAnalysisDatasetIdColumn" class="wide-input" disabled>
-              <option value="">Inspect the dataset first</option>
-            </select>
-          </label>
-          <div class="inline-actions lab-precomputed-actions">
-            <button id="codeAnalysisInspectDataset" type="button">Inspect dataset</button>
-            <button id="codeAnalysisImportDataset" type="button" disabled>Register &amp; use dataset</button>
-          </div>
-        </div>
-        <div id="codeAnalysisDatasetInspection" class="small-muted">Import is non-destructive: PAH validates numeric values and preserves row/feature order without cleaning or imputation.</div>
-      </section>
+        </section>
 
-      <section id="codeAnalysisStepDetail" class="lab-step-detail">
-        <div class="analysis-placeholder">Select a workflow step.</div>
-      </section>
+        <section class="lab-step-detail findings-card findings-next-action">
+          <span class="lab-kicker">NEXT ACTION</span>
+          <h2 id="findingsNextActionLabel">Import an existing findings sheet</h2>
+          <p id="findingsNextActionDetail">This workflow is independent from repository analysis.</p>
+          <button id="findingsContinue" type="button">Continue</button>
+        </section>
+
+        <details class="lab-step-detail findings-advanced">
+          <summary>Advanced / provenance</summary>
+          <div id="findingsAdvancedDetails" class="lab-contract-list"></div>
+        </details>
+      </div>
     </section>
   </main>
 

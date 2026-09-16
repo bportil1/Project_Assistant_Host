@@ -43,7 +43,7 @@
       selected: null,
     },
     mode: 'workspace',
-    codeAnalysisLab: {snapshot: null, selectedStep: null, railCollapsed: false, datasetInspection: null},
+    codeAnalysisLab: {snapshot: null, selectedStep: null, railCollapsed: false, workflowView: 'repository', findingsSnapshot: null, findingsInspection: null},
     git: {git_available: false, workspace: null, is_repository: false, repository_root: null, branch: null, detached: false, head: null, changes: [], staged_count: 0, unstaged_count: 0, untracked_count: 0, submodules: [], remotes: [], tracking: null, connectivity_mode: 'local_only', local_only: true, remote_enabled: false},
     overleaf: {lastImport: null, sync: null},
     componentVersions: {snapshot: null, busy: false},
@@ -1456,43 +1456,25 @@
     }
   }
 
-  function renderCodeAnalysisDatasetSource() {
-    const snapshot = state.codeAnalysisLab.snapshot;
-    if (!snapshot) return;
-    const source = snapshot.dataset_source || {mode: 'repository', active: null, history: []};
-    const mode = source.mode || 'repository';
-    const active = source.active || null;
-    const status = $('codeAnalysisDatasetSourceStatus');
-    const repo = $('codeAnalysisUseRepository');
-    const precomputed = $('codeAnalysisUsePrecomputed');
-    repo?.classList.toggle('active', mode === 'repository');
-    precomputed?.classList.toggle('active', mode === 'precomputed');
-    if (precomputed) precomputed.disabled = mode !== 'precomputed' && !(source.history || []).length;
-    if (status) {
-      if (mode === 'precomputed' && active) {
-        const meta = active.metadata || {};
-        status.textContent = `Precomputed · ${meta.dataset_name || 'dataset'} · ${meta.rows ?? '?'} samples × ${meta.features ?? '?'} features · repository analysis bypassed`;
-      } else {
-        status.textContent = 'Repository analysis · Code Analyzer supplies the project handoff to pyPIQUE.';
-      }
-    }
+  function findingsStep() {
+    return state.codeAnalysisLab.findingsSnapshot?.workflow?.steps?.[0] || null;
   }
 
-  function renderCodeAnalysisDatasetInspection(result) {
-    const holder = $('codeAnalysisDatasetInspection');
-    const select = $('codeAnalysisDatasetIdColumn');
-    const importButton = $('codeAnalysisImportDataset');
+  function renderFindingsDatasetInspection(result) {
+    const holder = $('findingsDatasetInspection');
+    const select = $('findingsDatasetIdColumn');
+    const importButton = $('findingsImportDataset');
     if (!holder || !select || !importButton) return;
-    state.codeAnalysisLab.datasetInspection = result || null;
+    state.codeAnalysisLab.findingsInspection = result || null;
     select.replaceChildren();
     if (!result) {
       const option = document.createElement('option');
       option.value = '';
-      option.textContent = 'Inspect the dataset first';
+      option.textContent = 'Inspect the findings sheet first';
       select.appendChild(option);
       select.disabled = true;
       importButton.disabled = true;
-      holder.textContent = 'Import is non-destructive: PAH validates numeric values and preserves row/feature order without cleaning or imputation.';
+      holder.textContent = 'PAH preserves row/feature order and rejects nonnumeric findings rather than silently cleaning them.';
       return;
     }
     const generated = document.createElement('option');
@@ -1510,52 +1492,179 @@
     select.disabled = false;
     importButton.disabled = !result.valid;
     const delimiter = result.delimiter === 'TAB' ? 'tab' : JSON.stringify(result.delimiter || ',');
-    const problems = (result.errors || []).length ? ` · ${result.errors.length} issue(s): ${(result.errors || []).slice(0, 3).join('; ')}` : '';
-    holder.textContent = `${result.row_count} rows · ${result.column_count} columns · ${result.feature_count} proposed features · delimiter ${delimiter} · ID ${suggested === '__generated__' ? 'generated' : suggested}${problems}`;
+    const problems = (result.errors || []).length
+      ? ` · ${result.errors.length} issue(s): ${(result.errors || []).slice(0, 3).join('; ')}`
+      : '';
+    holder.textContent = `${result.row_count} rows · ${result.feature_count} numeric findings/features · delimiter ${delimiter} · ID ${suggested === '__generated__' ? 'generated' : suggested}${problems}`;
   }
 
-  async function inspectCodeAnalysisPrecomputedDataset() {
-    const path = $('codeAnalysisDatasetPath')?.value?.trim();
-    if (!path) return toast('Choose a CSV/TSV path first.');
+  async function inspectFindingsDataset() {
+    const path = $('findingsDatasetPath')?.value?.trim();
+    if (!path) return toast('Choose a CSV/TSV findings path first.');
     try {
-      const data = await api('/api/orchestration/code-analysis/precomputed/inspect', {
+      const data = await api('/api/orchestration/findings/inspect', {
         method: 'POST', body: JSON.stringify({path}),
       });
-      renderCodeAnalysisDatasetInspection(data);
+      renderFindingsDatasetInspection(data);
     } catch (error) {
-      renderCodeAnalysisDatasetInspection(null);
+      renderFindingsDatasetInspection(null);
       toast(error.message || String(error));
     }
   }
 
-  async function importCodeAnalysisPrecomputedDataset() {
-    const path = $('codeAnalysisDatasetPath')?.value?.trim();
-    if (!path) return toast('Choose a CSV/TSV path first.');
-    const idColumn = $('codeAnalysisDatasetIdColumn')?.value || '__generated__';
-    const datasetName = $('codeAnalysisDatasetName')?.value?.trim() || null;
+  async function importFindingsDataset() {
+    const path = $('findingsDatasetPath')?.value?.trim();
+    if (!path) return toast('Choose a CSV/TSV findings path first.');
+    const idColumn = $('findingsDatasetIdColumn')?.value || '__generated__';
+    const datasetName = $('findingsDatasetName')?.value?.trim() || null;
     try {
-      const data = await api('/api/orchestration/code-analysis/precomputed/import', {
+      const data = await api('/api/orchestration/findings/import', {
         method: 'POST', body: JSON.stringify({path, id_column: idColumn, dataset_name: datasetName}),
       });
-      state.codeAnalysisLab.snapshot = data;
-      renderCodeAnalysisLab();
-      toast('Precomputed dataset registered. Code Analyzer is bypassed for this branch.');
+      state.codeAnalysisLab.findingsSnapshot = data;
+      renderExistingFindings();
+      toast('Findings dataset imported. Repository analysis and pyPIQUE acquisition were not run.');
     } catch (error) {
       toast(error.message || String(error));
     }
   }
 
-  async function setCodeAnalysisDatasetSource(mode) {
+  async function refreshExistingFindings() {
+    const data = await api('/api/orchestration/findings');
+    state.codeAnalysisLab.findingsSnapshot = data;
+    renderExistingFindings();
+    return data;
+  }
+
+  async function selectFindingsHistory(artifactId) {
     try {
-      const data = await api('/api/orchestration/code-analysis/dataset-source', {
-        method: 'POST', body: JSON.stringify({mode}),
+      const data = await api('/api/orchestration/findings/steps/representation_analysis/inputs/feature_dataset/select', {
+        method: 'POST', body: JSON.stringify({artifact_id: artifactId || null}),
       });
-      state.codeAnalysisLab.snapshot = data;
-      renderCodeAnalysisLab();
-      toast(mode === 'repository' ? 'Using repository analysis.' : 'Using the most recent precomputed dataset.');
+      state.codeAnalysisLab.findingsSnapshot = data;
+      renderExistingFindings();
+      toast(artifactId ? 'Selected preserved findings branch.' : 'Using current imported findings dataset.');
     } catch (error) {
       toast(error.message || String(error));
     }
+  }
+
+  async function launchFindingsHsqa() {
+    try {
+      const data = await api('/api/orchestration/findings/steps/representation_analysis/launch', {
+        method: 'POST', body: JSON.stringify({detached: false}),
+      });
+      if (data.url) window.open(data.url, '_blank', 'noopener');
+      else if (data.message) toast(data.message);
+      await refreshExistingFindings();
+    } catch (error) {
+      toast(error.message || String(error));
+    }
+  }
+
+  function renderExistingFindings() {
+    const snapshot = state.codeAnalysisLab.findingsSnapshot;
+    if (!snapshot) return;
+    const dataset = snapshot.dataset || {};
+    const active = dataset.active || null;
+    const meta = active?.metadata || {};
+    const status = $('findingsDatasetStatus');
+    if (status) {
+      status.textContent = active
+        ? `${meta.dataset_name || 'Findings dataset'} · ${meta.rows ?? '?'} samples × ${meta.features ?? '?'} features · repository analysis bypassed`
+        : 'Import a CSV/TSV findings or count matrix. Repository analysis is not part of this workflow.';
+    }
+
+    const history = $('findingsDatasetHistory');
+    if (history) {
+      history.replaceChildren();
+      const current = document.createElement('option');
+      current.value = '';
+      current.textContent = 'Current imported dataset';
+      history.appendChild(current);
+      for (const artifact of dataset.history || []) {
+        const option = document.createElement('option');
+        option.value = artifact.artifact_id;
+        const m = artifact.metadata || {};
+        const stamp = artifact.created_at ? new Date(artifact.created_at).toLocaleString() : 'preserved';
+        option.textContent = `${m.dataset_name || 'findings'} · ${m.rows ?? '?'}×${m.features ?? '?'} · ${stamp}`;
+        history.appendChild(option);
+      }
+      history.value = dataset.selection_mode === 'pinned' && active ? active.artifact_id : '';
+      history.disabled = !(dataset.history || []).length;
+    }
+
+    const step = findingsStep();
+    const stateName = step?.state || 'blocked';
+    const badge = $('findingsRepresentationBadge');
+    if (badge) {
+      badge.className = `findings-status-badge ${stateName}`;
+      badge.textContent = stateName === 'complete' ? 'Available'
+        : stateName === 'ready' ? 'Ready'
+        : stateName === 'stale' ? 'Needs this dataset'
+        : stateName === 'missing_provider' ? 'HSQA unavailable'
+        : 'Waiting';
+    }
+    const runtime = step?.resolution?.provider?.runtime || null;
+    const discovery = runtime?.metadata?.handoff?.artifact_discovery || null;
+    const compatible = Number(discovery?.matching_current_input || 0);
+    const representationStatus = $('findingsRepresentationStatus');
+    if (representationStatus) {
+      if (!active) representationStatus.textContent = 'Import a findings dataset first.';
+      else if (step?.state === 'complete') representationStatus.textContent = 'Compatible representation and information-analysis artifacts are registered for this findings dataset.';
+      else if (step?.state === 'stale') representationStatus.textContent = 'Existing HSQA outputs belong to another findings dataset. The repository workflow does not need to be rerun.';
+      else if (compatible) representationStatus.textContent = `${compatible} compatible RepresentationBundle${compatible === 1 ? '' : 's'} discovered. Open HSQA to inspect/select the representation and complete information analysis.`;
+      else if (step?.state === 'ready') representationStatus.textContent = 'No compatible current HSQA output is registered yet. Open HSQA using this findings dataset.';
+      else representationStatus.textContent = step?.blocking_reason || 'HSQA is not currently ready for this findings dataset.';
+    }
+    const open = $('findingsOpenHsqa');
+    if (open) open.disabled = !active || !['ready', 'stale', 'complete'].includes(step?.state);
+
+    const next = snapshot.next_action || {};
+    if ($('findingsNextActionLabel')) $('findingsNextActionLabel').textContent = next.label || 'Review findings workflow';
+    if ($('findingsNextActionDetail')) $('findingsNextActionDetail').textContent = next.detail || '';
+    const cont = $('findingsContinue');
+    if (cont) {
+      cont.dataset.action = next.code || 'blocked';
+      cont.disabled = next.code === 'blocked';
+      cont.textContent = next.code === 'run_hsqa' ? 'Open HSQA'
+        : next.code === 'inspect' ? 'Open HSQA / inspect result'
+        : next.code === 'import' ? 'Choose findings sheet'
+        : 'Continue';
+    }
+
+    const advanced = $('findingsAdvancedDetails');
+    if (advanced) {
+      advanced.replaceChildren();
+      appendLabContractRow(advanced, 'Workflow', snapshot.workflow?.display_name || 'Existing Findings');
+      appendLabContractRow(advanced, 'Repository analysis', 'Bypassed');
+      appendLabContractRow(advanced, 'pyPIQUE acquisition', 'Bypassed');
+      appendLabContractRow(advanced, 'Selected feature artifact', active?.artifact_id || 'none');
+      appendLabContractRow(advanced, 'Source SHA-256', meta.source_sha256 || active?.provenance?.source_sha256 || 'unavailable');
+      if (discovery) {
+        appendLabContractRow(advanced, 'Discovered bundles', String(discovery.bundles_found || 0));
+        appendLabContractRow(advanced, 'Compatible bundles', String(discovery.matching_current_input || 0));
+        appendLabContractRow(advanced, 'Historical matches', String(discovery.matching_historical_input || 0));
+        appendLabContractRow(advanced, 'Unmatched bundles', String(discovery.unmatched_input || 0));
+      }
+    }
+  }
+
+  async function setCodeAnalysisWorkflowView(view) {
+    const findings = view === 'findings';
+    state.codeAnalysisLab.workflowView = findings ? 'findings' : 'repository';
+    $('codeAnalysisLabMode')?.classList.toggle('findings-view', findings);
+    $('codeAnalysisRepositoryPanel')?.classList.toggle('hidden', findings);
+    $('existingFindingsPanel')?.classList.toggle('hidden', !findings);
+    $('codeAnalysisRepositoryWorkflow')?.classList.toggle('active', !findings);
+    $('codeAnalysisFindingsWorkflow')?.classList.toggle('active', findings);
+    if ($('codeAnalysisLabDescription')) {
+      $('codeAnalysisLabDescription').textContent = findings
+        ? 'Existing findings/count matrices with independent HSQA representation and information analysis.'
+        : (state.codeAnalysisLab.snapshot?.workflow?.description || 'Repository analysis and quality-modeling workflow.');
+    }
+    if (findings && !state.codeAnalysisLab.findingsSnapshot) await refreshExistingFindings();
+    if (findings) renderExistingFindings();
   }
 
   function renderCodeAnalysisWorkflowRail() {
@@ -1895,7 +2004,6 @@
   function renderCodeAnalysisLab() {
     const snapshot = state.codeAnalysisLab.snapshot;
     if (!snapshot) return;
-    if ($('codeAnalysisLabDescription')) $('codeAnalysisLabDescription').textContent = snapshot.lab?.description || snapshot.workflow?.description || '';
     renderCodeAnalysisModuleHealth();
     if (!state.codeAnalysisLab.selectedStep || !codeAnalysisStep(state.codeAnalysisLab.selectedStep)) {
       state.codeAnalysisLab.selectedStep = snapshot.recommended_step || snapshot.workflow?.steps?.[0]?.step_id || null;
@@ -1903,6 +2011,7 @@
     renderCodeAnalysisWorkflowRail();
     if (state.codeAnalysisLab.selectedStep) renderCodeAnalysisStepDetail(state.codeAnalysisLab.selectedStep);
     setCodeAnalysisRailCollapsed(state.codeAnalysisLab.railCollapsed);
+    setCodeAnalysisWorkflowView(state.codeAnalysisLab.workflowView);
   }
 
   async function refreshCodeAnalysisLab() {
@@ -4112,10 +4221,18 @@
   $('refreshCodeAnalysisLab')?.addEventListener('click', () => refreshCodeAnalysisLab().catch(error => toast(error.message, true)));
   $('codeAnalysisBackWorkspace')?.addEventListener('click', () => setMode('workspace').catch(error => toast(error.message, true)));
   $('codeAnalysisRailToggle')?.addEventListener('click', () => setCodeAnalysisRailCollapsed(!state.codeAnalysisLab.railCollapsed));
-  $('codeAnalysisInspectDataset')?.addEventListener('click', inspectCodeAnalysisPrecomputedDataset);
-  $('codeAnalysisImportDataset')?.addEventListener('click', importCodeAnalysisPrecomputedDataset);
-  $('codeAnalysisUseRepository')?.addEventListener('click', () => setCodeAnalysisDatasetSource('repository'));
-  $('codeAnalysisUsePrecomputed')?.addEventListener('click', () => setCodeAnalysisDatasetSource('precomputed'));
+  $('codeAnalysisRepositoryWorkflow')?.addEventListener('click', () => setCodeAnalysisWorkflowView('repository'));
+  $('codeAnalysisFindingsWorkflow')?.addEventListener('click', () => setCodeAnalysisWorkflowView('findings').catch(error => toast(error.message, true)));
+  $('findingsInspectDataset')?.addEventListener('click', inspectFindingsDataset);
+  $('findingsImportDataset')?.addEventListener('click', importFindingsDataset);
+  $('findingsRefresh')?.addEventListener('click', () => refreshExistingFindings().catch(error => toast(error.message, true)));
+  $('findingsOpenHsqa')?.addEventListener('click', launchFindingsHsqa);
+  $('findingsDatasetHistory')?.addEventListener('change', event => selectFindingsHistory(event.target.value));
+  $('findingsContinue')?.addEventListener('click', () => {
+    const action = $('findingsContinue')?.dataset.action || 'blocked';
+    if (action === 'import') { $('findingsDatasetPath')?.focus(); return; }
+    if (action === 'run_hsqa' || action === 'inspect') launchFindingsHsqa();
+  });
 
   document.querySelectorAll('.mode-button[data-mode]').forEach(button => {
     button.addEventListener('click', () => openWindowSurface(button.dataset.mode).catch(error => toast(error.message, true)));

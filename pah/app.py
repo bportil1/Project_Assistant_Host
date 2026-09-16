@@ -18,14 +18,15 @@ from .contracts import ArtifactRef, ArtifactRequirement, ModuleContext, coerce_a
 from .labs import (
     ArtifactInventory,
     CodeAnalysisLabController,
+    EXISTING_FINDINGS_WORKFLOW,
     RegistryError,
     default_lab_registry,
 )
 from .labs.information_network import build_information_network
 from .labs.precomputed_dataset import (
     PrecomputedDatasetError,
-    inspect_precomputed_table,
-    materialize_precomputed_feature_dataset,
+    inspect_findings_table,
+    materialize_findings_matrix,
 )
 from .module_catalog import default_module_registry
 from .runtime import HostSurfaceRuntimeAdapter, RuntimeRegistry, RuntimeRegistryError
@@ -90,6 +91,14 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         artifacts=lab_artifacts,
         runtimes=runtime_registry,
     )
+    existing_findings_lab = CodeAnalysisLabController(
+        module_registry,
+        lab=lab_registry.get("code_analysis_lab"),
+        artifacts=lab_artifacts,
+        runtimes=runtime_registry,
+        workflow=EXISTING_FINDINGS_WORKFLOW,
+        expected_modules=(("hsqa_dbn", "EBM / DBN Analysis Lab"),),
+    )
     # Expose the registries to future host/lab adapters without forcing Flask
     # route code to become the orchestration boundary.
     app.extensions["pah_module_registry"] = module_registry
@@ -97,6 +106,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     app.extensions["pah_lab_registry"] = lab_registry
     app.extensions["pah_lab_artifacts"] = lab_artifacts
     app.extensions["pah_code_analysis_lab"] = code_analysis_lab
+    app.extensions["pah_existing_findings_lab"] = existing_findings_lab
     app.extensions["pah_component_versions"] = component_versions
     if workspaces.root is not None:
         analyzer.bind(workspaces.root)
@@ -169,63 +179,112 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         if status.get("stale"):
             raise AnalyzerIntegrationError("Re-analyze the project before generating or refreshing analyzer-backed artifacts.")
 
-    precomputed_alias_id = "pah-precomputed-feature-dataset-current"
-    precomputed_requirement = ArtifactRequirement(
+    findings_matrix_alias_id = "pah-findings-matrix-current"
+    findings_feature_alias_id = "pah-findings-feature-dataset-current"
+    findings_matrix_requirement = ArtifactRequirement(
+        kind="findings_matrix",
+        producer_module="pah",
+        schema_id="pah.findings-matrix",
+        schema_version="1",
+    )
+    findings_feature_requirement = ArtifactRequirement(
         kind="feature_dataset",
         producer_module="pah",
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
     )
 
-    def precomputed_dataset_snapshot() -> dict:
-        current = lab_artifacts.get(precomputed_alias_id)
-        history = lab_artifacts.history(
-            precomputed_requirement,
-            project_id=str(workspaces.root) if workspaces.root is not None else None,
-        )
-        return {
-            "mode": "precomputed" if current is not None else "repository",
-            "active": current.to_dict() if current is not None else None,
-            "history": [item.to_dict() for item in history],
-        }
-
-    def register_precomputed_dataset(
+    def register_findings_dataset(
         path: str, *, id_column: str | None = None, dataset_name: str | None = None
-    ) -> ArtifactRef:
+    ) -> tuple[ArtifactRef, ArtifactRef]:
         root = workspaces.require_root()
-        output, payload, metadata = materialize_precomputed_feature_dataset(
+        findings_path, findings_payload, feature_path, feature_payload, metadata = materialize_findings_matrix(
             path,
-            output_root=workspaces.state_dir / "code-analysis" / "precomputed",
+            output_root=workspaces.state_dir / "existing-findings",
             id_column=id_column,
             dataset_name=dataset_name,
         )
-        artifact = ArtifactRef(
-            artifact_id=precomputed_alias_id,
-            kind="feature_dataset",
+        findings = ArtifactRef(
+            artifact_id=findings_matrix_alias_id,
+            kind="findings_matrix",
             producer_module="pah",
-            location=str(output),
-            schema_id="pah.feature-dataset.matrix",
+            location=str(findings_path),
+            schema_id="pah.findings-matrix",
             schema_version="1",
-            media_type="application/vnd.pah.feature-dataset+json",
+            media_type="application/vnd.pah.findings-matrix+json",
             project_id=str(root),
-            capabilities=("quality_modeling", "representation_learning"),
+            capabilities=("findings_input", "representation_learning"),
             validation_state="valid",
             metadata={
                 **metadata,
                 "runtime_managed": True,
-                "imported_feature_ids": list(payload.get("feature_ids") or []),
+                "workflow_id": EXISTING_FINDINGS_WORKFLOW.workflow_id,
+                "feature_ids": list(findings_payload.get("feature_ids") or []),
             },
             provenance={
-                "source": "PAH Code Analysis Lab precomputed dataset import",
-                "source_type": metadata.get("source_type"),
+                "source": "PAH Existing Findings import",
+                "source_type": "existing_findings",
                 "source_path": metadata.get("source_path"),
                 "source_sha256": metadata.get("source_sha256"),
-                "analysis_bypassed": True,
+                "repository_analysis_bypassed": True,
+                "pypique_acquisition_bypassed": True,
                 "transformations": [],
             },
         )
-        lab_artifacts.register_current(artifact)
-        return lab_artifacts.get(precomputed_alias_id) or artifact
+        findings_alias, findings_snapshot = lab_artifacts.register_current(findings)
+        feature = ArtifactRef(
+            artifact_id=findings_feature_alias_id,
+            kind="feature_dataset",
+            producer_module="pah",
+            location=str(feature_path),
+            schema_id="pah.feature-dataset.matrix",
+            schema_version="1",
+            media_type="application/vnd.pah.feature-dataset+json",
+            project_id=str(root),
+            capabilities=("representation_learning",),
+            parent_artifact_ids=(findings_alias.artifact_id,),
+            validation_state="valid",
+            metadata={
+                **metadata,
+                "runtime_managed": True,
+                "workflow_id": EXISTING_FINDINGS_WORKFLOW.workflow_id,
+                "feature_ids": list(feature_payload.get("feature_ids") or []),
+            },
+            provenance={
+                "source": "PAH Existing Findings matrix adapter",
+                "findings_matrix_artifact_id": findings_snapshot.artifact_id,
+                "source_sha256": metadata.get("source_sha256"),
+                "repository_analysis_bypassed": True,
+                "pypique_acquisition_bypassed": True,
+                "transformations": [],
+            },
+        )
+        feature_alias, _ = lab_artifacts.register_current(feature)
+        return findings_alias, feature_alias
+
+    def findings_dataset_snapshot() -> dict:
+        step = existing_findings_lab.step_snapshot(
+            EXISTING_FINDINGS_WORKFLOW.steps[0], context=orchestration_context()
+        )
+        requirement = next(
+            (item for item in step.get("requirements", []) if item.get("kind") == "feature_dataset"),
+            None,
+        ) or {}
+        selected = requirement.get("selected") if isinstance(requirement, dict) else None
+        findings = None
+        if isinstance(selected, dict):
+            for parent_id in selected.get("parent_artifact_ids") or []:
+                parent = lab_artifacts.get(str(parent_id))
+                if parent is not None and parent.kind == "findings_matrix":
+                    findings = parent.to_dict()
+                    break
+        history = requirement.get("history") if isinstance(requirement, dict) else []
+        return {
+            "active": selected,
+            "findings_matrix": findings,
+            "selection_mode": requirement.get("selection_mode", "current") if isinstance(requirement, dict) else "current",
+            "history": history or [],
+        }
 
     def sync_code_analysis_artifacts() -> None:
         """Reflect host-owned Code Analyzer readiness in the lab inventory.
@@ -280,6 +339,8 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
                 continue
             if not artifact.metadata.get("registry_alias"):
                 continue
+            if artifact.metadata.get("workflow_id") == EXISTING_FINDINGS_WORKFLOW.workflow_id:
+                continue
             if project_id is not None and artifact.project_id not in {None, project_id}:
                 continue
             lab_artifacts.deactivate_current(artifact.artifact_id)
@@ -309,6 +370,8 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
 
         for artifact in tuple(lab_artifacts.by_producer(module_id)):
             if not artifact.metadata.get("registry_alias"):
+                continue
+            if artifact.metadata.get("workflow_id") == EXISTING_FINDINGS_WORKFLOW.workflow_id:
                 continue
             if project_id is not None and artifact.project_id not in {None, project_id}:
                 continue
@@ -369,6 +432,67 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
                 lab_artifacts.deactivate_current(artifact_id)
         else:
             sync_runtime_artifacts("pypique", feedback_context)
+
+    findings_representation_alias = "hsqa-dbn-findings-representation-current"
+    findings_analysis_alias = "hsqa-dbn-findings-representation-analysis-current"
+
+    def deactivate_findings_runtime_aliases() -> None:
+        for artifact_id in (findings_representation_alias, findings_analysis_alias):
+            lab_artifacts.deactivate_current(artifact_id)
+
+    def sync_findings_workflow_artifacts() -> None:
+        """Refresh only the HSQA outputs belonging to Existing Findings.
+
+        HSQA's standalone adapter advertises generic current IDs. PAH remaps those
+        IDs here so the repository workflow and findings workflow keep independent
+        current aliases and immutable histories.
+        """
+        try:
+            _, context = existing_findings_lab.execution_context(
+                "representation_analysis", orchestration_context()
+            )
+        except ValueError:
+            deactivate_findings_runtime_aliases()
+            return
+        discovered = runtime_registry.artifacts("hsqa_dbn", context)
+        if discovered is None:
+            return
+        seen: set[str] = set()
+        for raw in discovered:
+            try:
+                artifact = coerce_artifact_ref(raw)
+            except (TypeError, ValueError):
+                continue
+            if artifact.producer_module != "hsqa_dbn":
+                continue
+            if artifact.kind == "representation":
+                alias_id = findings_representation_alias
+            elif artifact.kind == "representation_analysis":
+                alias_id = findings_analysis_alias
+            else:
+                continue
+            parents = []
+            for parent_id in artifact.parent_artifact_ids:
+                parents.append(
+                    findings_representation_alias
+                    if parent_id == "hsqa-dbn-representation-current"
+                    else parent_id
+                )
+            payload = artifact.to_dict()
+            payload["artifact_id"] = alias_id
+            payload["parent_artifact_ids"] = parents
+            payload["metadata"] = {
+                **dict(artifact.metadata),
+                "runtime_managed": True,
+                "workflow_id": EXISTING_FINDINGS_WORKFLOW.workflow_id,
+                "source_runtime_artifact_id": artifact.artifact_id,
+            }
+            remapped = coerce_artifact_ref(payload)
+            lab_artifacts.register_current(remapped)
+            seen.add(alias_id)
+        for artifact_id in (findings_representation_alias, findings_analysis_alias):
+            if artifact_id not in seen:
+                lab_artifacts.deactivate_current(artifact_id)
 
     def error_response(exc: Exception, status: int = 400):
         return jsonify({"ok": False, "error": str(exc)}), status
@@ -522,96 +646,124 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             return error_response(KeyError(f"Unknown PAH artifact {artifact_id!r}"), 404)
         return jsonify({"ok": True, "artifact": removed.to_dict()})
 
-    @app.post("/api/orchestration/code-analysis/precomputed/inspect")
-    def orchestration_precomputed_inspect():
+    @app.post("/api/orchestration/findings/inspect")
+    def orchestration_findings_inspect():
         payload = request.get_json(silent=True) or {}
         path = str(payload.get("path") or "").strip()
         if not path:
-            return error_response(PrecomputedDatasetError("Choose a CSV/TSV path first"))
+            return error_response(PrecomputedDatasetError("Choose a CSV/TSV findings path first"))
         id_column = payload.get("id_column")
-        result = inspect_precomputed_table(
+        result = inspect_findings_table(
             path, id_column=str(id_column) if id_column is not None else None
         )
         return jsonify({"ok": True, **result})
 
-    @app.post("/api/orchestration/code-analysis/precomputed/import")
-    def orchestration_precomputed_import():
+    @app.post("/api/orchestration/findings/import")
+    def orchestration_findings_import():
         payload = request.get_json(silent=True) or {}
         path = str(payload.get("path") or "").strip()
         if not path:
-            return error_response(PrecomputedDatasetError("Choose a CSV/TSV path first"))
+            return error_response(PrecomputedDatasetError("Choose a CSV/TSV findings path first"))
         id_column = payload.get("id_column")
-        artifact = register_precomputed_dataset(
+        findings, feature = register_findings_dataset(
             path,
             id_column=str(id_column) if id_column is not None else None,
             dataset_name=str(payload.get("dataset_name") or "").strip() or None,
         )
-        # Providers are target-bound. Stop any old repository-backed sessions so
-        # reopening pyPIQUE/HSQA cannot silently keep the previous data source.
-        runtime_registry.shutdown("pypique", orchestration_context())
+        # Only the findings HSQA session is target-bound to this matrix. The
+        # repository workflow and pyPIQUE sessions are intentionally untouched.
         runtime_registry.shutdown("hsqa_dbn", orchestration_context())
-        # Switching source invalidates only mutable downstream aliases; immutable
-        # history remains available for intentional branching.
-        sync_code_analysis_lab_artifacts()
+        sync_findings_workflow_artifacts()
         return jsonify({
             "ok": True,
-            "artifact": artifact.to_dict(),
-            "dataset_source": precomputed_dataset_snapshot(),
-            **code_analysis_lab.snapshot(context=orchestration_context()),
+            "findings_matrix": findings.to_dict(),
+            "feature_dataset": feature.to_dict(),
+            **existing_findings_lab.snapshot(context=orchestration_context()),
+            "dataset": findings_dataset_snapshot(),
         }), 201
 
-    @app.post("/api/orchestration/code-analysis/dataset-source")
-    def orchestration_dataset_source():
+    @app.post("/api/orchestration/findings/steps/<step_id>/inputs/<kind>/select")
+    def orchestration_findings_select_input(step_id: str, kind: str):
         payload = request.get_json(silent=True) or {}
-        mode = str(payload.get("mode") or "").strip().lower()
-        if mode == "repository":
-            lab_artifacts.deactivate_current(precomputed_alias_id)
-        elif mode == "precomputed":
-            if lab_artifacts.get(precomputed_alias_id) is None:
-                history = lab_artifacts.history(
-                    precomputed_requirement,
-                    project_id=str(workspaces.root) if workspaces.root is not None else None,
-                )
-                if not history:
-                    return error_response(
-                        PrecomputedDatasetError("Import a precomputed dataset before selecting precomputed mode"),
-                        409,
-                    )
-                latest = history[0]
-                clean_metadata = {
-                    key: value for key, value in dict(latest.metadata).items()
-                    if key not in {
-                        "registry_alias", "snapshot_artifact_id", "history_snapshot",
-                        "source_alias", "superseded", "archived_copy", "archived_from",
-                    }
-                }
-                lab_artifacts.register_current(ArtifactRef(
-                    artifact_id=precomputed_alias_id,
-                    kind=latest.kind,
-                    producer_module=latest.producer_module,
-                    location=latest.location,
-                    schema_id=latest.schema_id,
-                    schema_version=latest.schema_version,
-                    media_type=latest.media_type,
-                    producer_version=latest.producer_version,
-                    project_id=latest.project_id,
-                    session_id=latest.session_id,
-                    capabilities=latest.capabilities,
-                    parent_artifact_ids=latest.parent_artifact_ids,
-                    validation_state=latest.validation_state,
-                    validation_errors=latest.validation_errors,
-                    metadata=clean_metadata,
-                    provenance=latest.provenance,
-                ))
-        else:
-            return error_response(PrecomputedDatasetError("Dataset source must be 'repository' or 'precomputed'"))
-        runtime_registry.shutdown("pypique", orchestration_context())
+        artifact_id = payload.get("artifact_id")
+        try:
+            selection = existing_findings_lab.select_input(
+                step_id,
+                kind,
+                str(artifact_id) if artifact_id else None,
+                context=orchestration_context(),
+            )
+        except (KeyError, ValueError) as exc:
+            return error_response(exc, 409)
         runtime_registry.shutdown("hsqa_dbn", orchestration_context())
-        sync_code_analysis_lab_artifacts()
+        sync_findings_workflow_artifacts()
         return jsonify({
             "ok": True,
-            "dataset_source": precomputed_dataset_snapshot(),
-            **code_analysis_lab.snapshot(context=orchestration_context()),
+            "selection": selection,
+            **existing_findings_lab.snapshot(context=orchestration_context()),
+            "dataset": findings_dataset_snapshot(),
+        })
+
+    @app.post("/api/orchestration/findings/steps/<step_id>/launch")
+    def orchestration_findings_step_launch(step_id: str):
+        payload = request.get_json(silent=True) or {}
+        sync_findings_workflow_artifacts()
+        try:
+            module_id, context = existing_findings_lab.execution_context(step_id, orchestration_context())
+            # HSQA has one local runtime process. Restart it explicitly so the
+            # process cannot silently retain a repository-workflow target.
+            runtime_registry.shutdown(module_id, orchestration_context())
+            launch = runtime_registry.launch(
+                module_id,
+                context,
+                detached=bool(payload.get("detached", False)),
+            )
+        except (ValueError, RuntimeRegistryError) as exc:
+            return error_response(exc, 409)
+        return jsonify({"ok": True, "step_id": step_id, **launch.to_dict()})
+
+    @app.get("/api/orchestration/findings")
+    def orchestration_findings():
+        sync_findings_workflow_artifacts()
+        snapshot = existing_findings_lab.snapshot(context=orchestration_context())
+        step = snapshot.get("workflow", {}).get("steps", [{}])[0] if snapshot.get("workflow", {}).get("steps") else {}
+        dataset = findings_dataset_snapshot()
+        if not dataset.get("active"):
+            next_action = {
+                "code": "import",
+                "label": "Import an existing findings sheet",
+                "detail": "Choose a CSV/TSV findings matrix. Repository analysis and pyPIQUE acquisition are not required.",
+            }
+        elif step.get("state") == "complete":
+            next_action = {
+                "code": "inspect",
+                "label": "Representation and information analysis are available",
+                "detail": "The current HSQA outputs descend from the selected findings dataset.",
+            }
+        elif step.get("state") == "stale":
+            next_action = {
+                "code": "run_hsqa",
+                "label": "Open HSQA for this findings dataset",
+                "detail": "Existing HSQA outputs belong to another dataset. Nothing from the repository workflow needs to be rerun.",
+            }
+        elif step.get("state") == "ready":
+            next_action = {
+                "code": "run_hsqa",
+                "label": "Open HSQA for this findings dataset",
+                "detail": "The findings matrix is ready. Train/select a compatible representation and run its information analysis.",
+            }
+        else:
+            next_action = {
+                "code": "blocked",
+                "label": "Resolve the findings workflow requirement",
+                "detail": step.get("blocking_reason") or "HSQA is not currently available for this workflow.",
+            }
+        return jsonify({
+            "ok": True,
+            "workspace": str(workspaces.root) if workspaces.root else None,
+            **snapshot,
+            "dataset": dataset,
+            "next_action": next_action,
         })
 
     @app.post("/api/orchestration/code-analysis/steps/<step_id>/inputs/<kind>/select")
@@ -656,7 +808,6 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "workspace": str(workspaces.root) if workspaces.root else None,
-            "dataset_source": precomputed_dataset_snapshot(),
             **code_analysis_lab.snapshot(context=orchestration_context()),
         })
 

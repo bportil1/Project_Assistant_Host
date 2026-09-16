@@ -9,6 +9,7 @@ from pah.labs import (
     ArtifactInventory,
     CODE_ANALYSIS_LAB,
     CODE_ANALYSIS_WORKFLOW,
+    EXISTING_FINDINGS_WORKFLOW,
     CodeAnalysisLabController,
     ModuleRegistry,
 )
@@ -45,8 +46,8 @@ def _steps(snapshot):
     return {step["step_id"]: step for step in snapshot["workflow"]["steps"]}
 
 
-def test_code_analysis_lab_catalog_contains_real_workflow():
-    assert CODE_ANALYSIS_LAB.workflows == (CODE_ANALYSIS_WORKFLOW,)
+def test_code_analysis_lab_catalog_contains_separate_repository_and_findings_workflows():
+    assert CODE_ANALYSIS_LAB.workflows == (CODE_ANALYSIS_WORKFLOW, EXISTING_FINDINGS_WORKFLOW)
     assert [step.step_id for step in CODE_ANALYSIS_WORKFLOW.steps] == [
         "repository_analysis",
         "quality_modeling",
@@ -77,9 +78,9 @@ def test_controller_advances_by_registered_artifacts_not_button_history(tmp_path
 
     initial = _steps(controller.snapshot())
     assert initial["quality_modeling"]["state"] == "blocked"
-    assert "Provide one input source:" in initial["quality_modeling"]["blocking_reason"]
-    assert "feature_dataset" in initial["quality_modeling"]["blocking_reason"]
-    assert "code_analysis" in initial["quality_modeling"]["blocking_reason"]
+    assert initial["quality_modeling"]["blocking_reason"] == (
+        "Missing required artifact: code_analysis (from code_analyzer, schema pah.code-analysis.current@1)."
+    )
     assert initial["representation_analysis"]["state"] == "blocked"
     assert initial["mi_informed_analysis"]["state"] == "blocked"
 
@@ -283,9 +284,9 @@ def test_invalid_artifact_does_not_satisfy_workflow_requirement():
     controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
     step = _steps(controller.snapshot())["representation_analysis"]
     assert step["state"] == "blocked"
-    assert step["missing_requirements"][0]["producer_module"] is None
+    assert step["missing_requirements"][0]["producer_module"] == "pypique"
     assert step["blocking_reason"] == (
-        "Missing required artifact: feature_dataset (schema pah.feature-dataset.matrix@1)."
+        "Missing required artifact: feature_dataset (from pypique, schema pah.feature-dataset.matrix@1)."
     )
 
 
@@ -799,11 +800,11 @@ def test_representation_execution_context_exposes_feature_dataset_history_to_pro
     assert [item["artifact_id"] for item in history] == ["feature-history-123"]
 
 
-def test_precomputed_feature_dataset_is_alternative_quality_input_and_direct_representation_input(tmp_path: Path):
+def test_existing_findings_workflow_consumes_pah_matrix_without_code_analyzer_or_pypique(tmp_path: Path):
     feature_path = tmp_path / "feature_dataset.json"
     feature_path.write_text('{"schema":"pah.feature-dataset.matrix","schema_version":1}\n', encoding="utf-8")
     imported = ArtifactRef(
-        artifact_id="pah-precomputed-feature-dataset-current",
+        artifact_id="pah-findings-feature-dataset-current",
         kind="feature_dataset",
         producer_module="pah",
         location=str(feature_path),
@@ -811,27 +812,45 @@ def test_precomputed_feature_dataset_is_alternative_quality_input_and_direct_rep
         schema_version="1",
         project_id=str(tmp_path),
         validation_state="valid",
-        metadata={"registry_alias": True, "analysis_bypassed": True},
+        metadata={"registry_alias": True, "workflow_id": EXISTING_FINDINGS_WORKFLOW.workflow_id},
+    )
+    controller = CodeAnalysisLabController(
+        _integrated_modules(),
+        lab=CODE_ANALYSIS_LAB,
+        artifacts=ArtifactInventory((imported,)),
+        workflow=EXISTING_FINDINGS_WORKFLOW,
+        expected_modules=(("hsqa_dbn", "EBM / DBN Analysis Lab"),),
+    )
+    context = ModuleContext(project_root=tmp_path, working_root=tmp_path)
+    step = _steps(controller.snapshot(context=context))["representation_analysis"]
+    assert step["state"] == "ready"
+    assert step["requirements"][0]["selected"]["artifact_id"] == imported.artifact_id
+    module_id, launch_context = controller.execution_context("representation_analysis", context)
+    assert module_id == "hsqa_dbn"
+    assert launch_context.runtime["input_artifacts"]["feature_dataset"]["artifact_id"] == imported.artifact_id
+    assert set(item["module_id"] for item in controller.snapshot(context=context)["expected_modules"]) == {"hsqa_dbn"}
+
+
+def test_repository_workflow_does_not_accept_findings_matrix_as_quality_input(tmp_path: Path):
+    imported = ArtifactRef(
+        artifact_id="pah-findings-feature-dataset-current",
+        kind="feature_dataset",
+        producer_module="pah",
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
+        project_id=str(tmp_path),
+        validation_state="valid",
     )
     controller = CodeAnalysisLabController(
         _integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=ArtifactInventory((imported,))
     )
     context = ModuleContext(project_root=tmp_path, working_root=tmp_path)
-    steps = _steps(controller.snapshot(context=context))
-    quality = steps["quality_modeling"]
-    assert quality["state"] == "ready"
-    assert quality["selected_alternative_kind"] == "feature_dataset"
-    module_id, launch_context = controller.execution_context("quality_modeling", context)
-    assert module_id == "pypique"
-    assert launch_context.runtime["input_artifacts"]["feature_dataset"]["artifact_id"] == imported.artifact_id
-    assert "code_analysis" not in launch_context.runtime["input_artifacts"]
-
-    representation = steps["representation_analysis"]
-    assert representation["state"] == "ready"
-    assert representation["requirements"][0]["selected"]["artifact_id"] == imported.artifact_id
+    quality = _steps(controller.snapshot(context=context))["quality_modeling"]
+    assert quality["state"] == "blocked"
+    assert "code_analysis" in quality["blocking_reason"]
 
 
-def test_repository_analysis_remains_quality_input_when_no_precomputed_dataset(tmp_path: Path):
+def test_repository_analysis_remains_quality_input(tmp_path: Path):
     code = ArtifactRef(
         artifact_id="code-analyzer-current",
         kind="code_analysis",
@@ -848,6 +867,6 @@ def test_repository_analysis_remains_quality_input_when_no_precomputed_dataset(t
     context = ModuleContext(project_root=tmp_path, working_root=tmp_path)
     step = _steps(controller.snapshot(context=context))["quality_modeling"]
     assert step["state"] == "ready"
-    assert step["selected_alternative_kind"] == "code_analysis"
+    assert step["requirements"][0]["selected"]["artifact_id"] == code.artifact_id
     _, launch_context = controller.execution_context("quality_modeling", context)
     assert launch_context.runtime["input_artifacts"]["code_analysis"]["artifact_id"] == code.artifact_id
