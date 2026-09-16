@@ -763,3 +763,37 @@ def test_representation_output_reports_registered_but_invalid_provider_artifact(
     assert output["available"] is False
     assert len(output["invalid_artifacts"]) == 1
     assert "different feature dataset" in output["invalid_artifacts"][0]["validation_errors"][0]
+
+
+def test_representation_execution_context_exposes_feature_dataset_history_to_provider(tmp_path: Path):
+    current = ArtifactRef(
+        artifact_id="feature-current",
+        kind="feature_dataset",
+        producer_module="pypique",
+        location=str(tmp_path / "current.json"),
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
+        validation_state="valid",
+        created_at="2026-09-15T00:00:00+00:00",
+    )
+    historical = ArtifactRef(
+        artifact_id="feature-history-123",
+        kind="feature_dataset",
+        producer_module="pypique",
+        location=str(tmp_path / "history.json"),
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
+        validation_state="valid",
+        created_at="2026-09-10T00:00:00+00:00",
+        metadata={"history_snapshot": True, "history_selectable": True},
+    )
+    controller = CodeAnalysisLabController(
+        _integrated_modules(),
+        lab=CODE_ANALYSIS_LAB,
+        artifacts=ArtifactInventory((current, historical)),
+    )
+    module_id, context = controller.execution_context("representation_analysis", ModuleContext(project_root=tmp_path))
+    assert module_id == "hsqa_dbn"
+    assert context.runtime["input_artifacts"]["feature_dataset"]["artifact_id"] == "feature-current"
+    history = context.runtime["artifact_history"]["feature_dataset"]
+    assert [item["artifact_id"] for item in history] == ["feature-history-123"]

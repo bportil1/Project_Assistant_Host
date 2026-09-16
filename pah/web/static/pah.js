@@ -1548,6 +1548,7 @@
     providerHeading.textContent = 'Provider';
     providerSection.appendChild(providerHeading);
     const provider = step.resolution?.provider;
+    let bundleDiscovery = null;
     if (provider) {
       appendLabContractRow(providerSection, 'Module', provider.display_name || provider.module_id);
       appendLabContractRow(providerSection, 'Capability', step.capability);
@@ -1561,7 +1562,79 @@
         );
         if (runtime.message) appendLabContractRow(providerSection, 'Runtime note', runtime.message);
         const discovery = runtime.metadata?.handoff?.artifact_discovery || null;
+        bundleDiscovery = discovery;
         if (discovery?.message) appendLabContractRow(providerSection, 'Artifact discovery', discovery.message);
+        if (step.step_id === 'representation_analysis' && discovery?.bundles_found) {
+          appendLabContractRow(providerSection, 'Current-compatible bundles', String(discovery.matching_current_input || 0));
+          appendLabContractRow(providerSection, 'Historical-compatible bundles', String(discovery.matching_historical_input || 0));
+          appendLabContractRow(providerSection, 'Unmatched bundles', String(discovery.unmatched_input || 0));
+          if (discovery.invalid_bundles) appendLabContractRow(providerSection, 'Invalid bundles', String(discovery.invalid_bundles));
+
+          const details = document.createElement('details');
+          details.className = 'lab-bundle-compatibility';
+          const summary = document.createElement('summary');
+          summary.textContent = `Show ${discovery.bundles_found} discovered bundle${discovery.bundles_found === 1 ? '' : 's'} and compatibility`;
+          details.appendChild(summary);
+          const wrap = document.createElement('div');
+          wrap.style.overflowX = 'auto';
+          wrap.style.marginTop = '8px';
+          const table = document.createElement('table');
+          table.className = 'pah-data-table';
+          const head = document.createElement('thead');
+          const headRow = document.createElement('tr');
+          for (const label of ['Trial', 'Compatibility', 'Matching feature_dataset', 'Source fingerprint']) {
+            const th = document.createElement('th');
+            th.textContent = label;
+            headRow.appendChild(th);
+          }
+          head.appendChild(headRow);
+          table.appendChild(head);
+          const body = document.createElement('tbody');
+          for (const bundle of discovery.bundles || []) {
+            const row = document.createElement('tr');
+            const identity = bundle.trial_identity || {};
+            const trialBits = [
+              identity.dataset,
+              identity.generation_condition_label || (identity.augmentation_ratio !== undefined ? `aug ${identity.augmentation_ratio}` : null),
+              identity.rbm_type,
+              identity.training_method,
+              identity.trial !== undefined ? `trial ${identity.trial}` : null,
+            ].filter(Boolean);
+            const trialCell = document.createElement('td');
+            trialCell.textContent = trialBits.join(' · ') || bundle.path || 'RepresentationBundle';
+            trialCell.title = bundle.path || '';
+            row.appendChild(trialCell);
+
+            const compatibilityCell = document.createElement('td');
+            const compatibility = bundle.compatibility || 'unknown';
+            compatibilityCell.textContent = compatibility === 'current'
+              ? 'CURRENT — usable now'
+              : compatibility === 'historical'
+                ? 'HISTORICAL — usable with matching snapshot'
+                : compatibility === 'invalid'
+                  ? 'INVALID'
+                  : 'UNMATCHED — not usable with registered datasets';
+            row.appendChild(compatibilityCell);
+
+            const matchCell = document.createElement('td');
+            const matches = bundle.matching_feature_dataset_artifact_ids || [];
+            matchCell.textContent = compatibility === 'current'
+              ? (discovery.selected_feature_dataset_artifact_id || 'Current (automatic)')
+              : (matches.length ? matches.join(', ') : '—');
+            row.appendChild(matchCell);
+
+            const fingerprintCell = document.createElement('td');
+            const fingerprint = bundle.source_sha256 || '';
+            fingerprintCell.textContent = fingerprint ? `${fingerprint.slice(0, 12)}…` : 'unrecorded';
+            fingerprintCell.title = fingerprint;
+            row.appendChild(fingerprintCell);
+            body.appendChild(row);
+          }
+          table.appendChild(body);
+          wrap.appendChild(table);
+          details.appendChild(wrap);
+          providerSection.appendChild(details);
+        }
       }
       const stepLaunchable = runtime?.launchable && ['ready', 'stale', 'complete'].includes(step.state);
       if (stepLaunchable) {
@@ -1610,7 +1683,12 @@
           const select = document.createElement('select');
           const current = document.createElement('option');
           current.value = '';
-          current.textContent = 'Current (automatic)';
+          const currentMatches = requirement.kind === 'feature_dataset'
+            ? Number(bundleDiscovery?.matching_current_input || 0)
+            : 0;
+          current.textContent = requirement.kind === 'feature_dataset' && bundleDiscovery
+            ? `Current (automatic) · ${currentMatches} matching bundle${currentMatches === 1 ? '' : 's'}`
+            : 'Current (automatic)';
           select.appendChild(current);
           for (const artifact of history) {
             const option = document.createElement('option');
@@ -1618,7 +1696,13 @@
             const stamp = artifact.created_at ? new Date(artifact.created_at).toLocaleString() : 'unknown time';
             const status = artifact.metadata?.superseded ? 'historical' : 'latest snapshot';
             const branches = artifact.dependents ? ` · ${artifact.dependents} descendant${artifact.dependents === 1 ? '' : 's'}` : '';
-            option.textContent = `${stamp} · ${status}${branches} · ${artifact.artifact_id}`;
+            const bundleMatches = requirement.kind === 'feature_dataset'
+              ? Number(bundleDiscovery?.history_match_counts?.[artifact.artifact_id] || 0)
+              : 0;
+            const compatible = bundleMatches
+              ? ` · ${bundleMatches} matching bundle${bundleMatches === 1 ? '' : 's'}`
+              : '';
+            option.textContent = `${stamp} · ${status}${branches}${compatible} · ${artifact.artifact_id}`;
             option.disabled = !artifact.selectable;
             select.appendChild(option);
           }
@@ -1637,9 +1721,14 @@
             }
           });
           const note = document.createElement('small');
+          const selectedBundleMatches = requirement.kind === 'feature_dataset' && requirement.selection_mode === 'pinned'
+            ? Number(bundleDiscovery?.history_match_counts?.[requirement.selected_artifact_id] || 0)
+            : 0;
           note.textContent = requirement.selection_mode === 'pinned'
-            ? 'Pinned branch: downstream outputs must descend from this artifact.'
-            : 'Choose a preserved snapshot to branch from earlier results.';
+            ? `Pinned branch: downstream outputs must descend from this artifact.${selectedBundleMatches ? ` ${selectedBundleMatches} discovered RepresentationBundle${selectedBundleMatches === 1 ? '' : 's'} match this snapshot.` : ''}`
+            : (requirement.kind === 'feature_dataset' && bundleDiscovery?.matching_current_input === 0 && bundleDiscovery?.matching_historical_input
+              ? 'No discovered bundle matches Current. Choose a preserved snapshot labeled with matching bundles, or rerun HSQA using Current.'
+              : 'Choose a preserved snapshot to branch from earlier results.');
           chooser.append(caption, select, note);
           inputs.appendChild(chooser);
         }

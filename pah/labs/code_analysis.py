@@ -275,6 +275,15 @@ class CodeAnalysisLabController:
             "pah_step": step.step_id,
             "input_artifacts": selected,
         })
+        if step.step_id == "representation_analysis":
+            feature_requirement = next((item for item in step.requires if item.kind == "feature_dataset"), None)
+            if feature_requirement is not None:
+                history = self.artifacts.history(
+                    feature_requirement, project_id=self._project_id(context)
+                )
+                runtime["artifact_history"] = {
+                    "feature_dataset": [item.to_dict() for item in history]
+                }
         if step.step_id == "mi_informed_analysis":
             runtime.update({
                 "requested_view": "mi-informed",
