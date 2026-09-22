@@ -26,6 +26,8 @@ def test_component_registry_covers_nested_modules_and_browser_assets():
     assert components["hsqa_dbn"].install_spec == "modules/hsqa_dbn[visual]"
     assert components["hsqa_dbn"].pah_entry_points == (("pah.modules", "hsqa_dbn"), ("pah.runtimes", "hsqa_dbn"))
     assert components["hsqa_dbn"].compatibility_tests == ("tests/test_pah_module_adapter.py",)
+    assert components["ml_lab"].install_spec == "modules/ml_lab[ui]"
+    assert components["ml_lab"].pah_entry_points == (("pah.modules", "ml_lab"), ("pah.runtimes", "ml_lab"))
     assert components["tech_documents"].install_spec.endswith("[web]")
     assert components["reference_manager"].install_spec.endswith("[web]")
     assert components["paper_searcher"].path == "modules/reference_manager/modules/paper_searcher"
@@ -71,6 +73,7 @@ def test_doctor_json_shape_explains_missing_fragments(tmp_path: Path):
         "code_analyzer",
         "pypique",
         "hsqa_dbn",
+        "ml_lab",
         "tech_documents",
         "reference_manager",
         "paper_searcher",

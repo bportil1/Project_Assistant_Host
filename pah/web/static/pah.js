@@ -44,6 +44,7 @@
     },
     mode: 'workspace',
     codeAnalysisLab: {snapshot: null, selectedStep: null, railCollapsed: false},
+    mlLab: {available: false, running: false, url: null, message: null, artifacts: []},
     git: {git_available: false, workspace: null, is_repository: false, repository_root: null, branch: null, detached: false, head: null, changes: [], staged_count: 0, unstaged_count: 0, untracked_count: 0, submodules: [], remotes: [], tracking: null, connectivity_mode: 'local_only', local_only: true, remote_enabled: false},
     overleaf: {lastImport: null, sync: null},
     componentVersions: {snapshot: null, busy: false},
@@ -1323,7 +1324,7 @@
   }
 
   async function setMode(mode) {
-    if (!['workspace', 'analysis', 'documents', 'references', 'code_analysis_lab'].includes(mode)) return;
+    if (!['workspace', 'analysis', 'documents', 'references', 'code_analysis_lab', 'ml_lab'].includes(mode)) return;
     closeServiceMenus();
     if (mode !== 'workspace' && isSurfaceDetached(mode)) {
       surfaceWindow(mode).focus();
@@ -1353,7 +1354,8 @@
     $('documentsMode').classList.toggle('hidden', mode !== 'documents');
     $('referencesMode').classList.toggle('hidden', mode !== 'references');
     $('codeAnalysisLabMode')?.classList.toggle('hidden', mode !== 'code_analysis_lab');
-    $('labsMenuToggle')?.classList.toggle('active', mode === 'code_analysis_lab');
+    $('mlLabMode')?.classList.toggle('hidden', mode !== 'ml_lab');
+    $('labsMenuToggle')?.classList.toggle('active', ['code_analysis_lab', 'ml_lab'].includes(mode));
     $('app').classList.toggle('full-mode', mode !== 'workspace');
     if (mode === 'workspace' && editor) window.requestAnimationFrame(() => editor.resize(true));
   }
@@ -1884,6 +1886,68 @@
     await refreshCodeAnalysisLab();
   }
 
+  async function refreshMlLabStatus() {
+    const button = $('openMlLab');
+    const menuStatus = $('mlLabMenuStatus');
+    try {
+      const data = await api('/api/orchestration/ml-lab');
+      const runtime = data.runtime || {};
+      state.mlLab = {
+        available: Boolean(runtime.available),
+        running: Boolean(runtime.running),
+        url: runtime.url || state.mlLab.url || null,
+        message: runtime.message || null,
+        artifacts: data.artifacts || [],
+      };
+      if (button) {
+        button.disabled = !state.mlLab.available;
+        button.title = state.mlLab.available ? 'Open ML Lab' : (state.mlLab.message || 'ML Lab unavailable');
+      }
+      if (menuStatus) menuStatus.textContent = state.mlLab.running ? 'Running' : (state.mlLab.available ? 'Ready' : 'Unavailable');
+      const status = $('mlLabToolStatus');
+      if (status) {
+        const count = state.mlLab.artifacts.length;
+        status.textContent = state.mlLab.available
+          ? `${state.mlLab.running ? 'Running' : 'Ready'} · ${count} registered artifact${count === 1 ? '' : 's'}`
+          : (state.mlLab.message || 'ML Lab unavailable');
+      }
+      return data;
+    } catch (error) {
+      state.mlLab = {...state.mlLab, available: false, running: false, message: error.message};
+      if (button) { button.disabled = true; button.title = error.message; }
+      if (menuStatus) menuStatus.textContent = 'Unavailable';
+      if ($('mlLabToolStatus')) $('mlLabToolStatus').textContent = error.message;
+      return null;
+    }
+  }
+
+  function loadMlLabFrame(url, force = false) {
+    const frame = $('mlLabToolFrame');
+    if (!frame || !url) return;
+    if (!force && frame.dataset.toolUrl === url && frame.src) return;
+    const separator = url.includes('?') ? '&' : '?';
+    frame.src = `${url}${separator}pah=${Date.now()}`;
+    frame.dataset.toolUrl = url;
+  }
+
+  async function openMlLab() {
+    closeServiceMenus();
+    const status = await refreshMlLabStatus();
+    if (!status?.runtime?.available) throw new Error(status?.runtime?.message || 'ML Lab is unavailable.');
+    const launch = await api('/api/orchestration/modules/ml_lab/launch', {method: 'POST', body: JSON.stringify({detached: false})});
+    if (!launch.url) throw new Error(launch.message || 'ML Lab did not provide a UI URL.');
+    state.mlLab.running = true;
+    state.mlLab.url = launch.url;
+    loadMlLabFrame(launch.url, true);
+    await setMode('ml_lab');
+    await refreshMlLabStatus();
+  }
+
+  async function reloadMlLab() {
+    if (!state.mlLab.url) await openMlLab();
+    else loadMlLabFrame(state.mlLab.url, true);
+  }
+
   // ---------------------------------------------------------------------------
   // Workspace / files / editor
   // ---------------------------------------------------------------------------
@@ -1913,6 +1977,7 @@
     await refreshAnalyzerStatus();
     await refreshDocumentStatus();
     await refreshReferenceStatus();
+    await refreshMlLabStatus();
     await refreshFullTools({reloadActive: Boolean(data.root)});
     await refreshGitStatus();
   }
@@ -4075,6 +4140,11 @@
   // Event wiring
   // ---------------------------------------------------------------------------
   $('openCodeAnalysisLab')?.addEventListener('click', () => openCodeAnalysisLab().catch(error => toast(error.message, true)));
+  $('openMlLab')?.addEventListener('click', () => openMlLab().catch(error => toast(error.message, true)));
+  $('mlLabRefreshArtifacts')?.addEventListener('click', () => refreshMlLabStatus().catch(error => toast(error.message, true)));
+  $('mlLabReload')?.addEventListener('click', () => reloadMlLab().catch(error => toast(error.message, true)));
+  $('mlLabOpenWindow')?.addEventListener('click', () => { if (state.mlLab.url) window.open(state.mlLab.url, '_blank', 'noopener'); else openMlLab().catch(error => toast(error.message, true)); });
+  $('mlLabBackWorkspace')?.addEventListener('click', () => setMode('workspace').catch(error => toast(error.message, true)));
   $('refreshCodeAnalysisLab')?.addEventListener('click', () => refreshCodeAnalysisLab().catch(error => toast(error.message, true)));
   $('codeAnalysisBackWorkspace')?.addEventListener('click', () => setMode('workspace').catch(error => toast(error.message, true)));
   $('codeAnalysisRailToggle')?.addEventListener('click', () => setCodeAnalysisRailCollapsed(!state.codeAnalysisLab.railCollapsed));

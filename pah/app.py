@@ -110,9 +110,12 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return FileSystemService(workspaces.require_root())
 
     def orchestration_context() -> ModuleContext:
+        results_root = (Path(workspaces.root) / "ml_lab_results") if workspaces.root is not None else None
         return ModuleContext(
             project_root=workspaces.root,
             working_root=workspaces.root,
+            results_root=results_root,
+            ports={"ml_lab": int(os.environ.get("PAH_ML_LAB_PORT", "8769"))},
             runtime={"state_dir": str(workspaces.state_dir)},
         )
 
@@ -407,6 +410,21 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     def orchestration_module_shutdown(module_id: str):
         runtime_registry.shutdown(module_id, orchestration_context())
         return jsonify({"ok": True, "module_id": module_id})
+
+    @app.get("/api/orchestration/ml-lab")
+    def orchestration_ml_lab():
+        context = orchestration_context()
+        sync_runtime_artifacts("ml_lab", context)
+        lab = lab_registry.lab_snapshot("ml_lab", module_registry)
+        runtime = runtime_registry.status("ml_lab", context).to_dict()
+        artifacts = [item.to_dict() for item in lab_artifacts.by_producer("ml_lab")]
+        return jsonify({
+            "ok": True,
+            "workspace": str(workspaces.root) if workspaces.root else None,
+            "lab": lab,
+            "runtime": runtime,
+            "artifacts": artifacts,
+        })
 
     @app.get("/api/orchestration/labs/<lab_id>")
     def orchestration_lab(lab_id: str):
@@ -1332,7 +1350,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.9.6",
+            "version": "0.9.7",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),

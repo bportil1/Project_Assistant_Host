@@ -22,7 +22,7 @@
         <button id="labsMenuToggle" class="mode-button labs-menu-button" type="button" data-menu-toggle="labsMenu" aria-controls="labsMenu" aria-expanded="false" aria-haspopup="menu">Labs ▾</button>
         <div id="labsMenu" class="service-menu labs-menu hidden" role="menu">
           <button id="openCodeAnalysisLab" type="button"><span>Code Analysis Lab</span><span class="service-menu-meta">Workflow</span></button>
-          <button id="openMlLab" type="button" disabled title="ML Lab orchestration surface will be added after the Code Analysis Lab pattern is proven"><span>ML Lab</span><span class="service-menu-meta">Planned</span></button>
+          <button id="openMlLab" type="button" disabled title="Checking ML Lab availability…"><span>ML Lab</span><span id="mlLabMenuStatus" class="service-menu-meta">Checking…</span></button>
         </div>
       </div>
 
@@ -369,6 +369,20 @@
 
     </section>
   </main>
+
+  <section id="mlLabMode" class="full-tool-view mode-surface hidden" data-tool="ml_lab">
+    <div class="full-tool-status">
+      <strong>ML Lab</strong>
+      <span id="mlLabToolStatus">Preparing ML Lab…</span>
+      <div class="lab-header-actions">
+        <button id="mlLabRefreshArtifacts" type="button">Refresh Artifacts</button>
+        <button id="mlLabReload" type="button">Reload</button>
+        <button id="mlLabOpenWindow" type="button">Open in New Window</button>
+        <button id="mlLabBackWorkspace" type="button">Back to Workspace</button>
+      </div>
+    </div>
+    <iframe id="mlLabToolFrame" title="ML Lab" referrerpolicy="no-referrer"></iframe>
+  </section>
 
   <section id="analysisMode" class="full-tool-view mode-surface hidden" data-tool="analysis">
     <div class="full-tool-status"><strong>Full Analysis</strong><span id="analysisToolStatus">Preparing analyzer…</span></div>

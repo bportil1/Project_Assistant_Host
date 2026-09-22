@@ -4,7 +4,7 @@ PAH is a local-first workspace for software projects, technical documents, noteb
 
 PAH is intended for people who want one place to move between code, analysis, writing, notebooks, presentations, literature, terminal work, and project history without turning the application into a monolithic IDE or requiring a cloud service.
 
-**Current PAH host version:** 0.9.6
+**Current PAH host version:** 0.9.7
 
 ## Highlights
 
@@ -430,3 +430,15 @@ The result is a workspace in which code, graphs, documents, notebooks, diagrams,
 ## Component versions and dependency status
 
 PAH exposes **Tools → Component Versions** for managed submodules. Local refreshes are read-only and never contact remotes. The panel distinguishes the revision recorded by the parent repository, the currently checked-out revision, and the latest cached/fetched remote revision. Remote fetch/update actions are explicit. Updates use fast-forward-only Git operations, reinstall affected editable Python packages, and can run compatibility tests before the new gitlinks are recorded. **Record Component Versions** creates local parent Git commits only; it never pushes.
+
+
+## 0.9.7 — ML Lab integration
+
+PAH now recognizes ML Lab as a first-class managed Python/Git component. ML Lab
+remains independently runnable; PAH discovers its module/runtime adapters through
+Python entry points, launches ML Lab's own UI, docks it in the Labs workspace, and
+imports recognized ML Lab result artifacts into PAH's neutral artifact registry.
+
+Add the ML Lab repository once at `modules/ml_lab` (for example with the helper
+`./scripts/add_ml_lab_submodule.sh <ml-lab-git-url>`), then run `./scripts/setup.sh`
+to install `modules/ml_lab[ui]` into PAH's environment.

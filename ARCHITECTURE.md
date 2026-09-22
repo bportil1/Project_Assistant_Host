@@ -768,3 +768,17 @@ Artifact relationships      → PAH integration layer
 ```
 
 This separation allows each component to evolve independently while PAH focuses on the workflows that connect them. The goal is a unified local research/project environment in which code, analysis, documents, notebooks, presentations, references, diagrams, and generated artifacts can remain independently useful while participating in one traceable project workflow.
+
+
+## ML Lab host boundary (0.9.7)
+
+ML Lab is integrated through PAH's generic `pah.modules` and `pah.runtimes`
+entry-point contracts. PAH does not own or reproduce ML Lab's Data Lab/model UI.
+The Labs menu launches the module-owned UI and docks it in a PAH iframe; the same
+UI remains independently runnable from the ML Lab repository.
+
+The host supplies an explicit `ModuleContext` with the current workspace,
+`<workspace>/ml_lab_results` as the results root, and the local ML Lab UI port.
+Recognized ML Lab artifacts are synchronized into PAH's neutral artifact registry
+without changing their domain schemas or confusing ML-3 heuristic relationships
+with ML-4 authoritative provenance.

@@ -90,6 +90,15 @@ PYTHON_COMPONENTS = (
         pah_entry_points=(("pah.modules", "hsqa_dbn"), ("pah.runtimes", "hsqa_dbn")),
     ),
     PythonComponent(
+        key="ml_lab",
+        label="ML Lab",
+        path="modules/ml_lab",
+        install_spec="modules/ml_lab[ui]",
+        imports=("ml_lab", "flask"),
+        compatibility_tests=("tests/test_pah_integration.py",),
+        pah_entry_points=(("pah.modules", "ml_lab"), ("pah.runtimes", "ml_lab")),
+    ),
+    PythonComponent(
         key="tech_documents",
         label="Document Workbench",
         path="modules/tech_documents",
@@ -141,6 +150,11 @@ GIT_COMPONENTS = (
         path="modules/hsqa_dbn",
         repository_url="git@github.com:bportil1/HSQA_DBN.git",
         default_branch="refactor",
+    ),
+    GitComponent(
+        key="ml_lab",
+        label="ML Lab",
+        path="modules/ml_lab",
     ),
     GitComponent(
         key="tech_documents",
