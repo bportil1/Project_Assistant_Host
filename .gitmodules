@@ -14,3 +14,6 @@
 [submodule "modules/hsqa_dbn"]
 	path = modules/hsqa_dbn
 	url = git@github.com:bportil1/HSQA_DBN.git
+[submodule "modules/ml_lab"]
+	path = modules/ml_lab
+	url = git@github.com:bportil1/ML_Lab.git
