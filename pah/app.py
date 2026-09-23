@@ -93,12 +93,19 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     app.extensions["pah_lab_artifacts"] = lab_artifacts
     app.extensions["pah_code_analysis_lab"] = code_analysis_lab
     app.extensions["pah_component_versions"] = component_versions
-    if workspaces.root is not None:
-        analyzer.bind(workspaces.root)
-        documents.bind(workspaces.root)
-        references.bind_workspace(workspaces.root)
-    if workspaces.root is not None:
-        full_tools.bind_workspace(workspaces.root)
+    def bind_workspace_services() -> None:
+        repository_root = workspaces.root
+        if repository_root is None:
+            git_service.bind(None)
+            return
+        document_root = workspaces.resolve_resource("documents") or repository_root
+        analyzer.bind(repository_root)
+        documents.bind(document_root)
+        references.bind_workspace(repository_root)
+        full_tools.bind_workspace(repository_root)
+        git_service.bind(repository_root)
+
+    bind_workspace_services()
     ref_status = references.status()
     if ref_status.get("configured") and ref_status.get("library_root"):
         full_tools.bind_reference_library(ref_status.get("library_root"))
@@ -110,11 +117,18 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return FileSystemService(workspaces.require_root())
 
     def orchestration_context() -> ModuleContext:
-        results_root = (Path(workspaces.root) / "ml_lab_results") if workspaces.root is not None else None
+        repository_root = workspaces.root
+        output_root = workspaces.resolve_resource("outputs")
+        results_root = (output_root / "ml_lab_results") if output_root is not None else (
+            (Path(repository_root) / "ml_lab_results") if repository_root is not None else None
+        )
         return ModuleContext(
-            project_root=workspaces.root,
-            working_root=workspaces.root,
+            project_root=repository_root,
+            working_root=repository_root,
             results_root=results_root,
+            workspace_id=workspaces.active_workspace_id,
+            workspace_name=workspaces.active_workspace_name,
+            resources=workspaces.resolved_resources(),
             ports={"ml_lab": int(os.environ.get("PAH_ML_LAB_PORT", "8769"))},
             runtime={"state_dir": str(workspaces.state_dir)},
         )
@@ -584,11 +598,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         payload = request.get_json(force=True)
         root = workspaces.open(payload.get("path", ""))
         lab_artifacts.clear()
-        analyzer.bind(root)
-        documents.bind(root)
-        references.bind_workspace(root)
-        full_tools.bind_workspace(root)
-        git_service.bind(root)
+        bind_workspace_services()
         return jsonify({
             "ok": True,
             "root": str(root),
@@ -599,6 +609,75 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             "full_tools": full_tools.status(),
             "git": git_service.status(),
         })
+
+    @app.get("/api/research-workspaces")
+    def research_workspaces():
+        return jsonify({"ok": True, **workspaces.catalog_snapshot()})
+
+    @app.post("/api/research-workspaces")
+    def create_research_workspace():
+        payload = request.get_json(force=True) or {}
+        workspace = workspaces.create_workspace(
+            payload.get("name", ""),
+            workspace_id=payload.get("id"),
+            activate=bool(payload.get("activate", False)),
+        )
+        if workspace.get("active"):
+            lab_artifacts.clear()
+            bind_workspace_services()
+        return jsonify({"ok": True, "workspace": workspace, **workspaces.catalog_snapshot()})
+
+    @app.post("/api/research-workspaces/<workspace_id>/activate")
+    def activate_research_workspace(workspace_id: str):
+        workspace = workspaces.activate(workspace_id)
+        lab_artifacts.clear()
+        bind_workspace_services()
+        return jsonify({
+            "ok": True,
+            "workspace": workspace,
+            **workspaces.snapshot(),
+            "analyzer": analyzer.status(),
+            "documents": documents.status(),
+            "references": references.status(),
+            "full_tools": full_tools.status(),
+            "git": git_service.status(),
+        })
+
+    @app.put("/api/shared-roots/<root_id>")
+    def configure_shared_root(root_id: str):
+        payload = request.get_json(force=True) or {}
+        root = workspaces.register_root(
+            root_id,
+            name=payload.get("name"),
+            role=payload.get("role"),
+            path=payload.get("path") if "path" in payload else None,
+            sync_policy=payload.get("sync_policy", "externally_managed"),
+            transport_hint=payload.get("transport_hint"),
+        )
+        bind_workspace_services()
+        return jsonify({"ok": True, "shared_root": root, **workspaces.catalog_snapshot()})
+
+    @app.put("/api/research-workspaces/<workspace_id>/resources/<role>")
+    def configure_workspace_resource(workspace_id: str, role: str):
+        payload = request.get_json(force=True) or {}
+        workspace = workspaces.set_resource(
+            workspace_id,
+            role,
+            root_id=payload.get("root_id", ""),
+            relative_path=payload.get("relative_path"),
+        )
+        if workspace.get("active"):
+            lab_artifacts.clear()
+            bind_workspace_services()
+        return jsonify({"ok": True, "workspace": workspace, **workspaces.snapshot()})
+
+    @app.delete("/api/research-workspaces/<workspace_id>/resources/<role>")
+    def remove_workspace_resource(workspace_id: str, role: str):
+        workspace = workspaces.remove_resource(workspace_id, role)
+        if workspace.get("active"):
+            lab_artifacts.clear()
+            bind_workspace_services()
+        return jsonify({"ok": True, "workspace": workspace, **workspaces.snapshot()})
 
 
     @app.get("/git")
@@ -1350,7 +1429,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.9.7",
+            "version": "0.9.8",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),

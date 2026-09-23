@@ -70,12 +70,19 @@ def test_module_context_keeps_roots_ports_theme_and_runtime_explicit(tmp_path: P
         project_root=tmp_path,
         working_root=tmp_path / "work",
         results_root=tmp_path / "results",
+        workspace_id="hsqa-thesis",
+        workspace_name="HSQA Thesis",
+        resources={"documents": tmp_path / "overleaf", "datasets": tmp_path / "data"},
         ports={"shell": 9100},
         theme={"--pah-accent": "#123456"},
         runtime={"device": "cpu"},
     )
     snapshot = context.to_dict()
     assert snapshot["project_root"] == str(tmp_path.resolve())
+    assert snapshot["workspace_id"] == "hsqa-thesis"
+    assert snapshot["workspace_name"] == "HSQA Thesis"
+    assert snapshot["resources"]["documents"] == str((tmp_path / "overleaf").resolve())
+    assert context.resource("datasets") == (tmp_path / "data").resolve()
     assert snapshot["ports"] == {"shell": 9100}
     assert snapshot["runtime"]["device"] == "cpu"
     with pytest.raises(ValueError, match="between 1 and 65535"):
