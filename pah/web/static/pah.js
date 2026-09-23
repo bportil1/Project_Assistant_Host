@@ -4510,7 +4510,17 @@
   document.addEventListener('click', event => {
     if (!event.target.closest('.mode-launcher')) closeServiceMenus();
   });
+  function handleWorkspaceSaveShortcut(event) {
+    const modifier = event.ctrlKey || event.metaKey;
+    if (!modifier || event.altKey || event.shiftKey || event.key.toLowerCase() !== 's') return false;
+    if (event.defaultPrevented || state.mode !== 'workspace' || !activeTab()) return false;
+    event.preventDefault();
+    if (!event.repeat) saveActive().catch(error => toast(error.message, true));
+    return true;
+  }
+
   document.addEventListener('keydown', event => {
+    if (handleWorkspaceSaveShortcut(event)) return;
     if (event.key === 'Escape') closeServiceMenus();
     if (!(event.ctrlKey && event.altKey) || event.metaKey) return;
 

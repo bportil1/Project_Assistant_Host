@@ -86,6 +86,18 @@ def test_pah07_detachable_tool_controls_exist_and_are_wired():
     assert "isSurfaceDetached(mode)" in js
     assert "isSurfaceDetached('terminal')" in js
 
+def test_pah_workspace_ctrl_s_saves_active_file_without_stealing_module_shortcuts():
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+
+    assert "function handleWorkspaceSaveShortcut(event)" in js
+    assert "event.ctrlKey || event.metaKey" in js
+    assert "state.mode !== 'workspace'" in js
+    assert "event.defaultPrevented" in js
+    assert "!event.repeat" in js
+    assert "saveActive().catch" in js
+    assert "if (handleWorkspaceSaveShortcut(event)) return;" in js
+
+
 def test_pah_reported_versions_match():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
