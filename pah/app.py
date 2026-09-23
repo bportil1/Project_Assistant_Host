@@ -95,14 +95,20 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     app.extensions["pah_component_versions"] = component_versions
     def bind_workspace_services() -> None:
         repository_root = workspaces.root
-        if repository_root is None:
-            git_service.bind(None)
-            return
         document_root = workspaces.resolve_resource("documents") or repository_root
-        analyzer.bind(repository_root)
-        documents.bind(document_root)
+
+        if repository_root is None:
+            analyzer.clear()
+        else:
+            analyzer.bind(repository_root)
+        if document_root is None:
+            documents.clear()
+        else:
+            documents.bind(document_root)
+
         references.bind_workspace(repository_root)
         full_tools.bind_workspace(repository_root)
+        full_tools.bind_document_root(document_root)
         git_service.bind(repository_root)
 
     bind_workspace_services()
@@ -1114,13 +1120,10 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
 
     @app.get("/api/documents/status")
     def document_status():
-        if workspaces.root is not None:
-            documents.bind(workspaces.root)
         return jsonify({"ok": True, **documents.status()})
 
     @app.get("/api/documents/files")
     def document_files():
-        documents.bind(workspaces.require_root())
         return jsonify({"ok": True, "files": documents.files()})
 
     @app.post("/api/documents/diagram/parse")
@@ -1137,7 +1140,6 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
 
     @app.post("/api/documents/latex/compile")
     def document_compile_latex():
-        documents.bind(workspaces.require_root())
         payload = request.get_json(silent=True) or {}
         return jsonify({"ok": True, **documents.compile_latex(str(payload.get("path", "")))})
 
@@ -1172,8 +1174,10 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
 
     @app.post("/api/full-tools/refresh")
     def full_tools_refresh():
-        if workspaces.root is not None:
-            full_tools.bind_workspace(workspaces.root)
+        repository_root = workspaces.root
+        document_root = workspaces.resolve_resource("documents") or repository_root
+        full_tools.bind_workspace(repository_root)
+        full_tools.bind_document_root(document_root)
         full_tools.start_available()
         ref_status = references.status()
         full_tools.bind_reference_library(ref_status.get("library_root") if ref_status.get("configured") else None)
@@ -1429,7 +1433,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.9.8",
+            "version": "0.9.9",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),

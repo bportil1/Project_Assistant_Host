@@ -4,7 +4,7 @@ PAH is a local-first workspace for software projects, technical documents, noteb
 
 PAH is intended for people who want one place to move between code, analysis, writing, notebooks, presentations, literature, terminal work, and project history without turning the application into a monolithic IDE or requiring a cloud service.
 
-**Current PAH host version:** 0.9.7
+**Current PAH host version:** 0.9.9
 
 ## Highlights
 
@@ -431,6 +431,26 @@ The result is a workspace in which code, graphs, documents, notebooks, diagrams,
 
 PAH exposes **Tools → Component Versions** for managed submodules. Local refreshes are read-only and never contact remotes. The panel distinguishes the revision recorded by the parent repository, the currently checked-out revision, and the latest cached/fetched remote revision. Remote fetch/update actions are explicit. Updates use fast-forward-only Git operations, reinstall affected editable Python packages, and can run compatibility tests before the new gitlinks are recorded. **Record Component Versions** creates local parent Git commits only; it never pushes.
 
+
+## 0.9.9 — Research workspace resource management
+
+PAH now exposes research workspaces and shared/registered roots directly in the
+host UI. A workspace can map independent repository, document, paper, dataset,
+asset, bibliography, note, output, and archive resources without forcing them
+under one physical project directory. Registered-root filesystem paths remain
+machine-local while workspace mappings use logical root identifiers.
+
+The hosted Research Document Workbench now receives the workspace `documents`
+resource as its Document Root, falling back to the Repository Root only when no
+Document Root is mapped. PAH's repository editor remains repository-bound, so a
+separate Document Root is edited through the full Documents workspace rather than
+being incorrectly treated as a repository-relative file.
+
+## 0.9.8 — Research workspace foundation
+
+PAH's workspace state now models logical research workspaces, registered roots,
+resource-role mappings, resource availability, synchronization boundaries, and
+resource-aware module context while preserving the legacy Open Directory flow.
 
 ## 0.9.7 — ML Lab integration
 

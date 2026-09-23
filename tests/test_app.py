@@ -68,3 +68,42 @@ def test_research_workspace_api_maps_document_root_without_replacing_repository_
         catalog = client.get("/api/research-workspaces").get_json()
         assert catalog["active_workspace_id"] == "hsqa-thesis"
         assert {item["id"] for item in catalog["shared_roots"]} >= {"hsqa-repo", "research-projects"}
+
+
+def test_document_quick_tools_follow_workspace_document_resource(tmp_path: Path):
+    repo = tmp_path / "repo"
+    docs = tmp_path / "writing" / "thesis"
+    repo.mkdir()
+    docs.mkdir(parents=True)
+    (repo / "repo-only.tex").write_text("repository copy\n", encoding="utf-8")
+    (docs / "main.tex").write_text("document root copy\n", encoding="utf-8")
+
+    app = create_app(state_dir=tmp_path / "state-document-root")
+    app.config.update(TESTING=True)
+    with app.test_client() as client:
+        client.post(
+            "/api/research-workspaces",
+            json={"id": "thesis", "name": "Thesis", "activate": True},
+        )
+        client.put(
+            "/api/shared-roots/repository",
+            json={"name": "Repository", "role": "repository", "path": str(repo)},
+        )
+        client.put(
+            "/api/shared-roots/documents",
+            json={"name": "Documents", "role": "documents", "path": str(docs)},
+        )
+        client.put(
+            "/api/research-workspaces/thesis/resources/repository",
+            json={"root_id": "repository"},
+        )
+        client.put(
+            "/api/research-workspaces/thesis/resources/documents",
+            json={"root_id": "documents"},
+        )
+
+        status = client.get("/api/documents/status").get_json()
+        assert status["project_root"] == str(docs.resolve())
+
+        files = client.get("/api/documents/files").get_json()["files"]
+        assert {item["path"] for item in files} == {"main.tex"}

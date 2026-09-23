@@ -94,6 +94,7 @@ class FullToolManager:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.host = host
         self._workspace: Path | None = None
+        self._document_root: Path | None = None
         self._reference_library: Path | None = None
         self._errors: dict[str, str | None] = {
             "analysis": None,
@@ -116,15 +117,18 @@ class FullToolManager:
 
     def bind_workspace(self, root: str | Path | None) -> None:
         self._workspace = Path(root).expanduser().resolve() if root else None
-        # Full tool servers are started lazily when the browser first opens a
-        # full mode. If they are already running, synchronize them immediately.
-        if self._servers["documents"].running:
-            self._start_documents()
+        # Analysis remains repository-bound. Documents have an independent
+        # research-workspace resource and are synchronized by bind_document_root.
         if self._servers["analysis"].running:
             # The analyzer web application closes over its CodeAnalyzer instance,
             # so recreating only this internal server is the cleanest way to
             # synchronize repository changes while preserving its standalone UI.
             self._start_analysis()
+
+    def bind_document_root(self, root: str | Path | None) -> None:
+        self._document_root = Path(root).expanduser().resolve() if root else None
+        if self._servers["documents"].running:
+            self._start_documents()
 
     def bind_reference_library(self, root: str | Path | None) -> None:
         self._reference_library = Path(root).expanduser().resolve() if root else None
@@ -180,7 +184,7 @@ class FullToolManager:
                 "error": self._errors.get(key),
             }
         tools["analysis"]["bound_workspace"] = str(self._workspace) if self._workspace else None
-        tools["documents"]["bound_workspace"] = str(self._workspace) if self._workspace else None
+        tools["documents"]["bound_workspace"] = str(self._document_root) if self._document_root else None
         tools["references"]["library_root"] = str(self._reference_library) if self._reference_library else None
         tools["research_search"] = self.research_search_status()
         return {"tools": tools}
@@ -311,9 +315,9 @@ class FullToolManager:
                     super().__init__(base_dir=manager.state_dir / "document-workbench")
 
                 def _root(self) -> Path:
-                    if manager._workspace is None:
-                        raise ItemNotFoundError("Open a PAH workspace first.")
-                    return manager._workspace
+                    if manager._document_root is None:
+                        raise ItemNotFoundError("Map an available Document Root in the active PAH research workspace first.")
+                    return manager._document_root
 
                 def _project_name(self) -> str:
                     return safe_name(self._root().name, "workspace")
@@ -381,7 +385,7 @@ class FullToolManager:
                     return walk(project_path), flat_files
 
                 def list_projects(self):
-                    if manager._workspace is None:
+                    if manager._document_root is None:
                         return []
                     root = self._root()
                     tree, files = self.build_project_tree(root)

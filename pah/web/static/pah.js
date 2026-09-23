@@ -8,6 +8,7 @@
 
   const state = {
     workspace: null,
+    researchWorkspace: {catalog: null, selectedRootId: null},
     tabs: [],
     active: null,
     selectedTree: null,
@@ -28,6 +29,7 @@
     },
     documents: {
       available: false,
+      projectRoot: null,
       compilers: {latexmk: false, tectonic: false},
       files: [],
       normalizedDiagram: null,
@@ -368,7 +370,7 @@
 
   async function restoreLastMode() {
     const mode = state.layout.lastMode;
-    if (mode === 'workspace' || !state.workspace) return;
+    if (mode === 'workspace' || (!state.workspace && !state.researchWorkspace.catalog?.active_workspace_id)) return;
     await setMode(mode);
   }
 
@@ -1949,6 +1951,286 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Research workspaces / shared resources
+  // ---------------------------------------------------------------------------
+  function workspaceById(id) {
+    return (state.researchWorkspace.catalog?.workspaces || []).find(item => item.id === id) || null;
+  }
+
+  function activeResearchWorkspace() {
+    const catalog = state.researchWorkspace.catalog;
+    return workspaceById(catalog?.active_workspace_id || '');
+  }
+
+  function renderResearchWorkspaceSelectors() {
+    const catalog = state.researchWorkspace.catalog || {workspaces: [], active_workspace_id: null};
+    for (const id of ['researchWorkspaceSelect', 'workspaceDialogSelect']) {
+      const select = $(id);
+      if (!select) continue;
+      const placeholder = id === 'researchWorkspaceSelect' ? 'Workspace…' : 'Choose workspace…';
+      select.replaceChildren();
+      const empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = placeholder;
+      select.appendChild(empty);
+      for (const workspace of catalog.workspaces || []) {
+        const option = document.createElement('option');
+        option.value = workspace.id;
+        option.textContent = workspace.name;
+        select.appendChild(option);
+      }
+      select.value = catalog.active_workspace_id || '';
+    }
+  }
+
+  function resetSharedRootEditor() {
+    state.researchWorkspace.selectedRootId = null;
+    for (const id of ['sharedRootId', 'sharedRootName', 'sharedRootPath', 'sharedRootTransport']) {
+      if ($(id)) $(id).value = '';
+    }
+    if ($('sharedRootRole')) $('sharedRootRole').value = '';
+    if ($('sharedRootSyncPolicy')) $('sharedRootSyncPolicy').value = 'externally_managed';
+    document.querySelectorAll('.shared-root-chip').forEach(node => node.classList.remove('active'));
+  }
+
+  function editSharedRoot(root) {
+    state.researchWorkspace.selectedRootId = root.id;
+    $('sharedRootId').value = root.id || '';
+    $('sharedRootName').value = root.name || '';
+    $('sharedRootPath').value = root.local_path || '';
+    $('sharedRootRole').value = root.role || '';
+    $('sharedRootSyncPolicy').value = root.sync_policy || 'externally_managed';
+    $('sharedRootTransport').value = root.transport_hint || '';
+    document.querySelectorAll('.shared-root-chip').forEach(node => {
+      node.classList.toggle('active', node.dataset.rootId === root.id);
+    });
+  }
+
+  function renderSharedRoots() {
+    const catalog = state.researchWorkspace.catalog || {shared_roots: [], resource_roles: [], sync_policies: []};
+    const role = $('sharedRootRole');
+    const priorRole = role.value;
+    role.replaceChildren();
+    const any = document.createElement('option');
+    any.value = '';
+    any.textContent = 'Any role';
+    role.appendChild(any);
+    for (const name of catalog.resource_roles || []) {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      role.appendChild(option);
+    }
+    role.value = [...role.options].some(option => option.value === priorRole) ? priorRole : '';
+
+    const policy = $('sharedRootSyncPolicy');
+    const priorPolicy = policy.value || 'externally_managed';
+    policy.replaceChildren();
+    for (const name of catalog.sync_policies || []) {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name.replaceAll('_', ' ');
+      policy.appendChild(option);
+    }
+    policy.value = [...policy.options].some(option => option.value === priorPolicy) ? priorPolicy : 'externally_managed';
+
+    const holder = $('sharedRootsList');
+    holder.replaceChildren();
+    for (const root of catalog.shared_roots || []) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `shared-root-chip${root.available ? '' : ' unavailable'}`;
+      button.dataset.rootId = root.id;
+      const name = document.createElement('span');
+      name.textContent = root.name || root.id;
+      const status = document.createElement('span');
+      status.className = 'root-status';
+      status.textContent = root.available ? 'available' : (root.local_path ? 'missing here' : 'unmapped here');
+      button.append(name, status);
+      button.addEventListener('click', () => editSharedRoot(root));
+      holder.appendChild(button);
+    }
+    if (!(catalog.shared_roots || []).length) {
+      const empty = document.createElement('span');
+      empty.className = 'small-muted';
+      empty.textContent = 'No registered roots yet.';
+      holder.appendChild(empty);
+    }
+  }
+
+  function renderWorkspaceResourceRows() {
+    const catalog = state.researchWorkspace.catalog || {resource_roles: [], shared_roots: []};
+    const workspace = activeResearchWorkspace();
+    const holder = $('workspaceResourceRows');
+    holder.replaceChildren();
+    const status = $('workspaceDialogStatus');
+    if (!workspace) {
+      status.textContent = 'Create or activate a workspace to map resources.';
+      return;
+    }
+    status.textContent = `Active: ${workspace.name}`;
+    for (const role of catalog.resource_roles || []) {
+      const current = workspace.resources?.[role] || null;
+      const row = document.createElement('div');
+      row.className = 'workspace-resource-row';
+      row.dataset.role = role;
+
+      const roleBox = document.createElement('div');
+      roleBox.className = 'workspace-resource-role';
+      roleBox.textContent = role;
+      const roleStatus = document.createElement('small');
+      if (!current) roleStatus.textContent = 'not assigned';
+      else if (current.available) roleStatus.textContent = current.path || 'available';
+      else roleStatus.textContent = current.path ? 'unavailable on this machine' : 'registered root not mapped here';
+      roleBox.appendChild(roleStatus);
+
+      const rootLabel = document.createElement('label');
+      rootLabel.textContent = 'Registered root';
+      const rootSelect = document.createElement('select');
+      rootSelect.dataset.resourceRoot = role;
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = 'Choose root…';
+      rootSelect.appendChild(blank);
+      for (const root of catalog.shared_roots || []) {
+        const option = document.createElement('option');
+        option.value = root.id;
+        option.textContent = `${root.name || root.id}${root.available ? '' : ' (unavailable)'}`;
+        rootSelect.appendChild(option);
+      }
+      rootSelect.value = current?.root_id || '';
+      rootLabel.appendChild(rootSelect);
+
+      const pathLabel = document.createElement('label');
+      pathLabel.textContent = 'Subpath within root';
+      const pathInput = document.createElement('input');
+      pathInput.type = 'text';
+      pathInput.placeholder = 'optional/relative/path';
+      pathInput.spellcheck = false;
+      pathInput.dataset.resourcePath = role;
+      pathInput.value = current?.relative_path || '';
+      pathLabel.appendChild(pathInput);
+
+      const actions = document.createElement('div');
+      actions.className = 'workspace-resource-actions';
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.textContent = 'Save';
+      save.addEventListener('click', () => saveWorkspaceResource(role).catch(error => toast(error.message, true)));
+      const clear = document.createElement('button');
+      clear.type = 'button';
+      clear.className = 'danger-lite';
+      clear.textContent = 'Clear';
+      clear.disabled = !current;
+      clear.addEventListener('click', () => clearWorkspaceResource(role).catch(error => toast(error.message, true)));
+      actions.append(save, clear);
+      row.append(roleBox, rootLabel, pathLabel, actions);
+      holder.appendChild(row);
+    }
+  }
+
+  function renderResearchWorkspaceCatalog() {
+    renderResearchWorkspaceSelectors();
+    renderSharedRoots();
+    renderWorkspaceResourceRows();
+  }
+
+  async function loadResearchWorkspaceCatalog() {
+    const data = await api('/api/research-workspaces');
+    state.researchWorkspace.catalog = data;
+    renderResearchWorkspaceCatalog();
+    return data;
+  }
+
+  async function activateResearchWorkspace(workspaceId) {
+    if (!workspaceId) return;
+    if (state.tabs.some(tab => tab.dirty) && !confirm('Activate another research workspace and discard unsaved editor changes?')) {
+      renderResearchWorkspaceSelectors();
+      return;
+    }
+    await api(`/api/research-workspaces/${encodeURIComponent(workspaceId)}/activate`, {method: 'POST', body: '{}'});
+    state.tabs = [];
+    state.active = null;
+    state.selectedTree = null;
+    resetAnalyzerView();
+    resetDocumentsView();
+    resetReferencesView();
+    renderTabs();
+    showActive();
+    await loadWorkspaceInfo();
+    await loadResearchWorkspaceCatalog();
+    const workspace = activeResearchWorkspace();
+    toast(`Activated ${workspace?.name || workspaceId}`);
+  }
+
+  async function createResearchWorkspace() {
+    const name = $('workspaceCreateName').value.trim();
+    if (!name) return toast('Enter a workspace name.', true);
+    const data = await api('/api/research-workspaces', {
+      method: 'POST',
+      body: JSON.stringify({name, activate: true}),
+    });
+    $('workspaceCreateName').value = '';
+    state.researchWorkspace.catalog = data;
+    await loadWorkspaceInfo();
+    await loadResearchWorkspaceCatalog();
+    toast(`Created ${data.workspace?.name || name}`);
+  }
+
+  async function saveSharedRoot() {
+    const rootId = $('sharedRootId').value.trim();
+    if (!rootId) return toast('Logical root ID is required.', true);
+    const data = await api(`/api/shared-roots/${encodeURIComponent(rootId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: $('sharedRootName').value.trim() || rootId,
+        path: $('sharedRootPath').value.trim(),
+        role: $('sharedRootRole').value || null,
+        sync_policy: $('sharedRootSyncPolicy').value || 'externally_managed',
+        transport_hint: $('sharedRootTransport').value.trim() || null,
+      }),
+    });
+    state.researchWorkspace.catalog = data;
+    renderResearchWorkspaceCatalog();
+    const saved = (data.shared_roots || []).find(item => item.id === rootId) || data.shared_root;
+    if (saved) editSharedRoot(saved);
+    await loadWorkspaceInfo();
+    toast(`Saved root ${rootId}`);
+  }
+
+  async function saveWorkspaceResource(role) {
+    const workspace = activeResearchWorkspace();
+    if (!workspace) return toast('Activate a research workspace first.', true);
+    const rootId = document.querySelector(`[data-resource-root="${role}"]`)?.value || '';
+    const relativePath = document.querySelector(`[data-resource-path="${role}"]`)?.value.trim() || '';
+    if (!rootId) return toast(`Choose a registered root for ${role}.`, true);
+    await api(`/api/research-workspaces/${encodeURIComponent(workspace.id)}/resources/${encodeURIComponent(role)}`, {
+      method: 'PUT',
+      body: JSON.stringify({root_id: rootId, relative_path: relativePath}),
+    });
+    await loadWorkspaceInfo();
+    await loadResearchWorkspaceCatalog();
+    toast(`Mapped ${role}`);
+  }
+
+  async function clearWorkspaceResource(role) {
+    const workspace = activeResearchWorkspace();
+    if (!workspace) return;
+    await api(`/api/research-workspaces/${encodeURIComponent(workspace.id)}/resources/${encodeURIComponent(role)}`, {
+      method: 'DELETE',
+    });
+    await loadWorkspaceInfo();
+    await loadResearchWorkspaceCatalog();
+    toast(`Cleared ${role}`);
+  }
+
+  async function openWorkspaceResourcesDialog() {
+    await loadResearchWorkspaceCatalog();
+    resetSharedRootEditor();
+    $('workspaceResourcesDialog').showModal();
+  }
+
+  // ---------------------------------------------------------------------------
   // Workspace / files / editor
   // ---------------------------------------------------------------------------
   async function loadWorkspaceInfo() {
@@ -1956,6 +2238,10 @@
     state.workspace = data.root;
     if (data.git) state.git = data.git;
     state.overleaf.sync = null;
+    if (state.researchWorkspace.catalog) {
+      state.researchWorkspace.catalog.active_workspace_id = data.workspace_id || null;
+      renderResearchWorkspaceSelectors();
+    }
     if ($('overleafSyncMenuStatus')) $('overleafSyncMenuStatus').textContent = 'Manual';
     $('workspacePath').value = data.root || '';
 
@@ -1973,12 +2259,17 @@
       await refreshEnvironment();
       await restartTerminal();
       $('emptyEditor').querySelector('h2').textContent = 'Open a file';
+      $('emptyEditor').querySelector('p').textContent = 'Select a file from the project tree, or use Documents and References for research-focused work.';
+    } else if (data.workspace_id) {
+      $('tree').replaceChildren();
+      $('emptyEditor').querySelector('h2').textContent = 'Repository Root not mapped';
+      $('emptyEditor').querySelector('p').textContent = 'This research workspace is active. Map a repository resource to use the PAH code editor, or open Documents when a Document Root is mapped.';
     }
     await refreshAnalyzerStatus();
     await refreshDocumentStatus();
     await refreshReferenceStatus();
     await refreshMlLabStatus();
-    await refreshFullTools({reloadActive: Boolean(data.root)});
+    await refreshFullTools({reloadActive: Boolean(data.root || data.resources?.documents?.available)});
     await refreshGitStatus();
   }
 
@@ -1996,6 +2287,7 @@
     renderTabs();
     showActive();
     await loadWorkspaceInfo();
+    await loadResearchWorkspaceCatalog();
     toast(`Opened ${data.root}`);
   }
 
@@ -3305,9 +3597,14 @@
     return index >= 0 ? name.slice(index) : '';
   }
 
+  function quickDocumentRootMatchesRepository() {
+    return Boolean(state.workspace && state.documents.projectRoot && state.workspace === state.documents.projectRoot);
+  }
+
   function resetDocumentsView() {
     state.documents = {
       available: false,
+      projectRoot: null,
       compilers: {latexmk: false, tectonic: false},
       files: [],
       normalizedDiagram: null,
@@ -3339,9 +3636,9 @@
   function updateDocumentChrome() {
     const badge = $('documentBadge');
     badge.className = 'badge muted';
-    if (!state.workspace) {
+    if (!state.documents.projectRoot) {
       badge.textContent = 'docs idle';
-      setDocumentMessage('Open a workspace to use document tools.');
+      setDocumentMessage('Map an available Document Root (or Repository Root fallback) to use document tools.');
       return;
     }
     if (!state.documents.available) {
@@ -3352,23 +3649,28 @@
     }
     badge.className = 'badge ready';
     badge.textContent = 'docs ready';
-    setDocumentMessage('DocumentEngine available. PAH keeps the general editor while the module supplies document-specific operations.');
+    if (quickDocumentRootMatchesRepository()) {
+      setDocumentMessage('DocumentEngine available. Quick document actions use the repository-backed PAH editor.');
+    } else {
+      setDocumentMessage(`Document Workbench is bound to ${state.documents.projectRoot}. Open the full Documents workspace to edit that resource.`);
+    }
   }
 
   async function refreshDocumentStatus() {
     const data = await api('/api/documents/status');
     state.documents.available = Boolean(data.available);
+    state.documents.projectRoot = data.project_root || null;
     state.documents.compilers = data.compilers || {latexmk: false, tectonic: false};
     updateDocumentChrome();
     const enabled = Object.entries(state.documents.compilers).filter(([, value]) => value).map(([name]) => name);
     setText('compilerStatus', enabled.length ? `Available: ${enabled.join(', ')}` : 'No LaTeX compiler detected (latexmk or tectonic).');
-    if (state.documents.available && state.workspace) await refreshDocumentFiles();
+    if (state.documents.available && state.documents.projectRoot) await refreshDocumentFiles();
     if (state.analyzer.selectedEntity) $('generateDependencyDiagram').disabled = !state.documents.available || state.analyzer.stale;
     refreshDocumentContext();
   }
 
   async function refreshDocumentFiles() {
-    if (!state.workspace || !state.documents.available) return;
+    if (!state.documents.projectRoot || !state.documents.available) return;
     const data = await api('/api/documents/files');
     state.documents.files = data.files || [];
     const holder = $('documentFiles');
@@ -3387,7 +3689,13 @@
         button.querySelector('.entity-name').textContent = item.name;
         button.querySelector('.entity-type').textContent = item.extension.replace('.', '') || 'text';
         button.querySelector('.entity-meta').textContent = item.path;
-        button.addEventListener('click', () => openFile(item.path).catch(error => toast(error.message, true)));
+        button.addEventListener('click', () => {
+          if (quickDocumentRootMatchesRepository()) {
+            openFile(item.path).catch(error => toast(error.message, true));
+          } else {
+            openWindowSurface('documents').catch(error => toast(error.message, true));
+          }
+        });
         holder.appendChild(button);
       }
     }
@@ -3400,6 +3708,11 @@
     const select = $('documentTarget');
     const current = select.value;
     select.innerHTML = '<option value="">Choose document…</option>';
+    if (!quickDocumentRootMatchesRepository()) {
+      $('insertCodeReference').disabled = true;
+      $('insertCodeSource').disabled = true;
+      return;
+    }
     for (const item of state.documents.files.filter(row => row.insert_target)) {
       const option = document.createElement('option');
       option.value = item.path;
@@ -3416,6 +3729,10 @@
     const select = $('diagramDocumentTarget');
     const current = select.value;
     select.innerHTML = '<option value="">Choose Markdown document…</option>';
+    if (!quickDocumentRootMatchesRepository()) {
+      $('insertDiagramDocument').disabled = true;
+      return;
+    }
     for (const item of state.documents.files.filter(row => ['.md', '.markdown'].includes(row.extension))) {
       const option = document.createElement('option');
       option.value = item.path;
@@ -3447,6 +3764,11 @@
     if (!state.documents.available) {
       $('documentResults').className = 'analysis-placeholder';
       $('documentResults').textContent = 'The PAH editor remains available, but DocumentEngine-specific actions require the module.';
+      return;
+    }
+    if (!quickDocumentRootMatchesRepository()) {
+      $('documentResults').className = 'analysis-placeholder';
+      $('documentResults').textContent = 'The PAH editor is repository-bound while Document Workbench is using a separate Document Root. Open the full Documents workspace for document editing and LaTeX compilation.';
       return;
     }
 
@@ -3994,6 +4316,10 @@
     const select = $('referenceDocumentTarget');
     const current = select.value;
     select.innerHTML = '<option value="">Choose Markdown/LaTeX document…</option>';
+    if (!quickDocumentRootMatchesRepository()) {
+      updateReferenceInsertButtons();
+      return;
+    }
     for (const item of (state.documents.files || []).filter(row => row.insert_target)) {
       const option = document.createElement('option');
       option.value = item.path;
@@ -4210,6 +4536,14 @@
   $('openWorkspace').onclick = () => openWorkspace($('workspacePath').value).catch(error => toast(error.message, true));
   $('workspacePath').addEventListener('keydown', event => { if (event.key === 'Enter') $('openWorkspace').click(); });
   $('recentWorkspaces').onchange = event => { if (event.target.value) openWorkspace(event.target.value).catch(error => toast(error.message, true)); };
+  $('researchWorkspaceSelect').onchange = event => { if (event.target.value) activateResearchWorkspace(event.target.value).catch(error => toast(error.message, true)); };
+  $('workspaceResourcesButton').onclick = () => openWorkspaceResourcesDialog().catch(error => toast(error.message, true));
+  $('workspaceResourcesClose').onclick = () => $('workspaceResourcesDialog').close();
+  $('workspaceDialogSelect').onchange = event => { if (event.target.value) activateResearchWorkspace(event.target.value).catch(error => toast(error.message, true)); };
+  $('workspaceCreateButton').onclick = () => createResearchWorkspace().catch(error => toast(error.message, true));
+  $('workspaceCreateName').addEventListener('keydown', event => { if (event.key === 'Enter') createResearchWorkspace().catch(error => toast(error.message, true)); });
+  $('sharedRootNew').onclick = () => resetSharedRootEditor();
+  $('sharedRootSave').onclick = () => saveSharedRoot().catch(error => toast(error.message, true));
 
   $('refreshTree').onclick = () => refreshTree().catch(error => toast(error.message, true));
   $('newFile').onclick = () => fsCreate('file').catch(error => toast(error.message, true));
@@ -4383,7 +4717,7 @@
   window.addEventListener('resize', applyLayoutSizes);
   (async () => {
     try {
-      await Promise.all([loadWorkspaceInfo(), refreshComponentVersions({preserveSelection: false}).catch(() => null)]);
+      await Promise.all([loadWorkspaceInfo(), loadResearchWorkspaceCatalog(), refreshComponentVersions({preserveSelection: false}).catch(() => null)]);
       await restoreLastMode();
     } catch (error) {
       toast(error.message, true);

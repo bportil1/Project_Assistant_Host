@@ -79,9 +79,11 @@
       </div>
     </nav>
     <div class="workspace-bar">
-      <input id="workspacePath" type="text" placeholder="/path/to/project" spellcheck="false">
-      <button id="openWorkspace">Open</button>
-      <select id="recentWorkspaces" title="Recent workspaces"><option value="">Recent…</option></select>
+      <select id="researchWorkspaceSelect" class="research-workspace-select" title="Active research workspace"><option value="">Workspace…</option></select>
+      <button id="workspaceResourcesButton" type="button" title="Manage workspace resources and shared roots">Resources…</button>
+      <input id="workspacePath" type="text" placeholder="/path/to/repository" spellcheck="false" title="Open a repository directory and promote it to a research workspace">
+      <button id="openWorkspace">Open Directory</button>
+      <select id="recentWorkspaces" title="Recent repository roots"><option value="">Recent…</option></select>
     </div>
     <div class="top-actions">
       <button id="runButton" disabled title="Run active Python file">▶ Run</button>
@@ -414,6 +416,54 @@
     <div id="terminalEmulator" class="terminal-emulator" role="application" aria-label="PAH terminal"></div>
   </section>
 </div>
+
+
+<dialog id="workspaceResourcesDialog" class="workspace-resources-dialog">
+  <div class="workspace-resources-card">
+    <div class="dialog-heading">
+      <div>
+        <h3>Research Workspace Resources</h3>
+        <span class="small-muted">Logical workspace resources stay independent from machine-specific filesystem paths.</span>
+      </div>
+      <button id="workspaceResourcesClose" type="button" class="plain">×</button>
+    </div>
+
+    <section class="workspace-config-section">
+      <div class="workspace-config-heading">
+        <div><strong>Research workspace</strong><span id="workspaceDialogStatus" class="small-muted">Loading…</span></div>
+        <select id="workspaceDialogSelect" aria-label="Research workspace"><option value="">Choose workspace…</option></select>
+      </div>
+      <div class="workspace-create-row">
+        <input id="workspaceCreateName" type="text" placeholder="New workspace name, e.g. HSQA Thesis" spellcheck="false">
+        <button id="workspaceCreateButton" type="button">Create &amp; Activate</button>
+      </div>
+    </section>
+
+    <section class="workspace-config-section">
+      <div class="workspace-config-heading">
+        <div><strong>Shared / registered roots</strong><span class="small-muted">Paths are local to this machine.</span></div>
+        <button id="sharedRootNew" type="button">New Root</button>
+      </div>
+      <div id="sharedRootsList" class="shared-roots-list"></div>
+      <div class="shared-root-editor">
+        <label>Logical ID<input id="sharedRootId" type="text" placeholder="paper-library" spellcheck="false"></label>
+        <label>Name<input id="sharedRootName" type="text" placeholder="Paper Library" spellcheck="false"></label>
+        <label class="shared-root-path">Local path<input id="sharedRootPath" type="text" placeholder="/local/path/on/this/machine" spellcheck="false"></label>
+        <label>Default role<select id="sharedRootRole"><option value="">Any role</option></select></label>
+        <label>Sync boundary<select id="sharedRootSyncPolicy"></select></label>
+        <label>Transport hint<input id="sharedRootTransport" type="text" placeholder="git, syncthing, nextcloud…" spellcheck="false"></label>
+        <div class="shared-root-actions"><button id="sharedRootSave" type="button">Save Root</button></div>
+      </div>
+    </section>
+
+    <section class="workspace-config-section">
+      <div class="workspace-config-heading">
+        <div><strong>Workspace resource mappings</strong><span class="small-muted">Modules consume these roles instead of one universal project root.</span></div>
+      </div>
+      <div id="workspaceResourceRows" class="workspace-resource-rows"></div>
+    </section>
+  </div>
+</dialog>
 
 <dialog id="gitDialog" class="git-host-dialog">
   <div class="git-host-dialog-card">

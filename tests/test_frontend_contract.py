@@ -520,3 +520,52 @@ def test_code_analysis_lab_keeps_single_repository_workflow_surface():
     assert 'id="codeAnalysisFindingsWorkflow"' not in template
     assert 'id="existingFindingsPanel"' not in template
     assert "/api/orchestration/findings/" not in javascript
+
+
+def test_pah099_research_workspace_resource_manager_is_visible_and_wired():
+    html = (ROOT / "pah" / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    js = (ROOT / "pah" / "web" / "static" / "pah.js").read_text(encoding="utf-8")
+    css = (ROOT / "pah" / "web" / "static" / "pah-workspace.css").read_text(encoding="utf-8")
+
+    for element_id in [
+        "researchWorkspaceSelect",
+        "workspaceResourcesButton",
+        "workspaceResourcesDialog",
+        "workspaceDialogSelect",
+        "workspaceCreateName",
+        "sharedRootsList",
+        "sharedRootId",
+        "sharedRootPath",
+        "sharedRootSave",
+        "workspaceResourceRows",
+    ]:
+        assert f'id="{element_id}"' in html
+        assert f"$('{element_id}')" in js
+
+    for function_name in [
+        "loadResearchWorkspaceCatalog",
+        "activateResearchWorkspace",
+        "createResearchWorkspace",
+        "saveSharedRoot",
+        "saveWorkspaceResource",
+        "clearWorkspaceResource",
+        "openWorkspaceResourcesDialog",
+    ]:
+        assert f"function {function_name}" in js or f"async function {function_name}" in js
+
+    assert ".workspace-resources-dialog" in css
+    assert ".workspace-resource-row" in css
+    assert "/api/research-workspaces" in js
+    assert "/api/shared-roots/" in js
+
+
+def test_pah099_documents_use_document_resource_not_repository_rebinding():
+    app = (ROOT / "pah" / "app.py").read_text(encoding="utf-8")
+    full_tools = (ROOT / "pah" / "full_tools.py").read_text(encoding="utf-8")
+
+    assert 'document_root = workspaces.resolve_resource("documents") or repository_root' in app
+    assert "full_tools.bind_document_root(document_root)" in app
+    assert "documents.bind(workspaces.require_root())" not in app
+    assert "def bind_document_root" in full_tools
+    assert "manager._document_root" in full_tools
+    assert 'tools["documents"]["bound_workspace"] = str(self._document_root)' in full_tools
