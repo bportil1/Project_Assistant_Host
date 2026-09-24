@@ -74,14 +74,28 @@ class WorkspaceManager:
 
     schema_version = 3
 
-    def __init__(self, state_dir: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        state_dir: str | Path | None = None,
+        *,
+        persist_active_workspace: bool = True,
+        initial_workspace_id: str | None = None,
+    ) -> None:
         default_dir = Path.home() / ".local" / "share" / "pah"
         self.state_dir = Path(state_dir or os.environ.get("PAH_STATE_DIR", default_dir)).expanduser()
         self.state_file = self.state_dir / "state.json"
         self._lock = RLock()
         self._available_module_ids: tuple[str, ...] = ()
+        self._persist_active_workspace = bool(persist_active_workspace)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self._state = self._load()
+        persisted_active = self._state.get("active_workspace_id")
+        selected = str(initial_workspace_id).strip() if initial_workspace_id else persisted_active
+        self._active_workspace_id = str(selected) if selected else None
+        self._current_root = self._state.get("current_root")
+        if initial_workspace_id and str(initial_workspace_id).strip() != str(persisted_active or ""):
+            repository = self.resolve_resource("repository", workspace_id=self._active_workspace_id)
+            self._current_root = str(repository) if repository else None
 
     @classmethod
     def _empty_state(cls) -> dict[str, Any]:
@@ -118,7 +132,7 @@ class WorkspaceManager:
         tmp.replace(self.state_file)
 
     def _workspace(self, workspace_id: str | None = None) -> dict[str, Any] | None:
-        selected = workspace_id or self._state.get("active_workspace_id")
+        selected = workspace_id or self._active_workspace_id
         if not selected:
             return None
         return self._state.get("research_workspaces", {}).get(str(selected))
@@ -126,7 +140,7 @@ class WorkspaceManager:
     def _require_workspace(self, workspace_id: str | None = None) -> dict[str, Any]:
         workspace = self._workspace(workspace_id)
         if workspace is None:
-            requested = workspace_id or self._state.get("active_workspace_id") or "<active>"
+            requested = workspace_id or self._active_workspace_id or "<active>"
             raise WorkspaceError(f"Unknown research workspace: {requested}")
         return workspace
 
@@ -143,8 +157,20 @@ class WorkspaceManager:
 
     @property
     def active_workspace_id(self) -> str | None:
-        value = self._state.get("active_workspace_id")
-        return str(value) if value else None
+        return str(self._active_workspace_id) if self._active_workspace_id else None
+
+    def _select_active_workspace(self, workspace_id: str | None, current_root: Path | None) -> None:
+        """Change this manager's active workspace without requiring global singleton state.
+
+        Direct ``WorkspaceManager`` users keep the legacy persisted selection by
+        default. PAH runtime instances opt out so two processes can select
+        different workspaces while sharing the same durable workspace catalog.
+        """
+        self._active_workspace_id = str(workspace_id) if workspace_id else None
+        self._current_root = str(current_root) if current_root else None
+        if self._persist_active_workspace:
+            self._state["active_workspace_id"] = self._active_workspace_id
+            self._state["current_root"] = self._current_root
 
     @property
     def active_workspace_name(self) -> str | None:
@@ -276,7 +302,7 @@ class WorkspaceManager:
         repository = self.resolve_resource("repository")
         if repository is not None:
             return repository
-        raw = self._state.get("current_root")
+        raw = self._current_root
         if not raw:
             return None
         path = Path(raw)
@@ -399,9 +425,8 @@ class WorkspaceManager:
                 "enabled_modules": module_profile,
             }
             if activate:
-                self._state["active_workspace_id"] = selected_id
                 repository = self.resolve_resource("repository", workspace_id=selected_id)
-                self._state["current_root"] = str(repository) if repository else None
+                self._select_active_workspace(selected_id, repository)
                 if repository:
                     recent = [p for p in self._state.get("recent_roots", []) if p != str(repository)]
                     recent.insert(0, str(repository))
@@ -413,9 +438,8 @@ class WorkspaceManager:
         workspace_id = _clean_id(workspace_id, field_name="workspace id")
         with self._lock:
             self._require_workspace(workspace_id)
-            self._state["active_workspace_id"] = workspace_id
             repository = self.resolve_resource("repository", workspace_id=workspace_id)
-            self._state["current_root"] = str(repository) if repository else None
+            self._select_active_workspace(workspace_id, repository)
             if repository:
                 recent = [p for p in self._state.get("recent_roots", []) if p != str(repository)]
                 recent.insert(0, str(repository))
@@ -447,7 +471,9 @@ class WorkspaceManager:
             }
             if workspace_id == self.active_workspace_id and role == "repository":
                 repository = self.resolve_resource("repository", workspace_id=workspace_id)
-                self._state["current_root"] = str(repository) if repository else None
+                self._current_root = str(repository) if repository else None
+                if self._persist_active_workspace:
+                    self._state["current_root"] = self._current_root
             self._save()
         return self.workspace_snapshot(workspace_id)
 
@@ -460,7 +486,9 @@ class WorkspaceManager:
             workspace = self._require_workspace(workspace_id)
             workspace.setdefault("resources", {}).pop(role, None)
             if workspace_id == self.active_workspace_id and role == "repository":
-                self._state["current_root"] = None
+                self._current_root = None
+                if self._persist_active_workspace:
+                    self._state["current_root"] = None
             self._save()
         return self.workspace_snapshot(workspace_id)
 
@@ -501,8 +529,7 @@ class WorkspaceManager:
                     },
                     "enabled_modules": list(self._available_module_ids),
                 }
-            self._state["active_workspace_id"] = matched_id
-            self._state["current_root"] = str(candidate)
+            self._select_active_workspace(matched_id, candidate)
             recent = [p for p in self._state.get("recent_roots", []) if p != str(candidate)]
             recent.insert(0, str(candidate))
             self._state["recent_roots"] = recent[:12]

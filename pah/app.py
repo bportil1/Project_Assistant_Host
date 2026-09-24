@@ -14,6 +14,7 @@ from .core.terminal import TerminalError, TerminalManager
 from .core.workspace import WorkspaceError, WorkspaceManager
 from .component_versions import ComponentVersionError, ComponentVersionManager
 from .full_tools import FullToolManager
+from .instance_runtime import InstanceRuntime
 from .contracts import ArtifactRef, ArtifactRequirement, ModuleContext, coerce_artifact_ref
 from .labs import (
     ArtifactInventory,
@@ -51,26 +52,48 @@ from .integrations import (
 )
 
 
-def create_app(*, state_dir: str | Path | None = None) -> Flask:
+def create_app(
+    *,
+    state_dir: str | Path | None = None,
+    instance_id: str | None = None,
+    preferred_ports: dict[str, int] | None = None,
+    host: str = "127.0.0.1",
+) -> Flask:
     app = Flask(__name__, template_folder="web/templates", static_folder="web/static")
-    workspaces = WorkspaceManager(state_dir=state_dir)
+    workspaces = WorkspaceManager(state_dir=state_dir, persist_active_workspace=False)
+    requested_ports = dict(preferred_ports or {})
+    for key, env_name in {
+        "analysis": "PAH_ANALYSIS_PORT",
+        "documents": "PAH_DOCUMENTS_PORT",
+        "references": "PAH_REFERENCES_PORT",
+        "ml_lab": "PAH_ML_LAB_PORT",
+    }.items():
+        if key not in requested_ports and os.environ.get(env_name):
+            requested_ports[key] = int(os.environ[env_name])
+    instance_runtime = InstanceRuntime(
+        state_dir=workspaces.state_dir,
+        instance_id=instance_id or os.environ.get("PAH_INSTANCE_ID"),
+        workspace_id=workspaces.active_workspace_id,
+        host=host,
+        preferred_ports=requested_ports,
+    )
     environments = EnvironmentManager(workspaces)
     terminals = TerminalManager()
     git_service = LocalGitService(workspaces.root)
     overleaf = OverleafImportService()
     analyzer = AnalyzerIntegration()
-    documents = DocumentIntegration(state_dir=workspaces.state_dir / "document-engine")
+    documents = DocumentIntegration(state_dir=instance_runtime.runtime_dir / "document-engine")
     references = ReferenceIntegration(state_dir=workspaces.state_dir / "references")
     component_versions = ComponentVersionManager(Path(__file__).resolve().parents[1])
     full_tools = FullToolManager(
-        state_dir=workspaces.state_dir / "full-tools",
-        analyzer_port=int(os.environ.get("PAH_ANALYSIS_PORT", "8766")),
-        documents_port=int(os.environ.get("PAH_DOCUMENTS_PORT", "8767")),
-        references_port=int(os.environ.get("PAH_REFERENCES_PORT", "8768")),
+        state_dir=instance_runtime.runtime_dir / "full-tools",
+        analyzer_port=instance_runtime.port("analysis"),
+        documents_port=instance_runtime.port("documents"),
+        references_port=instance_runtime.port("references"),
     )
     module_registry = default_module_registry(discover=True)
     workspaces.configure_available_modules(item.module_id for item in module_registry.all())
-    runtime_registry = RuntimeRegistry()
+    runtime_registry = RuntimeRegistry(instance_runtime=instance_runtime)
     runtime_registry.discover_entry_points()
     # PAH-owned mature tools are bridged into the same runtime contract used by
     # independently installed modules. Host adapters intentionally replace any
@@ -79,7 +102,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     runtime_registry.register(HostSurfaceRuntimeAdapter("tech_documents", "documents", full_tools), replace=True)
     runtime_registry.register(HostSurfaceRuntimeAdapter("reference_manager", "references", full_tools), replace=True)
     lab_registry = default_lab_registry()
-    lab_artifacts = ArtifactInventory(state_path=workspaces.state_dir / "artifact-registry.json")
+    lab_artifacts = ArtifactInventory(state_path=instance_runtime.runtime_dir / "artifact-registry.json")
     code_analysis_lab = CodeAnalysisLabController(
         module_registry,
         lab=lab_registry.get("code_analysis_lab"),
@@ -94,7 +117,9 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     app.extensions["pah_lab_artifacts"] = lab_artifacts
     app.extensions["pah_code_analysis_lab"] = code_analysis_lab
     app.extensions["pah_component_versions"] = component_versions
+    app.extensions["pah_instance_runtime"] = instance_runtime
     def bind_workspace_services() -> None:
+        instance_runtime.set_workspace(workspaces.active_workspace_id)
         enabled_registry = module_registry.subset(workspaces.enabled_modules())
         code_analysis_lab.bind_modules(enabled_registry)
         repository_root = workspaces.root
@@ -118,6 +143,9 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     ref_status = references.status()
     if ref_status.get("configured") and ref_status.get("library_root"):
         full_tools.bind_reference_library(ref_status.get("library_root"))
+    # Register the instance marker first so reverse-order atexit cleanup stops
+    # owned services/processes before this instance is marked stopped.
+    atexit.register(instance_runtime.stop)
     atexit.register(terminals.stop_all)
     atexit.register(runtime_registry.shutdown_all)
     atexit.register(full_tools.stop_all)
@@ -138,8 +166,16 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             workspace_id=workspaces.active_workspace_id,
             workspace_name=workspaces.active_workspace_name,
             resources=workspaces.resolved_resources(),
-            ports={"ml_lab": int(os.environ.get("PAH_ML_LAB_PORT", "8769"))},
-            runtime={"state_dir": str(workspaces.state_dir)},
+            ports={"ml_lab": instance_runtime.port("ml_lab")},
+            runtime={
+                "instance_id": instance_runtime.instance_id,
+                "runtime_dir": str(instance_runtime.runtime_dir),
+                "state_dir": str(workspaces.state_dir),
+                "temp_dir": str(instance_runtime.temp_dir),
+                "cache_dir": str(instance_runtime.cache_dir),
+                "log_file": str(instance_runtime.log_file),
+                "pid": instance_runtime.pid,
+            },
         )
 
 
@@ -240,12 +276,18 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         for surface, module_id in surface_modules.items():
             if workspaces.is_module_enabled(module_id):
                 try:
-                    full_tools.start(surface)
+                    info = full_tools.start(surface)
+                    if info.get("available"):
+                        instance_runtime.register_module_runtime(
+                            module_id,
+                            metadata={"presentation": "host_surface", "surface": surface, "url": info.get("url")},
+                        )
                 except Exception:
                     # FullToolManager records startup errors in its own status.
                     pass
             else:
                 full_tools.stop(surface)
+                instance_runtime.unregister_module_runtime(module_id)
 
     def full_tools_status_with_profile() -> dict:
         status = full_tools.status()
@@ -1688,12 +1730,16 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             response["document"] = index.inspect_content(document_path, str(content))
         return jsonify(response)
 
+    @app.get("/api/runtime/instance")
+    def runtime_instance():
+        return jsonify({"ok": True, **instance_runtime.snapshot()})
+
     @app.get("/api/health")
     def health():
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.9.12",
+            "version": "0.9.13",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),
@@ -1706,6 +1752,8 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
                 "runtime_discovery_errors": runtime_registry.snapshot(orchestration_context())["discovery_errors"],
             },
             "git": git_service.status(),
+            "instance": instance_runtime.snapshot(),
         })
 
+    instance_runtime.mark_running()
     return app

@@ -32,9 +32,10 @@ def _adapter_method(adapter: Any, name: str):
 class RuntimeRegistry:
     """Runtime adapters keyed by module identity, independent of scientific APIs."""
 
-    def __init__(self, adapters: Iterable[Any] = ()):
+    def __init__(self, adapters: Iterable[Any] = (), *, instance_runtime: Any | None = None):
         self._adapters: dict[str, Any] = {}
         self._discovery_errors: list[dict[str, str]] = []
+        self._instance_runtime = instance_runtime
         for adapter in adapters:
             self.register(adapter)
 
@@ -73,7 +74,24 @@ class RuntimeRegistry:
         if adapter is None:
             raise RuntimeRegistryError(f"No runtime adapter is registered for {module_id!r}")
         result = _adapter_method(adapter, "launch")(context=context, detached=bool(detached))
-        return coerce_runtime_launch(result, module_id=module_id)
+        launch = coerce_runtime_launch(result, module_id=module_id)
+        if self._instance_runtime is not None and launch.launched:
+            raw_pid = dict(launch.metadata or {}).get("pid")
+            try:
+                child_pid = int(raw_pid) if raw_pid is not None else None
+            except (TypeError, ValueError):
+                child_pid = None
+            self._instance_runtime.register_module_runtime(
+                module_id,
+                pid=child_pid,
+                metadata={
+                    "presentation": launch.presentation,
+                    "surface": launch.surface,
+                    "url": launch.url,
+                    **dict(launch.metadata or {}),
+                },
+            )
+        return launch
 
     def artifacts(self, module_id: str, context: ModuleContext | None = None) -> tuple[Any, ...] | None:
         """Return artifacts advertised by a runtime adapter, if it supports discovery.
@@ -103,6 +121,8 @@ class RuntimeRegistry:
         method = adapter.get("shutdown") if isinstance(adapter, Mapping) else getattr(adapter, "shutdown", None)
         if callable(method):
             method(context=context)
+        if self._instance_runtime is not None:
+            self._instance_runtime.unregister_module_runtime(str(module_id))
 
     def shutdown_all(self, context: ModuleContext | None = None) -> None:
         for module_id in reversed(self.module_ids()):

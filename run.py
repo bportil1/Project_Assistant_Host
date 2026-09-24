@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from pathlib import Path
 import os
 import webbrowser
 from threading import Timer
@@ -20,11 +21,18 @@ class _TerminalPollAccessFilter(logging.Filter):
         return not (is_terminal_poll and is_success)
 
 
-def _configure_access_logging() -> None:
+def _configure_access_logging(log_file: str | Path | None = None) -> None:
     # Keep normal Werkzeug access/error logging, but do not flood the console
     # with the terminal's expected polling requests. Non-200 poll responses
     # remain visible for debugging.
     logging.getLogger("werkzeug").addFilter(_TerminalPollAccessFilter())
+    if log_file is not None:
+        target = Path(log_file)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(target, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logging.getLogger().addHandler(handler)
+        logging.getLogger().setLevel(logging.INFO)
 
 
 def main() -> None:
@@ -35,8 +43,10 @@ def main() -> None:
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 
-    _configure_access_logging()
-    app = create_app()
+    app = create_app(preferred_ports={"host": args.port}, host=args.host)
+    instance_runtime = app.extensions["pah_instance_runtime"]
+    selected_port = instance_runtime.port("host")
+    _configure_access_logging(instance_runtime.log_file)
     if args.project:
         # Use the same manager backing the app through the HTTP endpoint once running;
         # a startup environment variable keeps run.py thin and avoids reaching into app internals.
@@ -48,8 +58,13 @@ def main() -> None:
                 raise SystemExit(response.get_json().get("error", "Could not open project"))
 
     if not args.no_browser:
-        Timer(0.7, lambda: webbrowser.open(f"http://{args.host}:{args.port}")).start()
-    app.run(host=args.host, port=args.port, debug=False, threaded=True)
+        Timer(0.7, lambda: webbrowser.open(f"http://{args.host}:{selected_port}")).start()
+    print(
+        f"PAH instance {instance_runtime.instance_id} | "
+        f"workspace={instance_runtime.workspace_id or '<none>'} | "
+        f"http://{args.host}:{selected_port}"
+    )
+    app.run(host=args.host, port=selected_port, debug=False, threaded=True)
 
 
 if __name__ == "__main__":

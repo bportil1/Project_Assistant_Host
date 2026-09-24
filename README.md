@@ -4,7 +4,7 @@ PAH is a local-first workspace for software projects, technical documents, noteb
 
 PAH is intended for people who want one place to move between code, analysis, writing, notebooks, presentations, literature, terminal work, and project history without turning the application into a monolithic IDE or requiring a cloud service.
 
-**Current PAH host version:** 0.9.12
+**Current PAH host version:** 0.9.13
 
 ## Highlights
 
@@ -431,6 +431,21 @@ The result is a workspace in which code, graphs, documents, notebooks, diagrams,
 
 PAH exposes **Tools → Component Versions** for managed submodules. Local refreshes are read-only and never contact remotes. The panel distinguishes the revision recorded by the parent repository, the currently checked-out revision, and the latest cached/fetched remote revision. Remote fetch/update actions are explicit. Updates use fast-forward-only Git operations, reinstall affected editable Python packages, and can run compatibility tests before the new gitlinks are recorded. **Record Component Versions** creates local parent Git commits only; it never pushes.
 
+
+## 0.9.13 — Per-instance runtime isolation
+
+PAH processes now receive a unique runtime instance identity with their own
+runtime directory, PID/health metadata, log, temp/cache roots, module-process
+registry, and automatically allocated host/module ports. Live instance metadata
+is stored under the host state directory at `runtime/<instance-id>/`; it is not
+written into portable research-workspace definitions.
+
+The active workspace is now session-local for Flask PAH instances, so two PAH
+processes sharing the same workspace catalog can activate different workspaces
+without changing each other's effective selection. Hosted full-tool state,
+DocumentEngine build state, and the orchestration artifact registry are also
+instance-scoped. Explicit `WorkspaceManager` users retain the prior persisted
+active-workspace behavior for compatibility.
 
 ## 0.9.12 — New Research Workspace initialization
 
