@@ -5,6 +5,7 @@ import argparse
 import logging
 from pathlib import Path
 import os
+import signal
 import webbrowser
 from threading import Timer
 
@@ -35,6 +36,22 @@ def _configure_access_logging(log_file: str | Path | None = None) -> None:
         logging.getLogger().setLevel(logging.INFO)
 
 
+
+
+def _install_signal_handlers(app) -> None:
+    shutdown = app.extensions.get("pah_shutdown")
+    if not callable(shutdown):
+        return
+
+    def handle_stop(signum, frame):  # noqa: ARG001 - signal callback signature
+        shutdown()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, handle_stop)
+    if hasattr(signal, "SIGINT"):
+        signal.signal(signal.SIGINT, handle_stop)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Project Assistant Host")
     parser.add_argument("project", nargs="?", help="Optional project directory to open")
@@ -56,6 +73,7 @@ def main() -> None:
     instance_runtime = app.extensions["pah_instance_runtime"]
     selected_port = instance_runtime.port("host")
     _configure_access_logging(instance_runtime.log_file)
+    _install_signal_handlers(app)
     if args.project:
         # Use the same manager backing the app through the HTTP endpoint once running;
         # a startup environment variable keeps run.py thin and avoids reaching into app internals.

@@ -4,6 +4,7 @@ import atexit
 import os
 import shlex
 from pathlib import Path
+from threading import Lock
 
 from flask import Flask, jsonify, render_template, request, send_file
 
@@ -155,12 +156,33 @@ def create_app(
     ref_status = references.status()
     if ref_status.get("configured") and ref_status.get("library_root"):
         full_tools.bind_reference_library(ref_status.get("library_root"))
-    # Register the instance marker first so reverse-order atexit cleanup stops
-    # owned services/processes before this instance is marked stopped.
-    atexit.register(instance_runtime.stop)
-    atexit.register(terminals.stop_all)
-    atexit.register(runtime_registry.shutdown_all)
-    atexit.register(full_tools.stop_all)
+    # One idempotent shutdown path is shared by atexit and run.py's signal
+    # handlers. Python does not run atexit handlers for an unhandled SIGTERM,
+    # so launcher/CLI stops must explicitly enter this path before exiting.
+    shutdown_lock = Lock()
+    shutdown_state = {"done": False}
+
+    def shutdown_instance() -> None:
+        with shutdown_lock:
+            if shutdown_state["done"]:
+                return
+            shutdown_state["done"] = True
+        # Stop module-owned services before marking the parent instance stopped.
+        # Runtime adapters get the first chance to clean up external children;
+        # PAH-owned hosted surfaces and terminals are then closed locally.
+        try:
+            runtime_registry.shutdown_all()
+        finally:
+            try:
+                full_tools.stop_all()
+            finally:
+                try:
+                    terminals.stop_all()
+                finally:
+                    instance_runtime.stop()
+
+    app.extensions["pah_shutdown"] = shutdown_instance
+    atexit.register(shutdown_instance)
 
     def fs() -> FileSystemService:
         return FileSystemService(workspaces.require_root())
@@ -1772,7 +1794,7 @@ def create_app(
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.9.14",
+            "version": "0.9.15",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),

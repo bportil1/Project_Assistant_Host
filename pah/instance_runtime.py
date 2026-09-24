@@ -38,6 +38,17 @@ def _utc_now() -> str:
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    # On Linux a terminated child may remain as a zombie until its original
+    # parent reaps it. ``kill(pid, 0)`` still succeeds for zombies, so treat
+    # that state as exited for PAH runtime/process-management purposes.
+    proc_stat = Path(f"/proc/{pid}/stat")
+    if proc_stat.is_file():
+        try:
+            fields = proc_stat.read_text(encoding="utf-8").split()
+            if len(fields) > 2 and fields[2] == "Z":
+                return False
+        except OSError:
+            pass
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

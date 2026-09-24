@@ -432,6 +432,24 @@ The result is a workspace in which code, graphs, documents, notebooks, diagrams,
 PAH exposes **Tools → Component Versions** for managed submodules. Local refreshes are read-only and never contact remotes. The panel distinguishes the revision recorded by the parent repository, the currently checked-out revision, and the latest cached/fetched remote revision. Remote fetch/update actions are explicit. Updates use fast-forward-only Git operations, reinstall affected editable Python packages, and can run compatibility tests before the new gitlinks are recorded. **Record Component Versions** creates local parent Git commits only; it never pushes.
 
 
+
+## 0.9.15 — CLI and process management
+
+PAH now installs a `pah` command for instance/process management. `pah list`
+shows runtime identity, workspace, health, PID, port, and start time; `pah open
+<workspace>` reuses a running workspace instance by default, while
+`--new-instance` requests another isolated process. `pah stop <instance>` and
+`pah stop --workspace <workspace>` perform PID-targeted shutdown without using
+`pkill`.
+
+Launcher/CLI shutdown now enters one idempotent PAH cleanup path before process
+exit, allowing runtime adapters, hosted module surfaces, terminals, and the
+instance marker to close in ownership order. CLI stop waits for clean SIGTERM
+shutdown and offers explicit `--force` escalation if a process does not exit
+within the requested timeout. Runtime records whose parent PID disappeared
+without recording a clean stop are reconciled to `stale` while their runtime
+directories/logs are retained for diagnosis.
+
 ## 0.9.14 — Workspace launcher and running-instance manager
 
 PAH now opens to a local Research Workspace launcher when started without an
