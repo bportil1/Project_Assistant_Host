@@ -15,6 +15,7 @@ from .core.workspace import WorkspaceError, WorkspaceManager
 from .component_versions import ComponentVersionError, ComponentVersionManager
 from .full_tools import FullToolManager
 from .instance_runtime import InstanceRuntime
+from .launcher import LauncherError, LauncherManager
 from .contracts import ArtifactRef, ArtifactRequirement, ModuleContext, coerce_artifact_ref
 from .labs import (
     ArtifactInventory,
@@ -58,9 +59,14 @@ def create_app(
     instance_id: str | None = None,
     preferred_ports: dict[str, int] | None = None,
     host: str = "127.0.0.1",
+    workspace_id: str | None = None,
 ) -> Flask:
     app = Flask(__name__, template_folder="web/templates", static_folder="web/static")
-    workspaces = WorkspaceManager(state_dir=state_dir, persist_active_workspace=False)
+    workspaces = WorkspaceManager(
+        state_dir=state_dir,
+        persist_active_workspace=False,
+        initial_workspace_id=workspace_id,
+    )
     requested_ports = dict(preferred_ports or {})
     for key, env_name in {
         "analysis": "PAH_ANALYSIS_PORT",
@@ -93,6 +99,11 @@ def create_app(
     )
     module_registry = default_module_registry(discover=True)
     workspaces.configure_available_modules(item.module_id for item in module_registry.all())
+    launcher = LauncherManager(
+        state_dir=workspaces.state_dir,
+        module_registry=module_registry,
+        current_instance_id=instance_runtime.instance_id,
+    )
     runtime_registry = RuntimeRegistry(instance_runtime=instance_runtime)
     runtime_registry.discover_entry_points()
     # PAH-owned mature tools are bridged into the same runtime contract used by
@@ -118,6 +129,7 @@ def create_app(
     app.extensions["pah_code_analysis_lab"] = code_analysis_lab
     app.extensions["pah_component_versions"] = component_versions
     app.extensions["pah_instance_runtime"] = instance_runtime
+    app.extensions["pah_launcher"] = launcher
     def bind_workspace_services() -> None:
         instance_runtime.set_workspace(workspaces.active_workspace_id)
         enabled_registry = module_registry.subset(workspaces.enabled_modules())
@@ -538,12 +550,33 @@ def create_app(
     @app.errorhandler(DocumentationScaffoldError)
     @app.errorhandler(DiagramDocumentBridgeError)
     @app.errorhandler(ComponentVersionError)
+    @app.errorhandler(LauncherError)
     def handle_known_error(exc):
         return error_response(exc)
 
     @app.get("/")
     def index():
         return render_template("index.html")
+
+    @app.get("/launcher")
+    def launcher_home():
+        return render_template("launcher.html")
+
+    @app.get("/api/launcher")
+    def launcher_snapshot():
+        return jsonify({"ok": True, **launcher.snapshot()})
+
+    @app.post("/api/launcher/workspaces/<workspace_id>/open")
+    def launcher_open_workspace(workspace_id: str):
+        payload = request.get_json(silent=True) or {}
+        return jsonify({
+            "ok": True,
+            **launcher.open_workspace(workspace_id, new_instance=bool(payload.get("new_instance", False))),
+        })
+
+    @app.post("/api/launcher/instances/<instance_id>/stop")
+    def launcher_stop_instance(instance_id: str):
+        return jsonify({"ok": True, **launcher.stop_instance(instance_id)})
 
     @app.get("/api/orchestration/modules")
     def orchestration_modules():
@@ -1739,7 +1772,7 @@ def create_app(
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.9.13",
+            "version": "0.9.14",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),

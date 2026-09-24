@@ -688,3 +688,18 @@
     grid-column: 2;
   }
 }
+
+.workspace-launcher-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #252b35;
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.workspace-launcher-link:hover { background: #303744; }

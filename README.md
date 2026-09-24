@@ -4,7 +4,7 @@ PAH is a local-first workspace for software projects, technical documents, noteb
 
 PAH is intended for people who want one place to move between code, analysis, writing, notebooks, presentations, literature, terminal work, and project history without turning the application into a monolithic IDE or requiring a cloud service.
 
-**Current PAH host version:** 0.9.13
+**Current PAH host version:** 0.9.14
 
 ## Highlights
 
@@ -431,6 +431,19 @@ The result is a workspace in which code, graphs, documents, notebooks, diagrams,
 
 PAH exposes **Tools → Component Versions** for managed submodules. Local refreshes are read-only and never contact remotes. The panel distinguishes the revision recorded by the parent repository, the currently checked-out revision, and the latest cached/fetched remote revision. Remote fetch/update actions are explicit. Updates use fast-forward-only Git operations, reinstall affected editable Python packages, and can run compatibility tests before the new gitlinks are recorded. **Record Component Versions** creates local parent Git commits only; it never pushes.
 
+
+## 0.9.14 — Workspace launcher and running-instance manager
+
+PAH now opens to a local Research Workspace launcher when started without an
+explicit project/workspace. The launcher combines the durable workspace catalog
+with Sprint 3 runtime metadata so it can show running instance counts, ports,
+enabled capabilities/modules, and unavailable resource/module warnings.
+
+Opening a workspace reuses an existing running instance by default. **Open New
+Instance** starts another isolated PAH process for the same workspace, while the
+launcher can also start different workspaces concurrently and stop non-current
+instances. Launcher-managed child processes receive the shared state directory,
+workspace id, and a unique instance id; port allocation remains automatic.
 
 ## 0.9.13 — Per-instance runtime isolation
 

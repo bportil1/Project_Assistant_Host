@@ -40,10 +40,19 @@ def main() -> None:
     parser.add_argument("project", nargs="?", help="Optional project directory to open")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=8765, type=int)
+    parser.add_argument("--state-dir", help="PAH state directory (used by launcher-managed instances)")
+    parser.add_argument("--workspace-id", help="Research workspace id to bind to this instance")
+    parser.add_argument("--instance-id", help="Explicit runtime instance id")
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 
-    app = create_app(preferred_ports={"host": args.port}, host=args.host)
+    app = create_app(
+        state_dir=args.state_dir,
+        instance_id=args.instance_id,
+        preferred_ports={"host": args.port},
+        host=args.host,
+        workspace_id=args.workspace_id,
+    )
     instance_runtime = app.extensions["pah_instance_runtime"]
     selected_port = instance_runtime.port("host")
     _configure_access_logging(instance_runtime.log_file)
@@ -58,7 +67,8 @@ def main() -> None:
                 raise SystemExit(response.get_json().get("error", "Could not open project"))
 
     if not args.no_browser:
-        Timer(0.7, lambda: webbrowser.open(f"http://{args.host}:{selected_port}")).start()
+        landing_path = "/" if (args.project or args.workspace_id) else "/launcher"
+        Timer(0.7, lambda: webbrowser.open(f"http://{args.host}:{selected_port}{landing_path}")).start()
     print(
         f"PAH instance {instance_runtime.instance_id} | "
         f"workspace={instance_runtime.workspace_id or '<none>'} | "
