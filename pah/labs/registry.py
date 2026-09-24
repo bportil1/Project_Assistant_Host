@@ -41,6 +41,11 @@ class ModuleRegistry:
         modules = self.for_collection(collection_id) if collection_id else self.all()
         return tuple(item for item in modules if item.supports(capability))
 
+    def subset(self, module_ids) -> "ModuleRegistry":
+        """Return a registry view containing only the requested installed modules."""
+        selected = {str(value) for value in (module_ids or ())}
+        return ModuleRegistry(item for item in self.all() if item.module_id in selected)
+
     def discover_entry_points(self, *, group: str = "pah.modules") -> tuple[ModuleManifest, ...]:
         """Discover optional modules without hard-coded imports in PAH.
 

@@ -4,7 +4,7 @@ PAH is a local-first workspace for software projects, technical documents, noteb
 
 PAH is intended for people who want one place to move between code, analysis, writing, notebooks, presentations, literature, terminal work, and project history without turning the application into a monolithic IDE or requiring a cloud service.
 
-**Current PAH host version:** 0.9.10
+**Current PAH host version:** 0.9.12
 
 ## Highlights
 
@@ -431,6 +431,36 @@ The result is a workspace in which code, graphs, documents, notebooks, diagrams,
 
 PAH exposes **Tools → Component Versions** for managed submodules. Local refreshes are read-only and never contact remotes. The panel distinguishes the revision recorded by the parent repository, the currently checked-out revision, and the latest cached/fetched remote revision. Remote fetch/update actions are explicit. Updates use fast-forward-only Git operations, reinstall affected editable Python packages, and can run compatibility tests before the new gitlinks are recorded. **Record Component Versions** creates local parent Git commits only; it never pushes.
 
+
+## 0.9.12 — New Research Workspace initialization
+
+PAH now has a dedicated New Research Workspace flow instead of relying on a
+name-only quick-create action. The initializer exposes generic presets (Blank,
+Document Creation, Literature Review, Software Analysis, ML / Data Research,
+and Full Research Workspace), capability/category selection, per-module
+customization, and initial mappings for repository, documents, papers,
+bibliography, datasets, assets, notes, outputs, and archive resources.
+
+Preset choices remain editable before creation. Unavailable registered roots are
+shown but cannot be selected during initialization, and the host validates both
+module availability and resource availability again at the API boundary.
+Workspace creation applies the selected module profile and resource map
+atomically so an invalid mapping does not leave a partially created workspace.
+
+## 0.9.11 — Workspace module profiles
+
+Research workspaces now persist an explicit enabled-module profile. PAH keeps
+**Installed**, **Enabled**, and **Running** as separate states, migrates legacy
+workspaces to enable the modules installed at migration time, and preserves
+enabled-but-unavailable module identifiers so portable workspace intent is not
+lost on machines with different module installations.
+
+The workspace Resources dialog now includes grouped module controls using
+general research capabilities such as Document Creation, Literature &
+References, Software Analysis, Machine Learning, and Data / Research Utilities.
+Disabled modules are removed from workspace navigation and lab provider views,
+blocked at runtime launch boundaries, and left otherwise untouched so their
+files and registered artifacts remain available if the module is re-enabled.
 
 ## 0.9.10 — Workspace save shortcut
 

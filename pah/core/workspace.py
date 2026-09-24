@@ -40,6 +40,13 @@ def _clean_id(value: str, *, field_name: str) -> str:
     return cleaned
 
 
+def _clean_module_id(value: str) -> str:
+    module_id = str(value or "").strip()
+    if not module_id:
+        raise WorkspaceError("module id must not be empty.")
+    return module_id
+
+
 def _relative_resource_path(value: str | Path | None) -> str:
     raw = str(value or "").strip()
     if not raw or raw == ".":
@@ -65,13 +72,14 @@ class WorkspaceManager:
     the active workspace's repository resource when one is configured.
     """
 
-    schema_version = 2
+    schema_version = 3
 
     def __init__(self, state_dir: str | Path | None = None) -> None:
         default_dir = Path.home() / ".local" / "share" / "pah"
         self.state_dir = Path(state_dir or os.environ.get("PAH_STATE_DIR", default_dir)).expanduser()
         self.state_file = self.state_dir / "state.json"
         self._lock = RLock()
+        self._available_module_ids: tuple[str, ...] = ()
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self._state = self._load()
 
@@ -142,6 +150,65 @@ class WorkspaceManager:
     def active_workspace_name(self) -> str | None:
         workspace = self._workspace()
         return str(workspace.get("name")) if workspace else None
+
+    def configure_available_modules(self, module_ids) -> tuple[str, ...]:
+        """Bind the host's installed module catalog to workspace defaults.
+
+        Workspace persistence intentionally does not import the module registry.
+        The host supplies installed module identifiers after discovery. Existing
+        pre-Sprint-1 workspaces are migrated once to enable every module that is
+        installed at migration time; later installs do not silently change an
+        explicitly stored workspace profile.
+        """
+        normalized = tuple(dict.fromkeys(
+            _clean_module_id(value) for value in (module_ids or ())
+        ))
+        with self._lock:
+            self._available_module_ids = normalized
+            changed = False
+            for workspace in self._state.get("research_workspaces", {}).values():
+                if not isinstance(workspace.get("enabled_modules"), list):
+                    workspace["enabled_modules"] = list(normalized)
+                    changed = True
+            if changed:
+                self._save()
+        return normalized
+
+    def enabled_modules(self, workspace_id: str | None = None) -> tuple[str, ...]:
+        workspace = self._workspace(workspace_id)
+        if workspace is None:
+            return self._available_module_ids
+        raw = workspace.get("enabled_modules")
+        if not isinstance(raw, list):
+            # Defensive compatibility for callers that inspect a manager before
+            # the host has had a chance to run configure_available_modules().
+            return self._available_module_ids
+        return tuple(str(value) for value in raw if str(value).strip())
+
+    def is_module_enabled(self, module_id: str, *, workspace_id: str | None = None) -> bool:
+        module_id = _clean_module_id(module_id)
+        return module_id in self.enabled_modules(workspace_id)
+
+    def set_enabled_modules(self, workspace_id: str, module_ids) -> dict[str, Any]:
+        workspace_id = _clean_id(workspace_id, field_name="workspace id")
+        normalized = list(dict.fromkeys(
+            _clean_module_id(value) for value in (module_ids or ())
+        ))
+        with self._lock:
+            workspace = self._require_workspace(workspace_id)
+            workspace["enabled_modules"] = normalized
+            self._save()
+        return self.workspace_snapshot(workspace_id)
+
+    def set_module_enabled(self, workspace_id: str, module_id: str, enabled: bool) -> dict[str, Any]:
+        workspace_id = _clean_id(workspace_id, field_name="workspace id")
+        module_id = _clean_module_id(module_id)
+        current = list(self.enabled_modules(workspace_id))
+        if enabled and module_id not in current:
+            current.append(module_id)
+        elif not enabled:
+            current = [value for value in current if value != module_id]
+        return self.set_enabled_modules(workspace_id, current)
 
     def _resolved_resource(self, role: str, workspace_id: str | None = None) -> dict[str, Any] | None:
         role = str(role or "").strip().lower()
@@ -278,22 +345,67 @@ class WorkspaceManager:
         *,
         workspace_id: str | None = None,
         activate: bool = False,
+        enabled_modules=None,
+        resources: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Create a research workspace, optionally with its initial resource map.
+
+        ``resources`` uses the same logical bindings as :meth:`set_resource`::
+
+            {"documents": {"root_id": "writing", "relative_path": "paper"}}
+
+        Every binding is validated before state is mutated so the initialization
+        UI cannot leave a half-created workspace when one resource is invalid.
+        Availability of a registered root is deliberately a host/UI concern: a
+        portable workspace may legitimately reference a root that is unmapped on
+        another machine.
+        """
         display_name = str(name or "").strip()
         if not display_name:
             raise WorkspaceError("Workspace name must not be empty.")
+        if resources is not None and not isinstance(resources, dict):
+            raise WorkspaceError("Workspace resources must be a mapping by resource role.")
+
         with self._lock:
             selected_id = _clean_id(workspace_id, field_name="workspace id") if workspace_id else self._unique_workspace_id(display_name)
             if selected_id in self._state.get("research_workspaces", {}):
                 raise WorkspaceError(f"Research workspace already exists: {selected_id}")
+
+            resource_bindings: dict[str, dict[str, str]] = {}
+            for raw_role, raw_binding in (resources or {}).items():
+                role = str(raw_role or "").strip().lower()
+                if role not in RESOURCE_ROLES:
+                    raise WorkspaceError(f"Unknown workspace resource role: {role}")
+                if raw_binding in (None, ""):
+                    continue
+                if not isinstance(raw_binding, dict):
+                    raise WorkspaceError(f"Resource mapping for {role} must be an object.")
+                root_id = _clean_id(raw_binding.get("root_id", ""), field_name="root id")
+                if root_id not in self._state.get("shared_roots", {}):
+                    raise WorkspaceError(f"Unknown registered root: {root_id}")
+                resource_bindings[role] = {
+                    "root_id": root_id,
+                    "relative_path": _relative_resource_path(raw_binding.get("relative_path")),
+                }
+
+            default_modules = self._available_module_ids if enabled_modules is None else enabled_modules
+            module_profile = list(dict.fromkeys(
+                _clean_module_id(value) for value in (default_modules or ())
+            ))
             self._state.setdefault("research_workspaces", {})[selected_id] = {
                 "id": selected_id,
                 "name": display_name,
-                "resources": {},
+                "resources": resource_bindings,
+                "enabled_modules": module_profile,
             }
             if activate:
                 self._state["active_workspace_id"] = selected_id
-                self._state["current_root"] = None
+                repository = self.resolve_resource("repository", workspace_id=selected_id)
+                self._state["current_root"] = str(repository) if repository else None
+                if repository:
+                    recent = [p for p in self._state.get("recent_roots", []) if p != str(repository)]
+                    recent.insert(0, str(repository))
+                    self._state["recent_roots"] = recent[:12]
             self._save()
         return self.workspace_snapshot(selected_id)
 
@@ -387,6 +499,7 @@ class WorkspaceManager:
                     "resources": {
                         "repository": {"root_id": root_id, "relative_path": ""},
                     },
+                    "enabled_modules": list(self._available_module_ids),
                 }
             self._state["active_workspace_id"] = matched_id
             self._state["current_root"] = str(candidate)
@@ -447,6 +560,7 @@ class WorkspaceManager:
             "name": workspace.get("name") or selected_id,
             "active": selected_id == self.active_workspace_id,
             "resources": resources,
+            "enabled_modules": list(self.enabled_modules(selected_id)),
         }
 
     def catalog_snapshot(self) -> dict[str, Any]:
@@ -476,4 +590,5 @@ class WorkspaceManager:
             "workspace_id": self.active_workspace_id,
             "workspace_name": self.active_workspace_name,
             "resources": self.workspace_snapshot().get("resources", {}),
+            "enabled_modules": list(self.enabled_modules()),
         }

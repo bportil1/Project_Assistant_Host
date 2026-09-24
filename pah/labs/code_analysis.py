@@ -47,6 +47,11 @@ class CodeAnalysisLabController:
         self.expected_modules = expected_modules or EXPECTED_MODULES
         self.orchestrator = LabOrchestrator(lab, modules)
 
+    def bind_modules(self, modules: ModuleRegistry) -> None:
+        """Rebind the controller to the active workspace's enabled module view."""
+        self.modules = modules
+        self.orchestrator = LabOrchestrator(self.lab, modules)
+
     @staticmethod
     def _project_id(context: ModuleContext | None) -> str | None:
         root = getattr(context, "project_root", None) if context is not None else None

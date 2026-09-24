@@ -80,6 +80,7 @@
     </nav>
     <div class="workspace-bar">
       <select id="researchWorkspaceSelect" class="research-workspace-select" title="Active research workspace"><option value="">Workspace…</option></select>
+      <button id="workspaceNewButton" type="button" title="Create a new research workspace">New…</button>
       <button id="workspaceResourcesButton" type="button" title="Manage workspace resources and shared roots">Resources…</button>
       <input id="workspacePath" type="text" placeholder="/path/to/repository" spellcheck="false" title="Open a repository directory and promote it to a research workspace">
       <button id="openWorkspace">Open Directory</button>
@@ -434,8 +435,8 @@
         <select id="workspaceDialogSelect" aria-label="Research workspace"><option value="">Choose workspace…</option></select>
       </div>
       <div class="workspace-create-row">
-        <input id="workspaceCreateName" type="text" placeholder="New workspace name, e.g. HSQA Thesis" spellcheck="false">
-        <button id="workspaceCreateButton" type="button">Create &amp; Activate</button>
+        <input id="workspaceCreateName" type="text" placeholder="Optional name to prefill the initializer" spellcheck="false">
+        <button id="workspaceCreateButton" type="button">New Research Workspace…</button>
       </div>
     </section>
 
@@ -462,6 +463,60 @@
       </div>
       <div id="workspaceResourceRows" class="workspace-resource-rows"></div>
     </section>
+
+    <section class="workspace-config-section">
+      <div class="workspace-config-heading">
+        <div><strong>Workspace modules</strong><span class="small-muted">Installed, enabled, and running are separate states. Disabling a module does not remove its files or artifacts.</span></div>
+      </div>
+      <div id="workspaceModuleRows" class="workspace-module-rows"></div>
+    </section>
+  </div>
+</dialog>
+
+<dialog id="workspaceInitializationDialog" class="workspace-initialization-dialog">
+  <div class="workspace-initialization-card">
+    <div class="dialog-heading">
+      <div>
+        <h3>New Research Workspace</h3>
+        <span class="small-muted">Choose resources and research capabilities before creating the workspace. Presets are starting points and remain fully customizable.</span>
+      </div>
+      <button id="workspaceInitCancel" type="button" class="plain">×</button>
+    </div>
+
+    <section class="workspace-init-section">
+      <div class="workspace-init-grid workspace-init-basics">
+        <label>Name<input id="workspaceInitName" type="text" placeholder="Research workspace name" spellcheck="false"></label>
+        <label>Preset<select id="workspaceInitPreset"></select></label>
+      </div>
+      <div id="workspaceInitPresetDescription" class="small-muted"></div>
+    </section>
+
+    <section class="workspace-init-section">
+      <div class="workspace-config-heading">
+        <div><strong>Resources</strong><span class="small-muted">Map any registered roots needed now. Unavailable roots stay visible but cannot be selected during initialization.</span></div>
+      </div>
+      <div id="workspaceInitResourceRows" class="workspace-init-resource-rows"></div>
+    </section>
+
+    <section class="workspace-init-section">
+      <div class="workspace-config-heading">
+        <div><strong>Capabilities</strong><span class="small-muted">Capability choices select installed modules by category; individual modules can then be adjusted below.</span></div>
+      </div>
+      <div id="workspaceInitCapabilityRows" class="workspace-init-capability-rows"></div>
+    </section>
+
+    <section class="workspace-init-section">
+      <div class="workspace-config-heading">
+        <div><strong>Modules</strong><span class="small-muted">Only modules installed on this PAH installation can be selected for a new workspace.</span></div>
+      </div>
+      <div id="workspaceInitModuleRows" class="workspace-init-module-rows"></div>
+    </section>
+
+    <div id="workspaceInitValidation" class="workspace-init-validation" aria-live="polite"></div>
+    <div class="workspace-init-actions">
+      <label class="workspace-init-activate"><input id="workspaceInitActivate" type="checkbox" checked> Activate after creation</label>
+      <button id="workspaceInitCreate" type="button">Create Workspace</button>
+    </div>
   </div>
 </dialog>
 

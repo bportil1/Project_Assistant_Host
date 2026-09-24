@@ -22,7 +22,7 @@ from .labs import (
     default_lab_registry,
 )
 from .labs.information_network import build_information_network
-from .module_catalog import default_module_registry
+from .module_catalog import MODULE_CATEGORIES, WORKSPACE_PRESETS, default_module_registry
 from .runtime import HostSurfaceRuntimeAdapter, RuntimeRegistry, RuntimeRegistryError
 from .integrations import (
     AnalysisDiagramBridgeError,
@@ -69,6 +69,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         references_port=int(os.environ.get("PAH_REFERENCES_PORT", "8768")),
     )
     module_registry = default_module_registry(discover=True)
+    workspaces.configure_available_modules(item.module_id for item in module_registry.all())
     runtime_registry = RuntimeRegistry()
     runtime_registry.discover_entry_points()
     # PAH-owned mature tools are bridged into the same runtime contract used by
@@ -94,6 +95,8 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     app.extensions["pah_code_analysis_lab"] = code_analysis_lab
     app.extensions["pah_component_versions"] = component_versions
     def bind_workspace_services() -> None:
+        enabled_registry = module_registry.subset(workspaces.enabled_modules())
+        code_analysis_lab.bind_modules(enabled_registry)
         repository_root = workspaces.root
         document_root = workspaces.resolve_resource("documents") or repository_root
 
@@ -139,6 +142,142 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             runtime={"state_dir": str(workspaces.state_dir)},
         )
 
+
+    def active_module_registry():
+        return module_registry.subset(workspaces.enabled_modules())
+
+    def require_enabled_module(module_id: str) -> None:
+        manifest = module_registry.get(module_id)
+        if manifest is None:
+            raise RuntimeRegistryError(f"Module {module_id!r} is not installed with PAH.")
+        if not workspaces.is_module_enabled(module_id):
+            workspace_name = workspaces.active_workspace_name or "the active workspace"
+            raise RuntimeRegistryError(
+                f"Module {manifest.display_name!r} is disabled for {workspace_name}. "
+                "Enable it in Research Workspace Resources before launching it."
+            )
+
+    def module_state_snapshot() -> dict:
+        context = orchestration_context()
+        enabled_ids = set(workspaces.enabled_modules())
+        manifests = {item.module_id: item for item in module_registry.all()}
+        all_ids = sorted(set(manifests) | enabled_ids)
+        modules = []
+        for module_id in all_ids:
+            manifest = manifests.get(module_id)
+            installed = manifest is not None
+            runtime = runtime_registry.status(module_id, context).to_dict() if installed else {
+                "module_id": module_id,
+                "available": False,
+                "running": False,
+                "launchable": False,
+                "message": "Enabled in this workspace but not installed on this PAH installation.",
+            }
+            payload = manifest.to_dict() if manifest is not None else {
+                "module_id": module_id,
+                "display_name": module_id,
+                "version": None,
+                "description": "",
+                "collections": [],
+                "capabilities": [],
+                "interfaces": [],
+                "metadata": {"category": "data_research_utilities", "category_label": "Data / Research Utilities"},
+            }
+            payload.update({
+                "installed": installed,
+                "enabled": module_id in enabled_ids,
+                "running": bool(runtime.get("running", False)),
+                "runtime": runtime,
+            })
+            modules.append(payload)
+        return {
+            "workspace_id": workspaces.active_workspace_id,
+            "categories": dict(MODULE_CATEGORIES),
+            "modules": modules,
+            "discovery_errors": list(module_registry.snapshot()["discovery_errors"]),
+        }
+
+    def workspace_initialization_snapshot() -> dict:
+        """Describe everything needed by the New Research Workspace flow."""
+        installed = list(module_registry.all())
+        modules = []
+        for manifest in installed:
+            payload = manifest.to_dict()
+            payload["installed"] = True
+            modules.append(payload)
+
+        presets = []
+        for preset_id, definition in WORKSPACE_PRESETS.items():
+            categories = tuple(definition.get("categories") or ())
+            selected = [
+                manifest.module_id
+                for manifest in installed
+                if str((manifest.metadata or {}).get("category") or "data_research_utilities") in categories
+            ]
+            presets.append({
+                "id": preset_id,
+                "label": definition.get("label") or preset_id,
+                "description": definition.get("description") or "",
+                "categories": list(categories),
+                "enabled_modules": selected,
+            })
+
+        catalog = workspaces.catalog_snapshot()
+        return {
+            "categories": dict(MODULE_CATEGORIES),
+            "presets": presets,
+            "modules": modules,
+            "resource_roles": list(catalog.get("resource_roles") or ()),
+            "shared_roots": list(catalog.get("shared_roots") or ()),
+        }
+
+    def start_enabled_full_tools() -> None:
+        surface_modules = {
+            "analysis": "code_analyzer",
+            "documents": "tech_documents",
+            "references": "reference_manager",
+        }
+        for surface, module_id in surface_modules.items():
+            if workspaces.is_module_enabled(module_id):
+                try:
+                    full_tools.start(surface)
+                except Exception:
+                    # FullToolManager records startup errors in its own status.
+                    pass
+            else:
+                full_tools.stop(surface)
+
+    def full_tools_status_with_profile() -> dict:
+        status = full_tools.status()
+        tools = status.get("tools", {})
+        for surface, module_id in {
+            "analysis": "code_analyzer",
+            "documents": "tech_documents",
+            "references": "reference_manager",
+        }.items():
+            if not workspaces.is_module_enabled(module_id):
+                info = tools.setdefault(surface, {})
+                info.update({
+                    "available": False,
+                    "url": None,
+                    "error": "Disabled for the active research workspace.",
+                    "enabled": False,
+                })
+            else:
+                tools.setdefault(surface, {})["enabled"] = True
+        research = tools.setdefault("research_search", {})
+        research_enabled = (
+            workspaces.is_module_enabled("research_search")
+            and workspaces.is_module_enabled("reference_manager")
+        )
+        research["enabled"] = research_enabled
+        if not research_enabled:
+            research.update({
+                "available": False,
+                "url": None,
+                "error": "Research Search or its Reference Manager owner is disabled for the active workspace.",
+            })
+        return status
 
     def overleaf_sync_payload(remote_name: str | None = None) -> dict:
         root = workspaces.require_root()
@@ -196,7 +335,12 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         """
         artifact_id = "code-analyzer-current"
         status = analyzer.status()
-        if workspaces.root is None or not status.get("analyzed") or status.get("stale"):
+        if (
+            not workspaces.is_module_enabled("code_analyzer")
+            or workspaces.root is None
+            or not status.get("analyzed")
+            or status.get("stale")
+        ):
             lab_artifacts.deactivate_current(artifact_id)
             return
         lab_artifacts.register_current(ArtifactRef(
@@ -246,6 +390,9 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
 
     def sync_runtime_artifacts(module_id: str, context: ModuleContext | None = None) -> None:
         """Refresh provider aliases while preserving immutable historical snapshots."""
+        if not workspaces.is_module_enabled(module_id):
+            deactivate_runtime_aliases(module_id)
+            return
         discovered = runtime_registry.artifacts(module_id, context or orchestration_context())
         if discovered is None:
             return
@@ -358,7 +505,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
 
     @app.get("/api/orchestration/modules")
     def orchestration_modules():
-        return jsonify({"ok": True, **module_registry.snapshot()})
+        return jsonify({"ok": True, **module_state_snapshot()})
 
     @app.get("/api/components/status")
     def component_versions_status():
@@ -403,7 +550,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
 
     @app.get("/api/orchestration/labs")
     def orchestration_labs():
-        return jsonify({"ok": True, **lab_registry.snapshot(module_registry)})
+        return jsonify({"ok": True, **lab_registry.snapshot(active_module_registry())})
 
     @app.get("/api/orchestration/runtimes")
     def orchestration_runtimes():
@@ -417,6 +564,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     def orchestration_module_launch(module_id: str):
         payload = request.get_json(silent=True) or {}
         try:
+            require_enabled_module(module_id)
             launch = runtime_registry.launch(
                 module_id,
                 orchestration_context(),
@@ -434,9 +582,17 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     @app.get("/api/orchestration/ml-lab")
     def orchestration_ml_lab():
         context = orchestration_context()
-        sync_runtime_artifacts("ml_lab", context)
-        lab = lab_registry.lab_snapshot("ml_lab", module_registry)
+        enabled = workspaces.is_module_enabled("ml_lab")
+        if enabled:
+            sync_runtime_artifacts("ml_lab", context)
+        lab = lab_registry.lab_snapshot("ml_lab", active_module_registry())
         runtime = runtime_registry.status("ml_lab", context).to_dict()
+        if not enabled:
+            runtime.update({
+                "available": False,
+                "launchable": False,
+                "message": "ML Lab is disabled for the active research workspace.",
+            })
         artifacts = [item.to_dict() for item in lab_artifacts.by_producer("ml_lab")]
         return jsonify({
             "ok": True,
@@ -449,7 +605,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
     @app.get("/api/orchestration/labs/<lab_id>")
     def orchestration_lab(lab_id: str):
         try:
-            return jsonify({"ok": True, **lab_registry.lab_snapshot(lab_id, module_registry)})
+            return jsonify({"ok": True, **lab_registry.lab_snapshot(lab_id, active_module_registry())})
         except RegistryError as exc:
             return error_response(exc, 404)
 
@@ -612,13 +768,82 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),
-            "full_tools": full_tools.status(),
+            "full_tools": full_tools_status_with_profile(),
             "git": git_service.status(),
         })
 
     @app.get("/api/research-workspaces")
     def research_workspaces():
         return jsonify({"ok": True, **workspaces.catalog_snapshot()})
+
+    @app.get("/api/research-workspaces/initialization")
+    def research_workspace_initialization():
+        return jsonify({"ok": True, **workspace_initialization_snapshot()})
+
+    @app.post("/api/research-workspaces/initialize")
+    def initialize_research_workspace():
+        payload = request.get_json(force=True) or {}
+        enabled_modules = payload.get("enabled_modules", [])
+        resources = payload.get("resources", {})
+        if not isinstance(enabled_modules, list):
+            return error_response(ValueError("enabled_modules must be a JSON list"))
+        if not isinstance(resources, dict):
+            return error_response(ValueError("resources must be a JSON object keyed by resource role"))
+
+        installed_ids = {item.module_id for item in module_registry.all()}
+        unavailable_modules = sorted({str(value) for value in enabled_modules if str(value) not in installed_ids})
+        if unavailable_modules:
+            return error_response(ValueError(
+                "Unavailable modules selected: " + ", ".join(unavailable_modules)
+            ))
+
+        catalog_roots = {item["id"]: item for item in workspaces.catalog_snapshot().get("shared_roots", [])}
+        unavailable_roots = []
+        for binding in resources.values():
+            if not binding:
+                continue
+            if not isinstance(binding, dict):
+                return error_response(ValueError("Each resource mapping must be a JSON object"))
+            root_id = str(binding.get("root_id") or "").strip()
+            if not root_id:
+                continue
+            root = catalog_roots.get(root_id)
+            if root is None:
+                unavailable_roots.append(f"{root_id} (not registered)")
+            elif not root.get("available"):
+                unavailable_roots.append(root_id)
+            else:
+                relative_path = str(binding.get("relative_path") or "").strip()
+                if relative_path:
+                    candidate = (Path(str(root.get("local_path"))) / relative_path).resolve()
+                    root_path = Path(str(root.get("local_path"))).resolve()
+                    try:
+                        candidate.relative_to(root_path)
+                    except ValueError:
+                        unavailable_roots.append(f"{root_id}/{relative_path} (outside registered root)")
+                    else:
+                        if not candidate.exists() or not candidate.is_dir():
+                            unavailable_roots.append(f"{root_id}/{relative_path}")
+        if unavailable_roots:
+            return error_response(ValueError(
+                "Unavailable resource roots selected: " + ", ".join(sorted(set(unavailable_roots)))
+            ))
+
+        workspace = workspaces.create_workspace(
+            payload.get("name", ""),
+            workspace_id=payload.get("id"),
+            activate=bool(payload.get("activate", True)),
+            enabled_modules=enabled_modules,
+            resources=resources,
+        )
+        if workspace.get("active"):
+            lab_artifacts.clear()
+            bind_workspace_services()
+        return jsonify({
+            "ok": True,
+            "workspace": workspace,
+            **workspaces.catalog_snapshot(),
+        })
 
     @app.post("/api/research-workspaces")
     def create_research_workspace():
@@ -627,6 +852,7 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             payload.get("name", ""),
             workspace_id=payload.get("id"),
             activate=bool(payload.get("activate", False)),
+            enabled_modules=payload.get("enabled_modules") if "enabled_modules" in payload else None,
         )
         if workspace.get("active"):
             lab_artifacts.clear()
@@ -645,8 +871,40 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),
-            "full_tools": full_tools.status(),
+            "full_tools": full_tools_status_with_profile(),
             "git": git_service.status(),
+        })
+
+    @app.put("/api/research-workspaces/<workspace_id>/modules")
+    def configure_workspace_modules(workspace_id: str):
+        payload = request.get_json(force=True) or {}
+        if not isinstance(payload.get("enabled_modules"), list):
+            return error_response(ValueError("enabled_modules must be a JSON list"))
+        workspace = workspaces.set_enabled_modules(workspace_id, payload.get("enabled_modules"))
+        if workspace.get("active"):
+            bind_workspace_services()
+        return jsonify({
+            "ok": True,
+            "workspace": workspace,
+            "module_profile": module_state_snapshot() if workspace.get("active") else None,
+            **workspaces.catalog_snapshot(),
+        })
+
+    @app.put("/api/research-workspaces/<workspace_id>/modules/<module_id>")
+    def configure_workspace_module(workspace_id: str, module_id: str):
+        payload = request.get_json(force=True) or {}
+        if "enabled" not in payload or not isinstance(payload.get("enabled"), bool):
+            return error_response(ValueError("enabled must be a JSON boolean"))
+        workspace = workspaces.set_module_enabled(workspace_id, module_id, payload["enabled"])
+        if workspace.get("active"):
+            if not payload["enabled"]:
+                runtime_registry.shutdown(module_id, orchestration_context())
+            bind_workspace_services()
+        return jsonify({
+            "ok": True,
+            "workspace": workspace,
+            "module_profile": module_state_snapshot() if workspace.get("active") else None,
+            **workspaces.catalog_snapshot(),
         })
 
     @app.put("/api/shared-roots/<root_id>")
@@ -1169,8 +1427,8 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
 
     @app.get("/api/full-tools/status")
     def full_tools_status():
-        full_tools.start_available()
-        return jsonify({"ok": True, **full_tools.status()})
+        start_enabled_full_tools()
+        return jsonify({"ok": True, **full_tools_status_with_profile()})
 
     @app.post("/api/full-tools/refresh")
     def full_tools_refresh():
@@ -1178,14 +1436,16 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         document_root = workspaces.resolve_resource("documents") or repository_root
         full_tools.bind_workspace(repository_root)
         full_tools.bind_document_root(document_root)
-        full_tools.start_available()
+        start_enabled_full_tools()
         ref_status = references.status()
         full_tools.bind_reference_library(ref_status.get("library_root") if ref_status.get("configured") else None)
-        return jsonify({"ok": True, **full_tools.status()})
+        return jsonify({"ok": True, **full_tools_status_with_profile()})
 
     @app.post("/api/research-search/launch")
     def research_search_launch():
         try:
+            require_enabled_module("research_search")
+            require_enabled_module("reference_manager")
             return jsonify({"ok": True, **full_tools.launch_research_search()})
         except RuntimeError as exc:
             return error_response(exc, 503)
@@ -1433,11 +1693,11 @@ def create_app(*, state_dir: str | Path | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "service": "PAH",
-            "version": "0.9.10",
+            "version": "0.9.12",
             "analyzer": analyzer.status(),
             "documents": documents.status(),
             "references": references.status(),
-            "full_tools": full_tools.status(),
+            "full_tools": full_tools_status_with_profile(),
             "component_versions": component_versions.snapshot()["summary"],
             "orchestration": {
                 "module_count": len(module_registry.all()),

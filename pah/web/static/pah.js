@@ -9,6 +9,8 @@
   const state = {
     workspace: null,
     researchWorkspace: {catalog: null, selectedRootId: null},
+    workspaceInitialization: {data: null, selectedModules: new Set(), presetId: 'full_research'},
+    moduleProfile: {workspace_id: null, modules: [], categories: {}},
     tabs: [],
     active: null,
     selectedTree: null,
@@ -1325,9 +1327,35 @@
     if (skippedDirty) toast(`${skippedDirty} unsaved PAH tab${skippedDirty === 1 ? '' : 's'} not refreshed from disk.`);
   }
 
+  const surfaceModuleIds = {
+    analysis: 'code_analyzer',
+    documents: 'tech_documents',
+    references: 'reference_manager',
+    ml_lab: 'ml_lab',
+    research_search: 'research_search',
+  };
+
+  function workspaceModule(moduleId) {
+    return (state.moduleProfile.modules || []).find(item => item.module_id === moduleId) || null;
+  }
+
+  function workspaceModuleEnabled(moduleId) {
+    const item = workspaceModule(moduleId);
+    return item ? Boolean(item.enabled && item.installed) : true;
+  }
+
+  function requireWorkspaceModule(moduleId) {
+    const item = workspaceModule(moduleId);
+    if (!item) return true;
+    if (!item.installed && item.enabled) throw new Error(`${item.display_name || moduleId} is enabled for this workspace but is not installed.`);
+    if (!item.enabled) throw new Error(`${item.display_name || moduleId} is disabled for the active research workspace.`);
+    return true;
+  }
+
   async function setMode(mode) {
     if (!['workspace', 'analysis', 'documents', 'references', 'code_analysis_lab', 'ml_lab'].includes(mode)) return;
     closeServiceMenus();
+    if (surfaceModuleIds[mode]) requireWorkspaceModule(surfaceModuleIds[mode]);
     if (mode !== 'workspace' && isSurfaceDetached(mode)) {
       surfaceWindow(mode).focus();
       return;
@@ -1363,6 +1391,7 @@
   }
 
   async function launchRegisteredModule(moduleId, {detached = false} = {}) {
+    requireWorkspaceModule(moduleId);
     const data = await api(`/api/orchestration/modules/${encodeURIComponent(moduleId)}/launch`, {
       method: 'POST',
       body: JSON.stringify({detached: Boolean(detached)}),
@@ -1934,6 +1963,7 @@
 
   async function openMlLab() {
     closeServiceMenus();
+    requireWorkspaceModule('ml_lab');
     const status = await refreshMlLabStatus();
     if (!status?.runtime?.available) throw new Error(status?.runtime?.message || 'ML Lab is unavailable.');
     const launch = await api('/api/orchestration/modules/ml_lab/launch', {method: 'POST', body: JSON.stringify({detached: false})});
@@ -1953,6 +1983,438 @@
   // ---------------------------------------------------------------------------
   // Research workspaces / shared resources
   // ---------------------------------------------------------------------------
+  function renderModuleNavigation() {
+    const installedEnabled = moduleId => workspaceModuleEnabled(moduleId);
+    const documentsLauncher = document.querySelector('[data-tool-launcher="documents"]');
+    const referencesLauncher = document.querySelector('[data-tool-launcher="references"]');
+    if (documentsLauncher) documentsLauncher.hidden = !installedEnabled('tech_documents');
+    if (referencesLauncher) referencesLauncher.hidden = !installedEnabled('reference_manager');
+
+    const researchSearch = $('referencesResearchSearch');
+    if (researchSearch) researchSearch.hidden = !installedEnabled('research_search');
+    const fullAnalysis = $('openFullAnalysis');
+    if (fullAnalysis) fullAnalysis.hidden = !installedEnabled('code_analyzer');
+
+    const codeLabModules = (state.moduleProfile.modules || []).filter(item =>
+      item.installed && item.enabled && (item.collections || []).includes('code_analysis_lab')
+    );
+    const mlLab = workspaceModule('ml_lab');
+    const codeButton = $('openCodeAnalysisLab');
+    const mlButton = $('openMlLab');
+    if (codeButton) codeButton.hidden = codeLabModules.length === 0;
+    if (mlButton) mlButton.hidden = !(mlLab?.installed && mlLab?.enabled);
+    const labsLauncher = document.querySelector('.labs-launcher');
+    if (labsLauncher) labsLauncher.hidden = Boolean(codeButton?.hidden && mlButton?.hidden);
+
+    const analyzerButton = $('analyzeButton');
+    if (analyzerButton && !installedEnabled('code_analyzer')) {
+      analyzerButton.disabled = true;
+      analyzerButton.title = 'Code Analyzer is disabled for the active research workspace.';
+    }
+  }
+
+  function moduleStateLabel(item) {
+    if (!item.installed && item.enabled) return 'Enabled · not installed';
+    if (!item.installed) return 'Not installed';
+    if (!item.enabled) return 'Installed · disabled';
+    if (item.running) return 'Installed · enabled · running';
+    return 'Installed · enabled';
+  }
+
+  const WORKSPACE_RESOURCE_LABELS = {
+    repository: 'Repository Root',
+    documents: 'Document Root',
+    papers: 'Paper Library',
+    bibliography: 'Bibliography',
+    datasets: 'Dataset Root',
+    assets: 'Asset Root',
+    notes: 'Notes',
+    outputs: 'Output Root',
+    archive: 'Archive',
+  };
+
+  function workspaceResourceLabel(role) {
+    return WORKSPACE_RESOURCE_LABELS[role] || String(role || '').replaceAll('_', ' ');
+  }
+
+  function workspaceInitModuleCategory(item) {
+    return item?.metadata?.category || 'data_research_utilities';
+  }
+
+  function markWorkspaceInitializationCustom() {
+    state.workspaceInitialization.presetId = 'custom';
+    const preset = $('workspaceInitPreset');
+    if (preset && [...preset.options].some(option => option.value === 'custom')) preset.value = 'custom';
+    if ($('workspaceInitPresetDescription')) {
+      $('workspaceInitPresetDescription').textContent = 'Custom module/capability selection based on the chosen starting preset.';
+    }
+  }
+
+  function renderWorkspaceInitPresetOptions() {
+    const data = state.workspaceInitialization.data || {presets: []};
+    const select = $('workspaceInitPreset');
+    if (!select) return;
+    select.replaceChildren();
+    for (const preset of data.presets || []) {
+      const option = document.createElement('option');
+      option.value = preset.id;
+      option.textContent = preset.label || preset.id;
+      select.appendChild(option);
+    }
+    const custom = document.createElement('option');
+    custom.value = 'custom';
+    custom.textContent = 'Custom';
+    select.appendChild(custom);
+    select.value = state.workspaceInitialization.presetId || 'full_research';
+  }
+
+  function applyWorkspaceInitializationPreset(presetId) {
+    const data = state.workspaceInitialization.data || {presets: []};
+    const preset = (data.presets || []).find(item => item.id === presetId);
+    if (!preset) return;
+    state.workspaceInitialization.presetId = preset.id;
+    state.workspaceInitialization.selectedModules = new Set(preset.enabled_modules || []);
+    if ($('workspaceInitPreset')) $('workspaceInitPreset').value = preset.id;
+    if ($('workspaceInitPresetDescription')) {
+      $('workspaceInitPresetDescription').textContent = preset.description || '';
+    }
+    renderWorkspaceInitCapabilities();
+    renderWorkspaceInitModules();
+    validateWorkspaceInitialization();
+  }
+
+  function renderWorkspaceInitCapabilities() {
+    const data = state.workspaceInitialization.data || {categories: {}, modules: []};
+    const holder = $('workspaceInitCapabilityRows');
+    if (!holder) return;
+    holder.replaceChildren();
+    for (const [category, label] of Object.entries(data.categories || {})) {
+      const categoryModules = (data.modules || []).filter(item => workspaceInitModuleCategory(item) === category);
+      const selectedCount = categoryModules.filter(item => state.workspaceInitialization.selectedModules.has(item.module_id)).length;
+      const row = document.createElement('label');
+      row.className = 'workspace-init-capability';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = categoryModules.length > 0 && selectedCount === categoryModules.length;
+      checkbox.indeterminate = selectedCount > 0 && selectedCount < categoryModules.length;
+      checkbox.disabled = categoryModules.length === 0;
+      checkbox.dataset.initCapability = category;
+      checkbox.addEventListener('change', () => {
+        for (const item of categoryModules) {
+          if (checkbox.checked) state.workspaceInitialization.selectedModules.add(item.module_id);
+          else state.workspaceInitialization.selectedModules.delete(item.module_id);
+        }
+        markWorkspaceInitializationCustom();
+        renderWorkspaceInitCapabilities();
+        renderWorkspaceInitModules();
+        validateWorkspaceInitialization();
+      });
+      const text = document.createElement('span');
+      text.textContent = categoryModules.length ? `${label} (${selectedCount}/${categoryModules.length})` : `${label} (no installed modules)`;
+      row.append(checkbox, text);
+      holder.appendChild(row);
+    }
+  }
+
+  function renderWorkspaceInitModules() {
+    const data = state.workspaceInitialization.data || {categories: {}, modules: []};
+    const holder = $('workspaceInitModuleRows');
+    if (!holder) return;
+    holder.replaceChildren();
+    const grouped = new Map();
+    for (const item of data.modules || []) {
+      const category = workspaceInitModuleCategory(item);
+      if (!grouped.has(category)) grouped.set(category, []);
+      grouped.get(category).push(item);
+    }
+    if (!grouped.size) {
+      const empty = document.createElement('span');
+      empty.className = 'small-muted';
+      empty.textContent = 'No PAH modules are installed.';
+      holder.appendChild(empty);
+      return;
+    }
+    for (const [category, items] of grouped.entries()) {
+      const group = document.createElement('div');
+      group.className = 'workspace-init-module-group';
+      for (const item of items) {
+        const row = document.createElement('label');
+        row.className = 'workspace-init-module-row';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = state.workspaceInitialization.selectedModules.has(item.module_id);
+        checkbox.dataset.initModuleId = item.module_id;
+        checkbox.addEventListener('change', () => {
+          if (checkbox.checked) state.workspaceInitialization.selectedModules.add(item.module_id);
+          else state.workspaceInitialization.selectedModules.delete(item.module_id);
+          markWorkspaceInitializationCustom();
+          renderWorkspaceInitCapabilities();
+          validateWorkspaceInitialization();
+        });
+        const meta = document.createElement('span');
+        meta.className = 'module-meta';
+        const name = document.createElement('strong');
+        name.textContent = item.display_name || item.module_id;
+        const desc = document.createElement('small');
+        desc.textContent = item.description || (item.capabilities || []).join(', ') || item.module_id;
+        meta.append(name, desc);
+        const categoryLabel = document.createElement('span');
+        categoryLabel.className = 'workspace-init-module-category';
+        categoryLabel.textContent = data.categories?.[category] || item.metadata?.category_label || category;
+        row.append(checkbox, meta, categoryLabel);
+        group.appendChild(row);
+      }
+      holder.appendChild(group);
+    }
+  }
+
+  function renderWorkspaceInitResources() {
+    const data = state.workspaceInitialization.data || {resource_roles: [], shared_roots: []};
+    const holder = $('workspaceInitResourceRows');
+    if (!holder) return;
+    holder.replaceChildren();
+    for (const role of data.resource_roles || []) {
+      const row = document.createElement('div');
+      row.className = 'workspace-init-resource-row';
+      const name = document.createElement('div');
+      name.className = 'workspace-init-resource-name';
+      name.textContent = workspaceResourceLabel(role);
+      const hint = document.createElement('small');
+      hint.textContent = 'optional';
+      name.appendChild(hint);
+
+      const rootLabel = document.createElement('label');
+      rootLabel.textContent = 'Registered root';
+      const root = document.createElement('select');
+      root.dataset.initResourceRoot = role;
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = 'Not mapped';
+      root.appendChild(blank);
+      const sortedRoots = [...(data.shared_roots || [])].sort((a, b) => {
+        const aMatch = a.role === role ? 0 : 1;
+        const bMatch = b.role === role ? 0 : 1;
+        return aMatch - bMatch || String(a.name || a.id).localeCompare(String(b.name || b.id));
+      });
+      for (const shared of sortedRoots) {
+        const option = document.createElement('option');
+        option.value = shared.id;
+        option.disabled = !shared.available;
+        option.textContent = `${shared.name || shared.id}${shared.available ? '' : ' (unavailable on this machine)'}`;
+        root.appendChild(option);
+      }
+      root.addEventListener('change', validateWorkspaceInitialization);
+      rootLabel.appendChild(root);
+
+      const pathLabel = document.createElement('label');
+      pathLabel.textContent = 'Subpath within root';
+      const path = document.createElement('input');
+      path.type = 'text';
+      path.placeholder = 'optional/relative/path';
+      path.spellcheck = false;
+      path.dataset.initResourcePath = role;
+      path.addEventListener('input', validateWorkspaceInitialization);
+      pathLabel.appendChild(path);
+
+      row.append(name, rootLabel, pathLabel);
+      holder.appendChild(row);
+    }
+    if (!(data.shared_roots || []).length) {
+      const note = document.createElement('span');
+      note.className = 'small-muted';
+      note.textContent = 'No registered roots exist yet. You can create the workspace without resources and add roots later from Resources.';
+      holder.prepend(note);
+    }
+  }
+
+  function workspaceInitializationResources() {
+    const resources = {};
+    document.querySelectorAll('[data-init-resource-root]').forEach(select => {
+      const role = select.dataset.initResourceRoot;
+      const rootId = select.value;
+      if (!role || !rootId) return;
+      const relativePath = document.querySelector(`[data-init-resource-path="${role}"]`)?.value.trim() || '';
+      resources[role] = {root_id: rootId, relative_path: relativePath};
+    });
+    return resources;
+  }
+
+  function validateWorkspaceInitialization() {
+    const data = state.workspaceInitialization.data || {modules: [], shared_roots: []};
+    const validation = $('workspaceInitValidation');
+    const create = $('workspaceInitCreate');
+    if (!validation || !create) return false;
+    const errors = [];
+    const warnings = [];
+    const name = $('workspaceInitName')?.value.trim() || '';
+    if (!name) errors.push('Enter a workspace name.');
+    const installedIds = new Set((data.modules || []).map(item => item.module_id));
+    const missingModules = [...state.workspaceInitialization.selectedModules].filter(moduleId => !installedIds.has(moduleId));
+    if (missingModules.length) errors.push(`Unavailable modules selected: ${missingModules.join(', ')}.`);
+    const roots = new Map((data.shared_roots || []).map(item => [item.id, item]));
+    for (const binding of Object.values(workspaceInitializationResources())) {
+      const root = roots.get(binding.root_id);
+      if (!root?.available) errors.push(`Resource root ${binding.root_id} is unavailable on this machine.`);
+      if (String(binding.relative_path || '').split('/').includes('..')) errors.push('Resource subpaths must stay within their registered root.');
+    }
+    if (!state.workspaceInitialization.selectedModules.size) warnings.push('No modules are enabled; this is valid for a Blank Workspace.');
+    if (!Object.keys(workspaceInitializationResources()).length) warnings.push('No resources are mapped yet; they can be added later.');
+    validation.className = `workspace-init-validation${errors.length ? ' error' : (warnings.length ? ' warning' : '')}`;
+    validation.textContent = errors.length ? errors.join(' ') : (warnings.length ? warnings.join(' ') : 'Ready to create this research workspace.');
+    create.disabled = errors.length > 0;
+    return errors.length === 0;
+  }
+
+  async function loadWorkspaceInitialization() {
+    const data = await api('/api/research-workspaces/initialization');
+    state.workspaceInitialization.data = data;
+    const presetIds = new Set((data.presets || []).map(item => item.id));
+    state.workspaceInitialization.presetId = presetIds.has('full_research') ? 'full_research' : ((data.presets || [])[0]?.id || 'custom');
+    state.workspaceInitialization.selectedModules = new Set();
+    renderWorkspaceInitPresetOptions();
+    renderWorkspaceInitResources();
+    applyWorkspaceInitializationPreset(state.workspaceInitialization.presetId);
+    return data;
+  }
+
+  async function openWorkspaceInitialization() {
+    await loadWorkspaceInitialization();
+    const prefill = $('workspaceCreateName')?.value.trim() || '';
+    $('workspaceInitName').value = prefill;
+    $('workspaceInitActivate').checked = true;
+    validateWorkspaceInitialization();
+    if ($('workspaceResourcesDialog')?.open) $('workspaceResourcesDialog').close();
+    $('workspaceInitializationDialog').showModal();
+    window.requestAnimationFrame(() => $('workspaceInitName')?.focus());
+  }
+
+  async function submitWorkspaceInitialization() {
+    if (!validateWorkspaceInitialization()) return;
+    const name = $('workspaceInitName').value.trim();
+    const data = await api('/api/research-workspaces/initialize', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        activate: Boolean($('workspaceInitActivate').checked),
+        enabled_modules: [...state.workspaceInitialization.selectedModules],
+        resources: workspaceInitializationResources(),
+      }),
+    });
+    $('workspaceInitializationDialog').close();
+    $('workspaceCreateName').value = '';
+    state.researchWorkspace.catalog = data;
+    if (data.workspace?.active) {
+      state.tabs = [];
+      state.active = null;
+      state.selectedTree = null;
+      resetAnalyzerView();
+      resetDocumentsView();
+      resetReferencesView();
+      renderTabs();
+      showActive();
+      await loadWorkspaceInfo();
+      await loadModuleProfile();
+      await refreshFullTools({reloadActive: false});
+      await refreshMlLabStatus();
+    }
+    await loadResearchWorkspaceCatalog();
+    toast(`Created ${data.workspace?.name || name}`);
+  }
+
+  function renderWorkspaceModuleRows() {
+    const holder = $('workspaceModuleRows');
+    if (!holder) return;
+    holder.replaceChildren();
+    const modules = state.moduleProfile.modules || [];
+    const categories = state.moduleProfile.categories || {};
+    if (!activeResearchWorkspace()) {
+      const empty = document.createElement('span');
+      empty.className = 'small-muted';
+      empty.textContent = 'Create or activate a workspace to configure modules.';
+      holder.appendChild(empty);
+      return;
+    }
+    if (!modules.length) {
+      const empty = document.createElement('span');
+      empty.className = 'small-muted';
+      empty.textContent = 'No PAH modules are installed or recorded for this workspace.';
+      holder.appendChild(empty);
+      return;
+    }
+
+    const grouped = new Map();
+    for (const item of modules) {
+      const category = item.metadata?.category || 'data_research_utilities';
+      if (!grouped.has(category)) grouped.set(category, []);
+      grouped.get(category).push(item);
+    }
+    for (const [category, items] of grouped.entries()) {
+      const group = document.createElement('div');
+      group.className = 'workspace-module-group';
+      const heading = document.createElement('div');
+      heading.className = 'workspace-module-group-title';
+      heading.textContent = categories[category] || items[0]?.metadata?.category_label || category.replaceAll('_', ' ');
+      group.appendChild(heading);
+      for (const item of items) {
+        const row = document.createElement('label');
+        row.className = `workspace-module-row${item.installed ? '' : ' unavailable'}`;
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = Boolean(item.enabled);
+        checkbox.dataset.moduleId = item.module_id;
+        checkbox.addEventListener('change', () => saveWorkspaceModule(item.module_id, checkbox.checked).catch(error => {
+          checkbox.checked = !checkbox.checked;
+          toast(error.message, true);
+        }));
+        const text = document.createElement('span');
+        text.className = 'workspace-module-name';
+        const name = document.createElement('strong');
+        name.textContent = item.display_name || item.module_id;
+        const desc = document.createElement('small');
+        desc.textContent = item.description || (item.capabilities || []).join(', ') || item.module_id;
+        text.append(name, desc);
+        const status = document.createElement('span');
+        status.className = 'workspace-module-status';
+        status.textContent = moduleStateLabel(item);
+        row.append(checkbox, text, status);
+        group.appendChild(row);
+      }
+      holder.appendChild(group);
+    }
+  }
+
+  async function loadModuleProfile() {
+    const data = await api('/api/orchestration/modules');
+    state.moduleProfile = {
+      workspace_id: data.workspace_id || null,
+      modules: data.modules || [],
+      categories: data.categories || {},
+    };
+    renderModuleNavigation();
+    renderWorkspaceModuleRows();
+    return data;
+  }
+
+  async function saveWorkspaceModule(moduleId, enabled) {
+    const workspace = activeResearchWorkspace();
+    if (!workspace) throw new Error('Activate a research workspace first.');
+    const data = await api(`/api/research-workspaces/${encodeURIComponent(workspace.id)}/modules/${encodeURIComponent(moduleId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({enabled: Boolean(enabled)}),
+    });
+    state.researchWorkspace.catalog = data;
+    if (data.module_profile) {
+      state.moduleProfile = data.module_profile;
+    } else {
+      await loadModuleProfile();
+    }
+    renderResearchWorkspaceCatalog();
+    renderModuleNavigation();
+    await refreshFullTools({reloadActive: false});
+    await refreshMlLabStatus();
+    toast(`${enabled ? 'Enabled' : 'Disabled'} ${workspaceModule(moduleId)?.display_name || moduleId}`);
+  }
+
   function workspaceById(id) {
     return (state.researchWorkspace.catalog?.workspaces || []).find(item => item.id === id) || null;
   }
@@ -2133,6 +2595,7 @@
     renderResearchWorkspaceSelectors();
     renderSharedRoots();
     renderWorkspaceResourceRows();
+    renderWorkspaceModuleRows();
   }
 
   async function loadResearchWorkspaceCatalog() {
@@ -2159,22 +2622,13 @@
     showActive();
     await loadWorkspaceInfo();
     await loadResearchWorkspaceCatalog();
+    await loadModuleProfile();
     const workspace = activeResearchWorkspace();
     toast(`Activated ${workspace?.name || workspaceId}`);
   }
 
   async function createResearchWorkspace() {
-    const name = $('workspaceCreateName').value.trim();
-    if (!name) return toast('Enter a workspace name.', true);
-    const data = await api('/api/research-workspaces', {
-      method: 'POST',
-      body: JSON.stringify({name, activate: true}),
-    });
-    $('workspaceCreateName').value = '';
-    state.researchWorkspace.catalog = data;
-    await loadWorkspaceInfo();
-    await loadResearchWorkspaceCatalog();
-    toast(`Created ${data.workspace?.name || name}`);
+    await openWorkspaceInitialization();
   }
 
   async function saveSharedRoot() {
@@ -2226,6 +2680,7 @@
 
   async function openWorkspaceResourcesDialog() {
     await loadResearchWorkspaceCatalog();
+    await loadModuleProfile();
     resetSharedRootEditor();
     $('workspaceResourcesDialog').showModal();
   }
@@ -2288,6 +2743,7 @@
     showActive();
     await loadWorkspaceInfo();
     await loadResearchWorkspaceCatalog();
+    await loadModuleProfile();
     toast(`Opened ${data.root}`);
   }
 
@@ -3074,13 +3530,20 @@
     const badge = $('analyzerBadge');
     badge.className = 'badge muted';
     const button = $('analyzeButton');
-    button.disabled = !state.workspace || !state.analyzer.available;
+    const analyzerEnabled = workspaceModuleEnabled('code_analyzer');
+    button.disabled = !state.workspace || !state.analyzer.available || !analyzerEnabled;
     button.textContent = state.analyzer.analyzed ? 'Re-analyze' : 'Analyze';
     $('generateProjectDocs').disabled = !state.analyzer.analyzed || state.analyzer.stale;
 
     if (!state.workspace) {
       badge.textContent = 'idle';
       setAnalyzerMessage('Open a workspace to use code analysis.');
+      return;
+    }
+    if (!analyzerEnabled) {
+      badge.className = 'badge muted';
+      badge.textContent = 'disabled';
+      setAnalyzerMessage('Code Analyzer is disabled for this research workspace. Enable it under Resources → Workspace modules.');
       return;
     }
     if (!state.analyzer.available) {
@@ -4547,11 +5010,23 @@
   $('workspacePath').addEventListener('keydown', event => { if (event.key === 'Enter') $('openWorkspace').click(); });
   $('recentWorkspaces').onchange = event => { if (event.target.value) openWorkspace(event.target.value).catch(error => toast(error.message, true)); };
   $('researchWorkspaceSelect').onchange = event => { if (event.target.value) activateResearchWorkspace(event.target.value).catch(error => toast(error.message, true)); };
+  $('workspaceNewButton').onclick = () => openWorkspaceInitialization().catch(error => toast(error.message, true));
   $('workspaceResourcesButton').onclick = () => openWorkspaceResourcesDialog().catch(error => toast(error.message, true));
   $('workspaceResourcesClose').onclick = () => $('workspaceResourcesDialog').close();
   $('workspaceDialogSelect').onchange = event => { if (event.target.value) activateResearchWorkspace(event.target.value).catch(error => toast(error.message, true)); };
   $('workspaceCreateButton').onclick = () => createResearchWorkspace().catch(error => toast(error.message, true));
   $('workspaceCreateName').addEventListener('keydown', event => { if (event.key === 'Enter') createResearchWorkspace().catch(error => toast(error.message, true)); });
+  $('workspaceInitCancel').onclick = () => $('workspaceInitializationDialog').close();
+  $('workspaceInitPreset').onchange = event => {
+    if (event.target.value === 'custom') {
+      markWorkspaceInitializationCustom();
+      validateWorkspaceInitialization();
+      return;
+    }
+    applyWorkspaceInitializationPreset(event.target.value);
+  };
+  $('workspaceInitName').addEventListener('input', validateWorkspaceInitialization);
+  $('workspaceInitCreate').onclick = () => submitWorkspaceInitialization().catch(error => toast(error.message, true));
   $('sharedRootNew').onclick = () => resetSharedRootEditor();
   $('sharedRootSave').onclick = () => saveSharedRoot().catch(error => toast(error.message, true));
 
@@ -4727,7 +5202,7 @@
   window.addEventListener('resize', applyLayoutSizes);
   (async () => {
     try {
-      await Promise.all([loadWorkspaceInfo(), loadResearchWorkspaceCatalog(), refreshComponentVersions({preserveSelection: false}).catch(() => null)]);
+      await Promise.all([loadWorkspaceInfo(), loadResearchWorkspaceCatalog(), loadModuleProfile(), refreshComponentVersions({preserveSelection: false}).catch(() => null)]);
       await restoreLastMode();
     } catch (error) {
       toast(error.message, true);
