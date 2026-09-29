@@ -10,3 +10,5 @@ pah/web/static/vendor/ace/
 pah/web/static/vendor/xterm/
 
 *.egg-info/
+
+/ml_lab_results/
