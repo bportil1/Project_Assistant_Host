@@ -85,7 +85,9 @@ def main() -> None:
                 raise SystemExit(response.get_json().get("error", "Could not open project"))
 
     if not args.no_browser:
-        landing_path = "/" if (args.project or args.workspace_id) else "/launcher"
+        # Always open the main PAH surface on direct startup. The launcher remains
+        # available through its route/UI, but it is not the default browser landing page.
+        landing_path = "/"
         Timer(0.7, lambda: webbrowser.open(f"http://{args.host}:{selected_port}{landing_path}")).start()
     print(
         f"PAH instance {instance_runtime.instance_id} | "
