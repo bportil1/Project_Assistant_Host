@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PAH — Research Workspaces</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='pah.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='pah-launcher.css') }}">
+</head>
+<body class="launcher-page">
+  <main class="launcher-shell">
+    <header class="launcher-header">
+      <div>
+        <div class="launcher-kicker">PAH · Project Assistant Host</div>
+        <h1>Research Workspaces</h1>
+        <p>Open an existing PAH instance or start an isolated instance for a workspace.</p>
+      </div>
+      <div class="launcher-header-actions">
+        <button id="launcherRefresh" type="button">Refresh</button>
+        <a class="launcher-secondary-link" href="/">Current Instance</a>
+      </div>
+    </header>
+
+    <section class="launcher-summary" aria-live="polite">
+      <span id="launcherSummary">Loading workspace catalog…</span>
+      <span id="launcherCurrentInstance"></span>
+    </section>
+
+    <section id="launcherMessage" class="launcher-message hidden" aria-live="polite"></section>
+    <section id="launcherWorkspaces" class="launcher-workspaces" aria-label="Research workspaces"></section>
+    <section id="launcherEmpty" class="launcher-empty hidden">
+      <h2>No research workspaces yet</h2>
+      <p>Open the current PAH instance and create a Research Workspace first.</p>
+      <a href="/">Open PAH</a>
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='pah-launcher.js') }}"></script>
+</body>
+</html>

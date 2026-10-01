@@ -1,0 +1,89 @@
+.launcher-page {
+  min-height: 100vh;
+  margin: 0;
+  background: var(--bg, #101318);
+  color: var(--text, #e8edf2);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.launcher-shell {
+  width: min(1180px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 34px 0 56px;
+}
+
+.launcher-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+  margin-bottom: 22px;
+}
+
+.launcher-header h1 { margin: 4px 0 8px; font-size: clamp(28px, 4vw, 42px); }
+.launcher-header p { margin: 0; color: var(--muted, #9aa6b2); }
+.launcher-kicker { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted, #9aa6b2); }
+.launcher-header-actions { display: flex; align-items: center; gap: 8px; }
+.launcher-header-actions button, .launcher-secondary-link, .launcher-actions button, .launcher-instance-actions button {
+  border: 1px solid var(--border, #343c46);
+  background: var(--surface, #1a2028);
+  color: inherit;
+  border-radius: 7px;
+  padding: 8px 12px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.launcher-actions button.primary { font-weight: 700; }
+.launcher-instance-actions button:disabled { opacity: .45; cursor: default; }
+
+.launcher-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 10px 14px;
+  border: 1px solid var(--border, #343c46);
+  background: var(--surface, #1a2028);
+  border-radius: 8px;
+  margin-bottom: 18px;
+  color: var(--muted, #9aa6b2);
+  font-size: 13px;
+}
+
+.launcher-workspaces { display: grid; gap: 14px; }
+.launcher-card {
+  border: 1px solid var(--border, #343c46);
+  background: var(--surface, #1a2028);
+  border-radius: 10px;
+  padding: 18px;
+}
+.launcher-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+.launcher-card h2 { margin: 0 0 4px; font-size: 20px; }
+.launcher-workspace-id { color: var(--muted, #9aa6b2); font-size: 12px; font-family: ui-monospace, monospace; }
+.launcher-state { white-space: nowrap; font-size: 13px; color: var(--muted, #9aa6b2); }
+.launcher-state.running { color: var(--text, #e8edf2); font-weight: 700; }
+.launcher-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.launcher-meta { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; margin-top: 16px; }
+.launcher-meta-block { min-width: 0; }
+.launcher-meta-label { display: block; margin-bottom: 7px; color: var(--muted, #9aa6b2); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.launcher-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.launcher-tag { border: 1px solid var(--border, #343c46); border-radius: 999px; padding: 4px 8px; font-size: 12px; }
+.launcher-module-list { color: var(--muted, #9aa6b2); font-size: 13px; line-height: 1.6; }
+.launcher-warning-list { margin: 14px 0 0; padding: 10px 12px 10px 30px; border: 1px solid var(--border, #343c46); border-radius: 7px; }
+.launcher-warning-list li + li { margin-top: 5px; }
+.launcher-instances { margin-top: 16px; border-top: 1px solid var(--border, #343c46); padding-top: 12px; }
+.launcher-instance { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 7px 0; font-size: 12px; }
+.launcher-instance + .launcher-instance { border-top: 1px solid var(--border, #343c46); }
+.launcher-instance-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
+.launcher-instance-status { color: var(--muted, #9aa6b2); }
+.launcher-instance a { color: inherit; }
+.launcher-message { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--border, #343c46); border-radius: 7px; }
+.launcher-empty { text-align: center; padding: 60px 16px; color: var(--muted, #9aa6b2); }
+.hidden { display: none !important; }
+.workspace-launcher-link { display: inline-flex; align-items: center; text-decoration: none; }
+
+@media (max-width: 760px) {
+  .launcher-shell { width: min(100% - 24px, 1180px); padding-top: 20px; }
+  .launcher-header, .launcher-card-top, .launcher-summary { flex-direction: column; }
+  .launcher-meta { grid-template-columns: 1fr; }
+  .launcher-instance { grid-template-columns: 1fr; }
+}
