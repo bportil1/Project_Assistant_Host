@@ -104,6 +104,7 @@ def test_controller_advances_by_registered_artifacts_not_button_history(tmp_path
         location=str(tmp_path / "benchmark.json"),
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
+        capabilities=("benchmark_reference",),
     ))
     inventory.register(ArtifactRef(
         artifact_id="domain",
@@ -155,6 +156,7 @@ def test_optional_domain_mapping_does_not_block_representation(tmp_path: Path):
         location=str(tmp_path / "benchmark.json"),
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
+        capabilities=("benchmark_reference",),
     ),))
     controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
     step = _steps(controller.snapshot())["representation_analysis"]
@@ -281,6 +283,7 @@ def test_invalid_artifact_does_not_satisfy_workflow_requirement():
         producer_module="pypique",
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
+        capabilities=("benchmark_reference",),
         validation_state="invalid",
         validation_errors=("missing feature names",),
     ),))
@@ -289,7 +292,7 @@ def test_invalid_artifact_does_not_satisfy_workflow_requirement():
     assert step["state"] == "blocked"
     assert step["missing_requirements"][0]["producer_module"] == "pypique"
     assert step["blocking_reason"] == (
-        "Missing required artifact: feature_dataset (from pypique, schema pah.feature-dataset.matrix@1)."
+        "Missing required artifact: feature_dataset (from pypique, schema pah.feature-dataset.matrix@1, capability benchmark_reference)."
     )
 
 
@@ -370,6 +373,7 @@ def test_representation_execution_context_routes_neutral_pypique_handoff(tmp_pat
             location=str(tmp_path / "feature_dataset.json"),
             schema_id="pah.feature-dataset.matrix",
             schema_version="1",
+            capabilities=("benchmark_reference",),
             validation_state="valid",
         ),
         ArtifactRef(
@@ -379,6 +383,7 @@ def test_representation_execution_context_routes_neutral_pypique_handoff(tmp_pat
             location=str(tmp_path / "domain_mapping.json"),
             schema_id="pah.domain-mapping.feature-groups",
             schema_version="1",
+            capabilities=("benchmark_reference",),
             validation_state="valid",
         ),
     ))
@@ -400,6 +405,7 @@ def test_invalid_representation_output_does_not_complete_learning_step(tmp_path:
             producer_module="pypique",
             schema_id="pah.feature-dataset.matrix",
             schema_version="1",
+            capabilities=("benchmark_reference",),
             validation_state="valid",
         ),
         ArtifactRef(
@@ -423,7 +429,7 @@ def test_invalid_representation_output_does_not_complete_learning_step(tmp_path:
 def test_combined_hsqa_stage_requires_both_schema_valid_outputs():
     feature = ArtifactRef(
         artifact_id="feature", kind="feature_dataset", producer_module="pypique",
-        schema_id="pah.feature-dataset.matrix", schema_version="1", validation_state="valid",
+        schema_id="pah.feature-dataset.matrix", schema_version="1", capabilities=("benchmark_reference",), validation_state="valid",
     )
     representation = ArtifactRef(
         artifact_id="representation", kind="representation", producer_module="hsqa_dbn",
@@ -576,6 +582,7 @@ def test_artifact_registry_preserves_immutable_file_history_and_persists_selecti
         location=str(source),
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
+        capabilities=("benchmark_reference",),
         project_id=str(tmp_path),
         validation_state="valid",
         metadata={"runtime_managed": True},
@@ -592,6 +599,7 @@ def test_artifact_registry_preserves_immutable_file_history_and_persists_selecti
         location=str(source),
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
+        capabilities=("benchmark_reference",),
         project_id=str(tmp_path),
         validation_state="valid",
         metadata={"runtime_managed": True},
@@ -632,6 +640,7 @@ def test_historical_input_selection_routes_branch_and_marks_current_descendants_
         location=str(feature_path),
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
+        capabilities=("benchmark_reference",),
         project_id=str(tmp_path),
         validation_state="valid",
         metadata={"runtime_managed": True},
@@ -672,6 +681,7 @@ def test_historical_input_selection_routes_branch_and_marks_current_descendants_
         location=str(feature_path),
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
+        capabilities=("benchmark_reference",),
         project_id=str(tmp_path),
         validation_state="valid",
         metadata={"runtime_managed": True},
@@ -728,6 +738,7 @@ def test_representation_output_reports_registered_but_invalid_provider_artifact(
         location=str(tmp_path / "feature.json"),
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
+        capabilities=("benchmark_reference",),
         validation_state="valid",
     )
     invalid_representation = ArtifactRef(
@@ -760,6 +771,7 @@ def test_representation_execution_context_exposes_feature_dataset_history_to_pro
         location=str(tmp_path / "current.json"),
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
+        capabilities=("benchmark_reference",),
         validation_state="valid",
         created_at="2026-09-15T00:00:00+00:00",
     )
@@ -770,6 +782,7 @@ def test_representation_execution_context_exposes_feature_dataset_history_to_pro
         location=str(tmp_path / "history.json"),
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
+        capabilities=("benchmark_reference",),
         validation_state="valid",
         created_at="2026-09-10T00:00:00+00:00",
         metadata={"history_snapshot": True, "history_selectable": True},
@@ -794,6 +807,7 @@ def test_old_host_findings_artifact_does_not_become_a_hidden_quality_input(tmp_p
         producer_module="pah",
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
+        capabilities=("benchmark_reference",),
         project_id=str(tmp_path),
         validation_state="valid",
     )
@@ -840,6 +854,7 @@ def test_existing_hsqa_bundle_can_be_selected_as_step3_input(tmp_path: Path):
         producer_module="pypique",
         schema_id="pah.feature-dataset.matrix",
         schema_version="1",
+        capabilities=("benchmark_reference",),
         project_id=str(tmp_path),
         validation_state="valid",
     )
@@ -927,3 +942,20 @@ def test_code_analysis_sync_recovers_existing_pypique_feature_handoff(tmp_path: 
         assert artifact["schema_version"] == "1"
         assert artifact["validation_state"] == "valid"
         assert artifact["metadata"]["reconciled_existing_handoff"] is True
+
+
+def test_representation_step_rejects_non_benchmark_feature_dataset(tmp_path: Path):
+    inventory = ArtifactInventory((ArtifactRef(
+        artifact_id="target-feature",
+        kind="feature_dataset",
+        producer_module="pypique",
+        location=str(tmp_path / "target.json"),
+        schema_id="pah.feature-dataset.matrix",
+        schema_version="1",
+        capabilities=("target_evaluation",),
+        validation_state="valid",
+    ),))
+    controller = CodeAnalysisLabController(_integrated_modules(), lab=CODE_ANALYSIS_LAB, artifacts=inventory)
+    step = _steps(controller.snapshot(context=ModuleContext(project_root=tmp_path)))["representation_analysis"]
+    assert step["state"] == "blocked"
+    assert "capability benchmark_reference" in step["blocking_reason"]

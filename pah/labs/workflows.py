@@ -37,18 +37,18 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
         ),
         WorkflowStep(
             step_id="representation_analysis",
-            label="Representation & information analysis",
+            label="Benchmark representation & information analysis",
             capability="representation_learning",
             description=(
-                "Use HSQA_DBN with the pyPIQUE feature dataset from this workflow. Select a compatible "
-                "exported RepresentationBundle when analysis already exists, or open HSQA_DBN to create/run one. "
-                "Representation and analysis remain separately tracked artifacts."
+                "Train HSQA_DBN only from pyPIQUE benchmark-reference data, never from the current target project. "
+                "Select a compatible exported RepresentationBundle when benchmark analysis already exists, or open "
+                "HSQA_DBN to create/run one. Representation and analysis remain reusable model-development artifacts."
             ),
             provider_module="hsqa_dbn",
             requires=(
                 ArtifactRequirement(
                     kind="feature_dataset", schema_id="pah.feature-dataset.matrix", schema_version="1",
-                    producer_module="pypique",
+                    producer_module="pypique", capability="benchmark_reference",
                 ),
                 ArtifactRequirement(
                     kind="domain_mapping", schema_id="pah.domain-mapping.feature-groups", schema_version="1",
