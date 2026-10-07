@@ -893,3 +893,37 @@ def test_incompatible_discovered_hsqa_bundle_cannot_be_selected(tmp_path: Path):
             {"path": str(bundle), "compatibility": "historical"},
             context=ModuleContext(project_root=tmp_path),
         )
+
+
+def test_code_analysis_sync_recovers_existing_pypique_feature_handoff(tmp_path: Path):
+    import json
+    pytest.importorskip("flask")
+    from pah import create_app
+
+    project = tmp_path / "project"
+    handoff = project / "pyPIQUE_results" / "pah_handoff" / "feature_dataset.json"
+    handoff.parent.mkdir(parents=True)
+    handoff.write_text(json.dumps({
+        "schema": "pah.feature-dataset.matrix",
+        "schema_version": 1,
+        "sample_ids": ["a", "b"],
+        "feature_ids": ["CWE-79"],
+        "values": [[1.0], [2.0]],
+    }), encoding="utf-8")
+
+    app = create_app(state_dir=tmp_path / "state")
+    app.config.update(TESTING=True)
+    with app.test_client() as client:
+        assert client.post("/api/workspace/open", json={"path": str(project)}).status_code == 200
+        response = client.get("/api/orchestration/code-analysis")
+        assert response.status_code == 200
+        registry = client.get("/api/orchestration/artifacts").get_json()
+        artifact = next(
+            item for item in registry["artifacts"]
+            if item["artifact_id"] == "pypique-feature-dataset-current"
+        )
+        assert artifact["producer_module"] == "pypique"
+        assert artifact["schema_id"] == "pah.feature-dataset.matrix"
+        assert artifact["schema_version"] == "1"
+        assert artifact["validation_state"] == "valid"
+        assert artifact["metadata"]["reconciled_existing_handoff"] is True

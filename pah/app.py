@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import json
 import os
 import shlex
 from pathlib import Path
@@ -498,6 +499,70 @@ def create_app(
             if artifact.artifact_id not in active_ids:
                 lab_artifacts.deactivate_current(artifact.artifact_id)
 
+    def reconcile_pypique_feature_handoff() -> None:
+        """Recover an already-materialized pyPIQUE feature handoff into the host registry.
+
+        Runtime discovery remains authoritative. This fallback only repairs the host-side
+        alias when pyPIQUE has already written its neutral PAH handoff but a transient
+        runtime/context refresh omitted the alias. The host validates only the neutral
+        artifact contract; it does not interpret pyPIQUE scientific internals.
+        """
+        if workspaces.root is None or not workspaces.is_module_enabled("pypique"):
+            return
+        requirement = ArtifactRequirement(
+            kind="feature_dataset",
+            producer_module="pypique",
+            schema_id="pah.feature-dataset.matrix",
+            schema_version="1",
+        )
+        if lab_artifacts.matching(requirement, project_id=str(workspaces.root)):
+            return
+        handoff = Path(workspaces.root) / "pyPIQUE_results" / "pah_handoff" / "feature_dataset.json"
+        if not handoff.is_file():
+            return
+        errors: list[str] = []
+        try:
+            payload = json.loads(handoff.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(str(exc))
+            payload = {}
+        if payload.get("schema") != "pah.feature-dataset.matrix":
+            errors.append(f"unexpected feature dataset schema: {payload.get('schema')!r}")
+        if int(payload.get("schema_version", 0) or 0) != 1:
+            errors.append(f"unsupported feature dataset schema_version: {payload.get('schema_version')!r}")
+        feature_ids = payload.get("feature_ids") or []
+        sample_ids = payload.get("sample_ids") or []
+        values = payload.get("values") or []
+        if not isinstance(feature_ids, list) or not feature_ids:
+            errors.append("feature dataset requires feature_ids")
+        if not isinstance(sample_ids, list) or len(sample_ids) < 2:
+            errors.append("feature dataset requires at least two sample_ids")
+        if not isinstance(values, list) or len(values) != len(sample_ids):
+            errors.append("feature dataset values must contain one row per sample")
+        elif isinstance(feature_ids, list):
+            width = len(feature_ids)
+            if any(not isinstance(row, list) or len(row) != width for row in values):
+                errors.append("feature dataset row width does not match feature_ids")
+        lab_artifacts.register_current(ArtifactRef(
+            artifact_id="pypique-feature-dataset-current",
+            kind="feature_dataset",
+            producer_module="pypique",
+            location=str(handoff.resolve()),
+            schema_id="pah.feature-dataset.matrix",
+            schema_version="1",
+            project_id=str(workspaces.root),
+            capabilities=("quality_modeling", "representation_learning"),
+            validation_state="invalid" if errors else "valid",
+            validation_errors=tuple(errors),
+            metadata={
+                "runtime_managed": True,
+                "registry_alias": True,
+                "reconciled_existing_handoff": True,
+                "history_selectable": True,
+            },
+            provenance={"source": "pyPIQUE neutral PAH handoff rediscovery"},
+        ))
+
     def sync_code_analysis_lab_artifacts() -> None:
         sync_code_analysis_artifacts()
         try:
@@ -511,6 +576,7 @@ def create_app(
             deactivate_runtime_aliases("pypique")
         else:
             sync_runtime_artifacts("pypique", pypique_context)
+        reconcile_pypique_feature_handoff()
 
         try:
             _, hsqa_context = code_analysis_lab.execution_context(
