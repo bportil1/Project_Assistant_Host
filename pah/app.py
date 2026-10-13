@@ -514,6 +514,7 @@ def create_app(
             producer_module="pypique",
             schema_id="pah.feature-dataset.matrix",
             schema_version="1",
+            capability="benchmark_reference",
         )
         if lab_artifacts.matching(requirement, project_id=str(workspaces.root)):
             return
@@ -551,7 +552,7 @@ def create_app(
             schema_id="pah.feature-dataset.matrix",
             schema_version="1",
             project_id=str(workspaces.root),
-            capabilities=("quality_modeling", "representation_learning"),
+            capabilities=("quality_modeling", "representation_learning", "benchmark_reference"),
             validation_state="invalid" if errors else "valid",
             validation_errors=tuple(errors),
             metadata={
