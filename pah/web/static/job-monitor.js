@@ -105,7 +105,13 @@
       visible += shown.size;
     }
     if (!visible) {
-      tree.appendChild(element('p', 'jm-notice', monitor.sources.length ? 'No jobs match this filter.' : 'No registered job sources yet. JM-3 will instrument pyPIQUE and EBM / DBN.'));
+      const recorded = monitor.sources.reduce((count, source) => count + (Array.isArray(source.jobs) ? source.jobs.length : 0), 0);
+      const text = !recorded
+        ? 'No job events have been published for this workspace. This does not mean jobs succeeded. Restart older module processes and verify their monitoring bridge.'
+        : $('jobMonitorFilter').value === 'failed'
+          ? 'No failures recorded among monitored jobs. Uninstrumented requests are not included.'
+          : 'No recorded jobs match this filter.';
+      tree.appendChild(element('p', 'jm-notice', text));
     }
   }
   function renderDetails() {
