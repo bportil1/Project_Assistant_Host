@@ -7,7 +7,7 @@ import shlex
 from pathlib import Path
 from threading import Lock
 
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, abort, jsonify, render_template, request, send_file
 
 from .core.environments import EnvironmentError, EnvironmentManager
 from .core.filesystem import FileSystemError, FileSystemService
@@ -16,6 +16,9 @@ from .core.terminal import TerminalError, TerminalManager
 from .core.workspace import WorkspaceError, WorkspaceManager
 from .component_versions import ComponentVersionError, ComponentVersionManager
 from .full_tools import FullToolManager
+from .jobs import JobMonitorAggregator
+from pah_jobs.exchange import WorkspaceJobReader
+from .job_instrumentation import HostWorkflowMonitor
 from .instance_runtime import InstanceRuntime
 from .launcher import LauncherError, LauncherManager
 from .contracts import ArtifactRef, ArtifactRequirement, ModuleContext, coerce_artifact_ref
@@ -133,6 +136,12 @@ def create_app(
     app.extensions["pah_component_versions"] = component_versions
     app.extensions["pah_instance_runtime"] = instance_runtime
     app.extensions["pah_launcher"] = launcher
+    # JM-2: read-only view; module owners attach explicit readers in JM-3.
+    job_monitor = JobMonitorAggregator()
+    app.extensions["pah_job_monitor"] = job_monitor
+    job_observer = HostWorkflowMonitor()
+    job_monitor.attach(job_observer.registry.reader())
+    app.extensions["pah_job_observer"] = job_observer
     def bind_workspace_services() -> None:
         instance_runtime.set_workspace(workspaces.active_workspace_id)
         enabled_registry = module_registry.subset(workspaces.enabled_modules())
@@ -488,7 +497,18 @@ def create_app(
                     artifact_kinds=artifact_kinds,
                 )
             return
-        discovered = runtime_registry.artifacts(module_id, context or orchestration_context())
+        resolved_context = context or orchestration_context()
+        try:
+            discovered = runtime_registry.artifacts(module_id, resolved_context)
+        except Exception as exc:
+            job_observer.discovery_error(module_id, exc)
+            raise
+        if discovered is not None:
+            job_observer._safe(
+                job_observer.artifact_refresh, module_id, discovered,
+                workspace=str(workspaces.root or ""),
+                phase=str(resolved_context.runtime.get("pah_step") or ""),
+            )
         if discovered is None:
             return
         reconcile_module_artifacts(
@@ -739,12 +759,14 @@ def create_app(
     def orchestration_module_launch(module_id: str):
         payload = request.get_json(silent=True) or {}
         try:
-            require_enabled_module(module_id)
-            launch = runtime_registry.launch(
-                module_id,
-                orchestration_context(),
-                detached=bool(payload.get("detached", False)),
-            )
+            with job_observer.trace(f"Launch module {module_id}") as observed:
+                require_enabled_module(module_id)
+                launch = runtime_registry.launch(
+                    module_id,
+                    orchestration_context(),
+                    detached=bool(payload.get("detached", False)),
+                )
+                observed.launched(launch)
         except RuntimeRegistryError as exc:
             return error_response(exc, 503)
         return jsonify({"ok": True, **launch.to_dict()})
@@ -907,12 +929,16 @@ def create_app(
         payload = request.get_json(silent=True) or {}
         sync_code_analysis_lab_artifacts()
         try:
-            module_id, context = code_analysis_lab.execution_context(step_id, orchestration_context())
-            launch = runtime_registry.launch(
-                module_id,
-                context,
-                detached=bool(payload.get("detached", False)),
-            )
+            with job_observer.trace(f"Launch analysis step {step_id}") as observed:
+                module_id, context = code_analysis_lab.execution_context(step_id, orchestration_context())
+                observed.note(f"Resolved provider: {module_id}")
+                observed.note(f"Selected inputs: {', '.join(sorted((context.runtime.get('input_artifacts') or {}).keys())) or 'none'}")
+                launch = runtime_registry.launch(
+                    module_id,
+                    context,
+                    detached=bool(payload.get("detached", False)),
+                )
+                observed.launched(launch)
         except (ValueError, RuntimeRegistryError) as exc:
             return error_response(exc, 409)
         return jsonify({"ok": True, "step_id": step_id, **launch.to_dict()})
@@ -920,10 +946,13 @@ def create_app(
     @app.get("/api/orchestration/code-analysis")
     def orchestration_code_analysis():
         sync_code_analysis_lab_artifacts()
+        overview = code_analysis_lab.snapshot(context=orchestration_context())
+        job_observer._safe(job_observer.workflow_snapshot, overview.get("workflow") or {},
+                           workspace=str(workspaces.root or ""))
         return jsonify({
             "ok": True,
             "workspace": str(workspaces.root) if workspaces.root else None,
-            **code_analysis_lab.snapshot(context=orchestration_context()),
+            **overview,
         })
 
     @app.get("/api/workspace")
@@ -1862,6 +1891,50 @@ def create_app(
                 content = fs().read_text(document_path)["content"]
             response["document"] = index.inspect_content(document_path, str(content))
         return jsonify(response)
+
+    monitored_workspace = {"root": None}
+
+    def attach_workspace_job_sources():
+        # Only the explicitly selected workspace's opt-in publisher snapshots.
+        root = str(workspaces.root.resolve()) if workspaces.root is not None else None
+        if monitored_workspace["root"] == root:
+            return
+        for owner in ("pypique", "hsqa_dbn"):
+            job_monitor.detach(owner)
+        monitored_workspace["root"] = root
+        if root is not None:
+            journal_dir = Path(root) / ".pah" / "job_monitor"
+            for owner in ("pypique", "hsqa_dbn"):
+                job_monitor.attach(WorkspaceJobReader(journal_dir, owner))
+
+    @app.get("/api/jobs")
+    def job_monitor_snapshot():
+        # Only explicit module readers and PIDs returned by trusted runtimes.
+        job_observer._safe(job_observer.attach_runtime_readers, runtime_registry, job_monitor)
+        attach_workspace_job_sources()
+        job_observer._safe(job_observer.observe_processes)
+        response = jsonify({"ok": True, **job_monitor.snapshot()})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/api/jobs/<owner>/<job_id>/output")
+    def job_monitor_output(owner: str, job_id: str):
+        attach_workspace_job_sources()
+        try:
+            limit = int(request.args.get("limit", "100"))
+        except (TypeError, ValueError):
+            abort(400, description="limit must be an integer")
+        if not 1 <= limit <= 100:
+            abort(400, description="limit must be between 1 and 100")
+        try:
+            lines = job_monitor.outputs(owner, job_id, limit=limit)
+        except KeyError:
+            abort(404, description="registered job not found")
+        except ValueError:
+            abort(400, description="limit exceeds source capacity")
+        response = jsonify({"ok": True, "owner": owner, "job_id": job_id, "output": lines})
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/api/runtime/instance")
     def runtime_instance():

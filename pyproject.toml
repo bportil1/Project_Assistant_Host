@@ -16,7 +16,7 @@ pah = "pah.cli:main"
 dev = ["pytest>=8"]
 
 [tool.setuptools.packages.find]
-include = ["pah*"]
+include = ["pah*", "pah_jobs*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

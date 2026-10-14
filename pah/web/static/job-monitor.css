@@ -1,0 +1,73 @@
+/* JM-2 — on-demand, read-only overlay. Does not change main pane sizing. */
+.job-monitor[hidden] { display: none !important; }
+.job-monitor {
+  --jm-width: 440px;
+  position: fixed;
+  z-index: 70;
+  right: 0;
+  top: 46px;
+  bottom: 0;
+  width: min(var(--jm-width), 100vw);
+  min-width: min(320px, 100vw);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: -10px 0 32px rgba(0,0,0,.4);
+  font-size: 12px;
+}
+.job-monitor-resize {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  z-index: 1;
+}
+.job-monitor-resize:hover, .job-monitor-resize:focus-visible { background: rgba(132,169,255,.3); outline: none; }
+.job-monitor-header, .job-monitor-toolbar, .jm-inspector-heading, .jm-log-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.job-monitor-header { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.job-monitor-header strong { font-size: 14px; }
+.jm-count { color: var(--muted); margin-left: 9px; font-size: 11px; }
+.jm-actions { display: flex; gap: 6px; }
+.jm-actions button { padding: 4px 7px; }
+.job-monitor-toolbar { padding: 9px 12px; border-bottom: 1px solid var(--border); }
+.job-monitor-toolbar select { flex: 1; min-width: 0; padding: 5px; }
+.jm-muted { font-size: 10px; color: var(--muted); }
+.jm-notice { margin: 0; padding: 8px 12px; font-size: 11px; color: var(--muted); background: #11151b; border-bottom: 1px solid var(--border); line-height: 1.45; }
+.jm-notice.error { color: var(--danger); }
+.job-monitor-tree { flex: 1 1 45%; overflow: auto; min-height: 85px; padding: 8px; }
+.jm-source { margin: 6px 0; }
+.jm-source-title { font-weight: 700; color: #bbc9dc; padding: 5px 4px; border-bottom: 1px solid var(--border); }
+.jm-row { display: flex; gap: 5px; align-items: center; padding: 3px 2px; min-height: 31px; }
+.jm-row.selected { background: #26314b; border-radius: 4px; }
+.jm-expand { flex: 0 0 22px; padding: 2px; border: none; background: transparent; }
+.jm-expand:disabled { opacity: .3; }
+.jm-select { flex: 1; min-width: 0; padding: 3px 5px; text-align: left; background: none; border: 0; font-size: 11px; }
+.jm-select:hover { background: #293247; }
+.jm-select-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jm-select-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; }
+.jm-state { padding: 3px 5px; border-radius: 4px; background: #2b313b; color: #bec5cf; font-size: 10px; white-space: nowrap; }
+.jm-state.running { color: #acd5ff; }
+.jm-state.succeeded { color: #a9d89e; }
+.jm-state.failed, .jm-state.timed_out, .jm-state.interrupted { color: #ffaaaa; }
+.jm-state.paused, .jm-state.unknown { color: #e5c37e; }
+.job-monitor-inspector { flex: 1 1 55%; border-top: 1px solid var(--border); display: flex; flex-direction: column; min-height: 160px; overflow: hidden; }
+.jm-inspector-heading { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.jm-inspector-heading strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jm-details { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 5px 8px; margin: 0; padding: 10px 12px; overflow-y: auto; max-height: 42%; font-size: 11px; }
+.jm-details dt { color: var(--muted); }
+.jm-details dd { margin: 0; overflow-wrap: anywhere; font-family: var(--editor-font); }
+.jm-log-heading { border-top: 1px solid var(--border); padding: 8px 12px; font-weight: 650; }
+.jm-log { flex: 1; min-height: 48px; overflow: auto; margin: 0; padding: 10px 12px; background: #0e1116; font: 11px/1.55 var(--editor-font); color: #c4cbd8; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 540px) {
+  .job-monitor { width: 100vw !important; min-width: 0; }
+  .job-monitor-resize { display: none; }
+}

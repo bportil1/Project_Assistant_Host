@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='pah-workspace.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='pah-tools.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='pah-labs.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='job-monitor.css') }}">
 </head>
 <body>
 <div id="app">
@@ -58,6 +59,7 @@
           <button type="button" data-pane-target="project" title="Toggle project tree (Ctrl+Alt+P)"><span>Project Tree</span><span class="service-menu-meta" data-pane-indicator="project">Shown</span></button>
           <button type="button" data-pane-target="context" title="Toggle project tools (Ctrl+Alt+O)"><span>Project Tools</span><span class="service-menu-meta" data-pane-indicator="context">Shown</span></button>
           <button type="button" data-pane-target="terminal" title="Toggle terminal (Ctrl+Alt+K)"><span>Terminal</span><span class="service-menu-meta" data-pane-indicator="terminal">Shown</span></button>
+          <button id="toolsJobMonitor" type="button"><span>Job Monitor</span><span class="service-menu-meta">View</span></button>
           <button id="toolsTerminalWindow" type="button"><span>Terminal Window</span><span class="service-menu-meta">Open</span></button>
           <div class="service-menu-separator" role="separator"></div>
           <button id="toolsEnvironment" type="button"><span>Python Environment</span><span id="toolsEnvironmentStatus" class="service-menu-meta">system</span></button>
@@ -88,6 +90,7 @@
       <select id="recentWorkspaces" title="Recent repository roots"><option value="">Recent…</option></select>
     </div>
     <div class="top-actions">
+      <button id="jobMonitorToggle" type="button" aria-controls="jobMonitorDrawer" aria-expanded="false" title="Open read-only Job Monitor">Jobs</button>
       <button id="runButton" disabled title="Run active Python file">▶ Run</button>
       <button id="saveButton" disabled title="Save (Ctrl+S)">Save</button>
     </div>
@@ -704,6 +707,36 @@
 <script src="{{ url_for('static', filename='vendor/ace/ace.js') }}"></script>
 <script src="{{ url_for('static', filename='vendor/xterm/xterm.js') }}"></script>
 <script src="{{ url_for('static', filename='vendor/xterm/addon-fit.js') }}"></script>
+<!-- JM-2 is a fully removable overlay, available in every PAH mode. -->
+<aside id="jobMonitorDrawer" class="job-monitor" aria-label="Job Monitor" hidden>
+  <div id="jobMonitorResize" class="job-monitor-resize" role="separator" aria-orientation="vertical" aria-label="Resize job monitor" tabindex="0"></div>
+  <header class="job-monitor-header">
+    <div><strong>Job Monitor</strong><span id="jobMonitorCount" class="jm-count">0 jobs</span></div>
+    <div class="jm-actions">
+      <button id="jobMonitorRefresh" type="button" title="Refresh registered jobs">↻ Refresh</button>
+      <button id="jobMonitorClose" type="button" title="Close Job Monitor" aria-label="Close Job Monitor">×</button>
+    </div>
+  </header>
+  <div class="job-monitor-toolbar">
+    <label for="jobMonitorFilter">Show</label>
+    <select id="jobMonitorFilter">
+      <option value="active">Active</option>
+      <option value="all">All recent</option>
+      <option value="failed">Failed / timed out</option>
+      <option value="succeeded">Completed</option>
+    </select>
+    <span id="jobMonitorUpdated" class="jm-muted" aria-live="polite">Not loaded</span>
+  </div>
+  <p id="jobMonitorNotice" class="jm-notice" role="status">JM-3 will connect pyPIQUE and EBM / DBN job sources.</p>
+  <div id="jobMonitorTree" class="job-monitor-tree" role="region" aria-label="Jobs by module"></div>
+  <section class="job-monitor-inspector" aria-label="Selected job details">
+    <div class="jm-inspector-heading"><strong id="jobMonitorSelection">Select a job</strong><span id="jobMonitorState" class="jm-muted"></span></div>
+    <dl id="jobMonitorDetails" class="jm-details"></dl>
+    <div class="jm-log-heading">Latest captured output <span class="jm-muted">read-only</span></div>
+    <pre id="jobMonitorLog" class="jm-log" aria-label="Selected job output">Select a registered job to inspect its output.</pre>
+  </section>
+</aside>
 <script src="{{ url_for('static', filename='pah.js') }}"></script>
+<script src="{{ url_for('static', filename='job-monitor.js') }}"></script>
 </body>
 </html>
