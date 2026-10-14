@@ -1650,7 +1650,8 @@ def create_app(
         try:
             require_enabled_module("research_search")
             require_enabled_module("reference_manager")
-            return jsonify({"ok": True, **full_tools.launch_research_search()})
+            with job_observer.trace("Research Search launch dispatch"):
+                return jsonify({"ok": True, **full_tools.launch_research_search()})
         except RuntimeError as exc:
             return error_response(exc, 503)
 
@@ -1734,13 +1735,14 @@ def create_app(
     @app.post("/api/references/sync")
     def reference_sync():
         payload = request.get_json(silent=True) or {}
-        return jsonify({
-            "ok": True,
-            **references.sync(
-                detect_moves=bool(payload.get("detect_moves", True)),
-                extract_titles=bool(payload.get("extract_titles", False)),
-            ),
-        })
+        with job_observer.trace("Reference Manager library sync"):
+            return jsonify({
+                "ok": True,
+                **references.sync(
+                    detect_moves=bool(payload.get("detect_moves", True)),
+                    extract_titles=bool(payload.get("extract_titles", False)),
+                ),
+            })
 
     @app.get("/api/references/duplicates")
     def reference_duplicates():
@@ -1749,7 +1751,8 @@ def create_app(
     @app.post("/api/references/bibtex/import")
     def reference_import_bibtex():
         payload = request.get_json(silent=True) or {}
-        return jsonify({"ok": True, **references.import_bibtex(str(payload.get("content", "")))})
+        with job_observer.trace("Reference Manager BibTeX import"):
+            return jsonify({"ok": True, **references.import_bibtex(str(payload.get("content", "")))})
 
     @app.get("/api/references/pdf")
     def reference_pdf():
@@ -1899,12 +1902,12 @@ def create_app(
         root = str(workspaces.root.resolve()) if workspaces.root is not None else None
         if monitored_workspace["root"] == root:
             return
-        for owner in ("pypique", "hsqa_dbn"):
+        for owner in ("pypique", "hsqa_dbn", "ml_lab", "code_analyzer", "tech_documents", "reference_manager", "research_search"):
             job_monitor.detach(owner)
         monitored_workspace["root"] = root
         if root is not None:
             journal_dir = Path(root) / ".pah" / "job_monitor"
-            for owner in ("pypique", "hsqa_dbn"):
+            for owner in ("pypique", "hsqa_dbn", "ml_lab", "code_analyzer", "tech_documents", "reference_manager", "research_search"):
                 job_monitor.attach(WorkspaceJobReader(journal_dir, owner))
 
     @app.get("/api/jobs")

@@ -5,9 +5,25 @@ import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from pah_jobs.exchange import monitor_directory
 from typing import Any, Callable
 
 from werkzeug.serving import WSGIRequestHandler, make_server
+
+
+class _WorkspaceMonitorWSGI:
+    """Bind a hosted module request to its explicit workspace for read-only telemetry."""
+
+    def __init__(self, application, workspace: Path | None):
+        self.application = application
+        self.workspace = workspace
+
+    def __call__(self, environ, start_response):
+        if self.workspace is None:
+            return self.application(environ, start_response)
+        with monitor_directory(self.workspace / ".pah" / "job_monitor"):
+            return self.application(environ, start_response)
 
 
 class _QuietHandler(WSGIRequestHandler):
@@ -269,10 +285,12 @@ class FullToolManager:
         try:
             from code_analyzer.web.app import create_app
 
-            app = create_app(
-                self._workspace,
-                on_analysis=self._analysis_change_callback,
-            )
+            with monitor_directory(self._workspace / ".pah" / "job_monitor"):
+                app = create_app(
+                    self._workspace,
+                    on_analysis=self._analysis_change_callback,
+                )
+            app.wsgi_app = _WorkspaceMonitorWSGI(app.wsgi_app, self._workspace)
             server.start(app)
             self._errors["analysis"] = None
         except Exception as exc:
@@ -416,6 +434,9 @@ class FullToolManager:
                             response.set_data(text.replace(marker, addition + marker, 1))
                             response.headers["Content-Length"] = str(len(response.get_data()))
                     return response
+                if isinstance(web_app.app.wsgi_app, _WorkspaceMonitorWSGI):
+                    web_app.app.wsgi_app = web_app.app.wsgi_app.application
+                web_app.app.wsgi_app = _WorkspaceMonitorWSGI(web_app.app.wsgi_app, self._document_root or self._workspace)
                 self._servers["documents"].start(web_app.app)
             self._errors["documents"] = None
         except Exception as exc:
@@ -443,7 +464,9 @@ class FullToolManager:
             if not web_config.CONFIG_PATH.exists():
                 self._write_reference_config()
             if not self._servers["references"].running:
-                self._servers["references"].start(create_app())
+                app = create_app()
+                app.wsgi_app = _WorkspaceMonitorWSGI(app.wsgi_app, self._workspace)
+                self._servers["references"].start(app)
             self._errors["references"] = None
         except Exception as exc:
             self._servers["references"].stop()

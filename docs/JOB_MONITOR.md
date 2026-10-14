@@ -175,3 +175,21 @@ Implementation note: In a checkout where `modules/pypique` and
 `modules/hsqa_dbn` are independent Git submodules, a `git apply` from the PAH
 root touches their working trees but cannot update the submodule git commits.
 Review and commit those module changes independently when integrating upstream.
+
+## JM-4 — Opt-in shared monitor for other laboratories
+
+Workspace reader owners now include `ml_lab`, `code_analyzer`,
+`tech_documents`, `reference_manager`, and `research_search`.
+
+ML Lab publishes core task jobs and Data Lab profile progress; Code Analysis
+publishes repository scans, similarity matrices and duplicate-candidate jobs;
+Document Workbench publishes LaTeX compilations, notebook execution and
+exports. The Reference Manager host quick-sync/import and Research Search
+launch dispatch are traced by PAH. The nested Paper Searcher workers require
+their own installed-source instrumentation; a successful dispatch is not a
+finished search. No uninstrumented OS processes are discovered.
+
+Hosted Flask module requests use a per-request context variable to select the
+workspace job-monitor directory. No global environment override or process
+control is introduced. When a module runs without PAH, no monitor package is
+required and scientific/API behavior remains unchanged.

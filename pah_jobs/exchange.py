@@ -6,6 +6,7 @@ are read by PAH. This is not a command channel. Every writer uses a unique file.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from functools import wraps
 from contextvars import ContextVar
 import json
 import os
@@ -18,6 +19,9 @@ from .process import observe_pid
 from .registry import JobRegistry
 
 _CURRENT_JOB: ContextVar[str | None] = ContextVar("pah_monitor_current_job", default=None)
+_MONITOR_DIRECTORY: ContextVar[str | None] = ContextVar("pah_monitor_directory", default=None)
+_SUPPORTED_OWNERS = frozenset({"pypique", "hsqa_dbn", "ml_lab", "code_analyzer",
+                               "tech_documents", "reference_manager", "research_search"})
 _WRITERS: dict[str, "PublishedJobRegistry"] = {}
 _WRITERS_LOCK = RLock()
 _MAX_FILE_BYTES = 2_000_000
@@ -66,10 +70,15 @@ class PublishedJobRegistry(JobRegistry):
             self._write_snapshot()
 
 
+def monitor_root() -> str | None:
+    """Effective opt-in monitor location for trusted module worker handoff."""
+    return _MONITOR_DIRECTORY.get() or os.environ.get("PAH_JOB_MONITOR_DIR", "").strip() or None
+
+
 def publisher(owner: str) -> PublishedJobRegistry | None:
     """Opt in only through an explicitly supplied PAH monitor directory."""
-    directory = os.environ.get("PAH_JOB_MONITOR_DIR", "").strip()
-    if not directory or owner not in {"pypique", "hsqa_dbn"}:
+    directory = (monitor_root() or "").strip()
+    if not directory or owner not in _SUPPORTED_OWNERS:
         return None
     key = f"{owner}:{os.getpid()}:{directory}"
     with _WRITERS_LOCK:
@@ -143,11 +152,44 @@ def job_scope(owner: str, label: str, *, run_id: str | None = None):
         _CURRENT_JOB.reset(token)
 
 
+@contextmanager
+def monitor_directory(directory: str | Path):
+    """Scope in-process hosted UI requests to one selected PAH workspace.
+
+    No process-global environment mutation; simultaneous PAH workspaces do not
+    redirect each other's module events. This is for trusted local callers only.
+    """
+    token = _MONITOR_DIRECTORY.set(str(Path(directory).expanduser().resolve()))
+    try:
+        yield
+    finally:
+        _MONITOR_DIRECTORY.reset(token)
+
+
+def observed(owner: str, label: str):
+    """Optional, result-preserving instrumentation for synchronous public calls.
+
+    A domain module may import this decorator, but never depends on monitoring
+    to run. Only a fixed descriptive label is logged; not arguments or payloads.
+    """
+    def decorate(function):
+        @wraps(function)
+        def wrapper(*args, **kwargs):
+            with job_scope(owner, label) as job_id:
+                result = function(*args, **kwargs)
+                if job_id and getattr(result, "ok", True) is False:
+                    note(owner, job_id, "Operation returned an unsuccessful result", stream="event")
+                    finish(owner, job_id, state="failed", reason="Unsuccessful operation result")
+                return result
+        return wrapper
+    return decorate
+
+
 class WorkspaceJobReader:
     """Explicit workspace-scoped view for one module's opt-in snapshot files."""
 
     def __init__(self, directory: str | Path, owner: str):
-        if owner not in {"pypique", "hsqa_dbn"}:
+        if owner not in _SUPPORTED_OWNERS:
             raise ValueError("unsupported module owner")
         self.directory = Path(directory).expanduser().resolve()
         self.owner = owner
