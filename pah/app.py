@@ -26,6 +26,7 @@ from .labs import (
     default_lab_registry,
 )
 from .labs.information_network import build_information_network
+from .labs.runtime_artifact_refresh import reconcile_module_artifacts
 from .module_catalog import MODULE_CATEGORIES, WORKSPACE_PRESETS, default_module_registry
 from .runtime import HostSurfaceRuntimeAdapter, RuntimeRegistry, RuntimeRegistryError
 from .integrations import (
@@ -465,39 +466,37 @@ def create_app(
                 continue
             lab_artifacts.deactivate_current(artifact.artifact_id)
 
-    def sync_runtime_artifacts(module_id: str, context: ModuleContext | None = None) -> None:
-        """Refresh provider aliases while preserving immutable historical snapshots."""
+    def sync_runtime_artifacts(
+        module_id: str,
+        context: ModuleContext | None = None,
+        *,
+        artifact_kinds: frozenset[str] | None = None,
+    ) -> None:
+        """Refresh only artifacts owned by this workflow context.
+
+        pyPIQUE appears in both the quality-modeling and MI-informed workflow
+        contexts. An MI-only refresh must not withdraw its valid benchmark
+        feature_dataset just because that context did not advertise it.
+        """
         if not workspaces.is_module_enabled(module_id):
-            deactivate_runtime_aliases(module_id)
+            if artifact_kinds is None:
+                deactivate_runtime_aliases(module_id)
+            else:
+                reconcile_module_artifacts(
+                    lab_artifacts, module_id, (),
+                    project_id=str(workspaces.root) if workspaces.root is not None else None,
+                    artifact_kinds=artifact_kinds,
+                )
             return
         discovered = runtime_registry.artifacts(module_id, context or orchestration_context())
         if discovered is None:
             return
-
-        project_id = str(workspaces.root) if workspaces.root is not None else None
-        active_ids: set[str] = set()
-        for raw in discovered:
-            try:
-                artifact = coerce_artifact_ref(raw)
-            except (TypeError, ValueError):
-                continue
-            if artifact.producer_module != module_id:
-                continue
-            if module_registry.get(module_id) is None:
-                continue
-            active_ids.add(artifact.artifact_id)
-            if artifact.metadata.get("runtime_managed"):
-                lab_artifacts.register_current(artifact)
-            else:
-                lab_artifacts.register(artifact)
-
-        for artifact in tuple(lab_artifacts.by_producer(module_id)):
-            if not artifact.metadata.get("registry_alias"):
-                continue
-            if project_id is not None and artifact.project_id not in {None, project_id}:
-                continue
-            if artifact.artifact_id not in active_ids:
-                lab_artifacts.deactivate_current(artifact.artifact_id)
+        reconcile_module_artifacts(
+            lab_artifacts, module_id, discovered,
+            project_id=str(workspaces.root) if workspaces.root is not None else None,
+            artifact_kinds=artifact_kinds,
+            provider_present=module_registry.get(module_id) is not None,
+        )
 
     def reconcile_pypique_feature_handoff() -> None:
         """Recover an already-materialized pyPIQUE feature handoff into the host registry.
@@ -619,7 +618,19 @@ def create_app(
             ):
                 lab_artifacts.deactivate_current(artifact_id)
         else:
-            sync_runtime_artifacts("pypique", feedback_context)
+            sync_runtime_artifacts(
+                "pypique", feedback_context,
+                artifact_kinds=frozenset({
+                    "mi_informed_analysis",
+                    "mi_informed_model_experiment",
+                    "mi_informed_quality_model",
+                    "mi_informed_validation",
+                }),
+            )
+        # A saved benchmark handoff remains a valid producer reference even if
+        # a focused MI refresh did not advertise it. Reconcile it after both
+        # pyPIQUE workflow branches have finished refreshing their own outputs.
+        reconcile_pypique_feature_handoff()
 
     def error_response(exc: Exception, status: int = 400):
         return jsonify({"ok": False, "error": str(exc)}), status
