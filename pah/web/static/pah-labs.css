@@ -391,3 +391,11 @@
 .qi-scenario-controls select, .qi-scenario-controls input { width: 100%; min-width: 0; }
 @media (max-width: 850px) { .qi-scenario-controls { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 500px) { .qi-scenario-controls { grid-template-columns: 1fr; } }
+
+/* QI-4: explicit structural candidates versus actual evaluated value changes. */
+.qi-compare-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.qi-compare-controls input { min-width: 150px; flex: 1 1 150px; }
+.qi-compare-controls select { min-width: 180px; flex: 1 1 180px; }
+.qi-network-edge.qi-path-edge { stroke: var(--pah-blue-600); opacity: .85; stroke-width: 2; }
+.qi-network-node.qi-path-node rect { stroke: var(--pah-blue-600); stroke-width: 2; }
+.qi-network-node.qi-value-changed rect { stroke: var(--pah-blue-600); stroke-width: 3; stroke-dasharray: 5 2; }

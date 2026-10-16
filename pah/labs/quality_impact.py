@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import sys
+from copy import deepcopy
+from uuid import uuid4
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -15,6 +17,7 @@ from threading import RLock
 
 from .quality_impact_scenarios import DiagnosticScenario, ScenarioError
 from .quality_impact_forward import (ForwardEvaluationError, read_native_mapping, forward_result)
+from .quality_impact_comparison import ComparisonError, build_comparison
 
 
 class QualityImpactError(ValueError):
@@ -201,6 +204,8 @@ class QualityImpactInspector:
         self._selections: dict[str, dict[str, Any]] = {}
         self._scenarios: dict[str, DiagnosticScenario] = {}
         self._native_mappings: dict[str, dict[str, Any]] = {}
+        self._checkpoints: dict[str, list[dict[str, Any]]] = {}
+        self._comparison_targets: dict[str, str] = {}
         self._lock = RLock()
 
     def select(self, workspace: str, path: str, findings_path: str | None = None) -> dict:
@@ -221,6 +226,8 @@ class QualityImpactInspector:
             }
             self._scenarios.pop(workspace, None)
             self._native_mappings.pop(workspace, None)
+            self._checkpoints.pop(workspace, None)
+            self._comparison_targets.pop(workspace, None)
             return self._attach_scenario(workspace, result)
 
     def clear(self, workspace: str) -> None:
@@ -228,6 +235,109 @@ class QualityImpactInspector:
             self._selections.pop(workspace, None)
             self._scenarios.pop(workspace, None)
             self._native_mappings.pop(workspace, None)
+            self._checkpoints.pop(workspace, None)
+            self._comparison_targets.pop(workspace, None)
+
+    @staticmethod
+    def _baseline_scenario(current: dict) -> dict:
+        baseline = deepcopy(current)
+        baseline['revision'] = 0
+        baseline['changed_count'] = 0
+        for row in baseline['rows']:
+            row['scenario_value'] = row['baseline_value']
+            row['delta'] = 0
+            row['changed'] = False
+        return baseline
+
+    @staticmethod
+    def _baseline_forward(current: dict) -> dict:
+        if current.get('baseline') and current.get('status') in ('ready', 'scenario_blocked'):
+            return {**current, 'scenario': current['baseline'], 'status': 'ready'}
+        return {'status': 'unavailable'}
+
+    def _with_comparison(self, workspace: str, result: dict) -> dict:
+        scenario = result['scenario']
+        forward = result['forward_evaluation']
+        checkpoints = self._checkpoints.get(workspace, [])
+        selected_id = self._comparison_targets.get(workspace, 'baseline')
+        saved = next((item for item in checkpoints if item['id'] == selected_id), None)
+        if saved is None:
+            selected_id = 'baseline'
+            self._comparison_targets.pop(workspace, None)
+        reference = saved['scenario'] if saved else self._baseline_scenario(scenario)
+        reference_forward = saved['forward_evaluation'] if saved else self._baseline_forward(forward)
+        result['comparison'] = build_comparison(
+            result, reference_scenario=reference, current_scenario=scenario,
+            reference_forward=reference_forward, current_forward=forward,
+            reference_label=saved['label'] if saved else 'Observed baseline / native model baseline',
+            reference_id=selected_id)
+        result['comparison_checkpoints'] = [
+            {'id': item['id'], 'label': item['label'], 'revision': item['scenario']['revision'],
+             'native_ready': item['forward_evaluation'].get('status') == 'ready'}
+            for item in checkpoints]
+        return result
+
+    def comparison_action(self, workspace: str, action: Any, *, label: Any = None,
+                          checkpoint_id: Any = None, expected_revision: Any = None) -> dict:
+        """Explicit in-memory bookmarks and comparisons; no persisted model edits."""
+        with self._lock:
+            current = self.snapshot(workspace)
+            if not current.get('selected'):
+                raise ComparisonError('Select a verified finalized model first')
+            revision = current['scenario']['revision']
+            if isinstance(expected_revision, bool) or not isinstance(expected_revision, int) or expected_revision != revision:
+                raise ComparisonError('Scenario revision is stale; refresh before comparing')
+            if action == 'capture':
+                if not isinstance(label, str) or not (1 <= len(label.strip()) <= 64):
+                    raise ComparisonError('Checkpoint label must contain 1–64 characters')
+                entries = self._checkpoints.setdefault(workspace, [])
+                if len(entries) >= 12:
+                    raise ComparisonError('Maximum of 12 in-memory checkpoints; remove one first')
+                entries.append({'id': str(uuid4()), 'label': label.strip(),
+                                'scenario': deepcopy(current['scenario']),
+                                'forward_evaluation': deepcopy(current['forward_evaluation'])})
+            elif action == 'select':
+                if checkpoint_id == 'baseline':
+                    self._comparison_targets.pop(workspace, None)
+                elif isinstance(checkpoint_id, str) and any(
+                        item['id'] == checkpoint_id for item in self._checkpoints.get(workspace, [])):
+                    self._comparison_targets[workspace] = checkpoint_id
+                else:
+                    raise ComparisonError('Unknown in-memory checkpoint')
+            elif action == 'remove':
+                entries = self._checkpoints.get(workspace, [])
+                if not isinstance(checkpoint_id, str) or not any(item['id'] == checkpoint_id for item in entries):
+                    raise ComparisonError('Unknown in-memory checkpoint')
+                self._checkpoints[workspace] = [item for item in entries if item['id'] != checkpoint_id]
+                if self._comparison_targets.get(workspace) == checkpoint_id:
+                    self._comparison_targets.pop(workspace, None)
+            else:
+                raise ComparisonError('Comparison action must be capture, select, or remove')
+            return self._with_comparison(workspace, current)
+
+    def export_report(self, workspace: str, *, expected_revision: Any) -> dict:
+        """Return a reproducibility record only on explicit request; no disk writes."""
+        with self._lock:
+            current = self.snapshot(workspace)
+            if not current.get('selected'):
+                raise ComparisonError('No verified selected model to export')
+            if (isinstance(expected_revision, bool) or not isinstance(expected_revision, int)
+                    or expected_revision != current['scenario']['revision']):
+                raise ComparisonError('Scenario revision changed; refresh before exporting')
+            return {'schema': 'pah.quality_impact_scenario_report', 'schema_version': 1,
+                    'model': {'family': current['family'], 'version_id': current['version_id'],
+                              'manifest_sha256': current['manifest_sha256'],
+                              'archive_sha256': current['archive_sha256'],
+                              'source_path': current['model_path']},
+                    'sat_evidence_source': current['evidence']['source'],
+                    'scenario': current['scenario'],
+                    'forward_evaluation': current['forward_evaluation'],
+                    'comparison': current['comparison'],
+                    'comparison_checkpoints': current['comparison_checkpoints'],
+                    'sources_modified': False, 'automatic_persistence': False,
+                    'interpretation': ('Hypothetical count scenarios are not verified SAT findings. '
+                                       'Native outputs come only from explicitly mapped concluded Standard evaluations. '
+                                       'Reachability is structural, not causal; MI is not reestimated.')}
 
     def _attach_scenario(self, workspace: str, result: dict) -> dict:
         scenario = self._scenarios.get(workspace)
@@ -237,7 +347,7 @@ class QualityImpactInspector:
         result['scenarios_enabled'] = bool(scenario.observations)
         result['scenario'] = scenario.to_dict()
         result['forward_evaluation'] = self._forward_snapshot(workspace, result)
-        return result
+        return self._with_comparison(workspace, result)
 
     def bind_native_inputs(self, workspace: str, path: Any) -> dict:
         """Attach explicitly sourced native diagnostic inputs without editing QI-2 state."""

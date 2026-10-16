@@ -1561,9 +1561,12 @@
     return node;
   }
 
-  function qiGraph(holder, network, onSelect) {
+  function qiGraph(holder, network, onSelect, highlights = {}) {
     const nodes = network.nodes || [];
     const edges = network.edges || [];
+    const pathNodes = new Set(highlights.reachable_nodes || []);
+    const changedNodes = new Set(highlights.native_changed_nodes || []);
+    const pathEdges = new Set(highlights.recorded_edge_indices || []);
     const kinds = [...new Set(nodes.map(node => String(node.kind || 'untyped')))];
     const precedence = ['diagnostic', 'cwe', 'feature', 'measure', 'latent', 'hidden',
       'product_factor', 'quality_aspect', 'tqi'];
@@ -1590,11 +1593,12 @@
       viewBox: `0 0 ${viewWidth} ${viewHeight}`, role: 'img',
       'aria-label': `Recorded ${network.role} network with ${nodes.length} nodes and ${edges.length} edges`});
     const lines = make('g', {});
-    edges.forEach(edge => {
+    edges.forEach((edge, index) => {
       const src = nodeById.get(String(edge.source)), dst = nodeById.get(String(edge.target));
       if (!src || !dst) return; // Do not invent unresolved endpoints.
       const line = make('line', {x1: src.x + 155, y1: src.y + 12,
-        x2: dst.x, y2: dst.y + 12, class: 'qi-network-edge'});
+        x2: dst.x, y2: dst.y + 12,
+        class: pathEdges.has(index) ? 'qi-network-edge qi-path-edge' : 'qi-network-edge'});
       const tooltip = make('title', {});
       tooltip.textContent = `${edge.source} → ${edge.target} · ${edge.relationship || 'recorded'} · ${JSON.stringify(edge)}`;
       line.appendChild(tooltip);
@@ -1608,7 +1612,7 @@
       svg.appendChild(heading);
       buckets.get(kind).forEach(node => {
         const coords = nodeById.get(String(node.id));
-        const group = make('g', {class: 'qi-network-node', tabindex: 0, role: 'button',
+        const group = make('g', {class: `qi-network-node${pathNodes.has(String(node.id)) ? ' qi-path-node' : ''}${changedNodes.has(String(node.id)) ? ' qi-value-changed' : ''}`, tabindex: 0, role: 'button',
           'aria-label': `Inspect ${node.id}`});
         group.appendChild(make('rect', {x: coords.x, y: coords.y, width: 155, height: 25, rx: 4}));
         const text = make('text', {x: coords.x + 5, y: coords.y + 16});
@@ -1829,6 +1833,88 @@
         forwardSection.appendChild(qiElement('p', forward.reason || 'MI uses a separate inference contract (QI-5).', 'qi-status'));
       }
       content.appendChild(forwardSection);
+      const comparison = payload.comparison || {};
+      const comparisonSection = qiElement('section', null, 'qi-scenario');
+      comparisonSection.appendChild(qiElement('h3', 'Result comparison & recorded network paths (QI-4)'));
+      comparisonSection.appendChild(qiElement('p',
+        'Observed SAT counts and native Standard PIQUE outputs use distinct units. Highlighted edges indicate recorded structural reachability, not causal influence. MI information statistics are not reestimated here.', 'qi-status'));
+      const comparisonControls = qiElement('div', null, 'qi-compare-controls');
+      const checkpointLabel = qiElement('input');
+      checkpointLabel.type = 'text'; checkpointLabel.maxLength = 64;
+      checkpointLabel.value = `Scenario revision ${scenario.revision}`;
+      checkpointLabel.setAttribute('aria-label', 'Temporary checkpoint label');
+      const capture = qiElement('button', 'Capture in-memory checkpoint');
+      capture.type = 'button';
+      const against = qiElement('select');
+      against.setAttribute('aria-label', 'Compare current scenario against');
+      const baseOption = qiElement('option', 'Observed / native baseline');
+      baseOption.value = 'baseline'; against.appendChild(baseOption);
+      (payload.comparison_checkpoints || []).forEach(item => {
+        const opt = qiElement('option', `${item.label} (revision ${item.revision})`);
+        opt.value = item.id; against.appendChild(opt);
+      });
+      against.value = comparison.reference_id || 'baseline';
+      const compareButton = qiElement('button', 'Compare');
+      compareButton.type = 'button';
+      const removeCheckpoint = qiElement('button', 'Remove checkpoint');
+      removeCheckpoint.type = 'button';
+      removeCheckpoint.disabled = against.value === 'baseline';
+      against.addEventListener('change', () => {
+        removeCheckpoint.disabled = against.value === 'baseline';
+      });
+      const exportButton = qiElement('button', 'Export explicit JSON report');
+      exportButton.type = 'button';
+      const compareStatus = qiElement('p',
+        `Compared with: ${comparison.reference_label || 'baseline'} · ${comparison.status || 'unavailable'}. Checkpoints live only in memory; exports require a deliberate click.`, 'qi-status');
+      async function compareAction(action, extra = {}) {
+        try {
+          const result = await api('/api/orchestration/code-analysis/quality-impact/comparison', {
+            method: 'POST', body: JSON.stringify({action, expected_revision: scenario.revision, ...extra}),
+          });
+          ++displayId;
+          renderData(result);
+        } catch (error) { compareStatus.textContent = error.message; }
+      }
+      capture.addEventListener('click', () => compareAction('capture', {label: checkpointLabel.value}));
+      compareButton.addEventListener('click', () => compareAction('select', {checkpoint_id: against.value}));
+      removeCheckpoint.addEventListener('click', () => {
+        if (against.value !== 'baseline') compareAction('remove', {checkpoint_id: against.value});
+      });
+      exportButton.addEventListener('click', async () => {
+        try {
+          const response = await api('/api/orchestration/code-analysis/quality-impact/export', {
+            method: 'POST', body: JSON.stringify({expected_revision: scenario.revision}),
+          });
+          const blob = new Blob([JSON.stringify(response.report, null, 2) + '\n'], {type: 'application/json'});
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `quality-impact-${scenario.revision}-${String(payload.version_id).replace(/[^a-zA-Z0-9_-]/g, '_')}.json`;
+          document.body.appendChild(link);
+          link.click(); link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          compareStatus.textContent = 'Report generated from verified sources and offered as a local download; no source files changed.';
+        } catch (error) { compareStatus.textContent = error.message; }
+      });
+      comparisonControls.append(checkpointLabel, capture, against, compareButton, removeCheckpoint, exportButton);
+      comparisonSection.append(comparisonControls, compareStatus);
+      const observations = qiElement('details'); observations.open = true;
+      observations.appendChild(qiElement('summary', 'SAT observation counts — comparison reference / scenario / Δ'));
+      qiTable(observations, ['Input node', 'Reference count', 'Hypothetical count', 'Count Δ', 'Unit'],
+        (comparison.observations || []).map(row => [row.node_id, row.baseline, row.scenario, row.delta, row.unit]));
+      comparisonSection.appendChild(observations);
+      const native = qiElement('details'); native.open = true;
+      native.appendChild(qiElement('summary',
+        `Native Standard values — comparison reference / scenario / Δ (${(comparison.native_values || []).length} nodes)`));
+      native.appendChild(qiElement('p', comparison.native_note || 'No native values available.', 'qi-status'));
+      qiTable(native, ['Layer', 'Node', 'Reference', 'Scenario', 'Native Δ', 'Unit'],
+        (comparison.native_values || []).map(row => [row.kind, row.node_id,
+          row.baseline, row.scenario, row.delta, row.unit]));
+      comparisonSection.appendChild(native);
+      const paths = comparison.network_highlights || {};
+      comparisonSection.appendChild(qiElement('p',
+        `${(paths.source_nodes || []).length} changed observed inputs; ${(paths.reachable_nodes || []).length} reachable recorded nodes; ${(paths.native_changed_nodes || []).length} nodes changed in native evaluation. ${paths.meaning || ''}`, 'qi-status'));
+      content.appendChild(comparisonSection);
       const networkLabel = qiElement('label', 'Recorded network: ');
       const which = qiElement('select');
       [['primary', payload.network.role], ...(payload.probabilistic_backing
@@ -1855,7 +1941,7 @@
             fillScenario();
           }
         };
-        qiGraph(networkPane, network, inspect);
+        qiGraph(networkPane, network, inspect, which.value === 'primary' ? (comparison.network_highlights || {}) : {});
         networkPane.appendChild(inspector);
         const nodeDetails = qiElement('details');
         nodeDetails.appendChild(qiElement('summary', `All ${network.nodes.length} nodes (exact IDs and kinds)`));
