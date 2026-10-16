@@ -1767,6 +1767,68 @@
         scenarioMessage.textContent = 'No explicitly matched SAT diagnostic input is available. Provide matching SAT JSON evidence to enable QI-2.';
       }
       content.appendChild(scenarioSection);
+      const forward = payload.forward_evaluation || {};
+      const forwardSection = qiElement('section', null, 'qi-scenario');
+      forwardSection.appendChild(qiElement('h3', 'Standard PIQUE native forward evaluation (QI-3)'));
+      if (payload.family === 'standard_pique') {
+        const description = qiElement('p', 'This requires a complete native diagnostic JSON mapping bound to this model and evidence SHA256. An observed SAT count is NOT automatically a model-native diagnostic input. All output evaluations use the concluded pyPIQUE evaluators.', 'qi-status');
+        forwardSection.appendChild(description);
+        const forwardControls = qiElement('div', null, 'qi-scenario-controls');
+        const nativeMapping = qiElement('input');
+        nativeMapping.type = 'text';
+        nativeMapping.placeholder = 'Local native diagnostic mapping.json';
+        nativeMapping.setAttribute('aria-label', 'Explicit native diagnostic input mapping path');
+        nativeMapping.value = forward.mapping_path || '';
+        const bind = qiElement('button', 'Bind verified native inputs');
+        bind.type = 'button';
+        const unbind = qiElement('button', 'Clear native input mapping');
+        unbind.type = 'button';
+        const status = qiElement('p', `Native evaluation: ${forward.status || 'not configured'} — ${forward.reason || forward.note || ''}`, 'qi-status');
+        bind.addEventListener('click', async () => {
+          try {
+            const result = await api('/api/orchestration/code-analysis/quality-impact/forward/inputs', {
+              method: 'POST', body: JSON.stringify({path: nativeMapping.value}),
+            });
+            ++displayId;
+            renderData(result);
+          } catch (error) { status.textContent = error.message; }
+        });
+        unbind.addEventListener('click', async () => {
+          try {
+            const result = await api('/api/orchestration/code-analysis/quality-impact/forward/clear', {
+              method: 'POST', body: '{}',
+            });
+            ++displayId;
+            renderData(result);
+          } catch (error) { status.textContent = error.message; }
+        });
+        forwardControls.append(nativeMapping, bind, unbind);
+        forwardSection.append(forwardControls, status);
+        function nativeTable(caption, record) {
+          if (!record) return;
+          const details = qiElement('details');
+          details.open = caption === 'Baseline';
+          details.appendChild(qiElement('summary', `${caption} — concluded native QualityModel evaluation`));
+          const entries = Object.entries(record.node_values || {}).flatMap(([kind, nodes]) =>
+            Object.entries(nodes).map(([name, value]) => [kind, name, value]));
+          qiTable(details, ['Layer', 'Node', 'Native value'], entries);
+          forwardSection.appendChild(details);
+        }
+        nativeTable('Baseline', forward.baseline);
+        nativeTable('Hypothetical scenario', forward.scenario);
+        if (forward.native_input_transformations?.length) {
+          const conversion = qiElement('details');
+          conversion.appendChild(qiElement('summary', 'Explicit hypothetical input conversions (not learned relationships)'));
+          qiTable(conversion, ['Diagnostic', 'Count Δ', 'Declared native units/finding', 'Baseline native value', 'Scenario native value', 'Provenance'],
+            forward.native_input_transformations.map(row => [row.diagnostic_id, row.observed_count_delta,
+              row.declared_native_units_per_finding, row.baseline_native_value,
+              row.hypothetical_native_value, row.provenance]));
+          forwardSection.appendChild(conversion);
+        }
+      } else {
+        forwardSection.appendChild(qiElement('p', forward.reason || 'MI uses a separate inference contract (QI-5).', 'qi-status'));
+      }
+      content.appendChild(forwardSection);
       const networkLabel = qiElement('label', 'Recorded network: ');
       const which = qiElement('select');
       [['primary', payload.network.role], ...(payload.probabilistic_backing

@@ -14,6 +14,7 @@ from typing import Any, Callable, Mapping
 from threading import RLock
 
 from .quality_impact_scenarios import DiagnosticScenario, ScenarioError
+from .quality_impact_forward import (ForwardEvaluationError, read_native_mapping, forward_result)
 
 
 class QualityImpactError(ValueError):
@@ -192,11 +193,14 @@ def _link_evidence(network: Mapping[str, Any], evidence: dict | None) -> dict:
 class QualityImpactInspector:
     """Workspace-scoped, verified model view with separate hypothetical overlays."""
 
-    def __init__(self, reader: Callable | None = None, summarizer: Callable | None = None) -> None:
+    def __init__(self, reader: Callable | None = None, summarizer: Callable | None = None,
+                 native_loader: Callable | None = None) -> None:
         self._reader = reader
         self._summarizer = summarizer
+        self._native_loader = native_loader
         self._selections: dict[str, dict[str, Any]] = {}
         self._scenarios: dict[str, DiagnosticScenario] = {}
+        self._native_mappings: dict[str, dict[str, Any]] = {}
         self._lock = RLock()
 
     def select(self, workspace: str, path: str, findings_path: str | None = None) -> dict:
@@ -216,12 +220,14 @@ class QualityImpactInspector:
                 'evidence_sha256': (result['evidence']['source'] or {}).get('sha256'),
             }
             self._scenarios.pop(workspace, None)
+            self._native_mappings.pop(workspace, None)
             return self._attach_scenario(workspace, result)
 
     def clear(self, workspace: str) -> None:
         with self._lock:
             self._selections.pop(workspace, None)
             self._scenarios.pop(workspace, None)
+            self._native_mappings.pop(workspace, None)
 
     def _attach_scenario(self, workspace: str, result: dict) -> dict:
         scenario = self._scenarios.get(workspace)
@@ -230,7 +236,47 @@ class QualityImpactInspector:
             self._scenarios[workspace] = scenario
         result['scenarios_enabled'] = bool(scenario.observations)
         result['scenario'] = scenario.to_dict()
+        result['forward_evaluation'] = self._forward_snapshot(workspace, result)
         return result
+
+    def bind_native_inputs(self, workspace: str, path: Any) -> dict:
+        """Attach explicitly sourced native diagnostic inputs without editing QI-2 state."""
+        if not isinstance(path, str) or not path.strip():
+            raise ForwardEvaluationError('A local native input mapping JSON path is required')
+        with self._lock:
+            snapshot = self.snapshot(workspace)
+            if not snapshot.get('selected'):
+                raise ForwardEvaluationError('Select and verify a Standard model with SAT evidence first')
+            mapping = read_native_mapping(path, snapshot)
+            # The validated mapping belongs to one immutable model/evidence pair.
+            self._native_mappings[workspace] = mapping
+            return self._attach_scenario(workspace, snapshot)
+
+    def clear_native_inputs(self, workspace: str) -> dict:
+        with self._lock:
+            self._native_mappings.pop(workspace, None)
+            return self.snapshot(workspace)
+
+    def _forward_snapshot(self, workspace: str, result: dict) -> dict:
+        status = {'schema': 'pah.standard_forward_evaluation', 'schema_version': 1}
+        if result.get('family') != 'standard_pique':
+            return {**status, 'status': 'not_applicable',
+                    'reason': 'MI requires its separate distribution/inference protocol, not native Standard forward evaluation'}
+        mapping = self._native_mappings.get(workspace)
+        if mapping is None:
+            return {**status, 'status': 'needs_mapping',
+                    'reason': 'Bind a complete native diagnostic mapping for this model and SAT evidence; counts alone cannot be evaluated'}
+        try:
+            current = read_native_mapping(mapping['path'], result)
+            if current['sha256'] != mapping['sha256']:
+                raise ForwardEvaluationError('Bound native mapping JSON changed on disk')
+            return forward_result(result, result['scenario'], mapping, loader=self._native_loader)
+        except (ForwardEvaluationError, OSError, ImportError, ValueError, TypeError, KeyError) as exc:
+            # Do not invalidate a valid QI-2 hypothetical edit just because its
+            # optional QI-3 native input mapping was changed or became unreadable.
+            self._native_mappings.pop(workspace, None)
+            return {**status, 'status': 'blocked', 'reason': str(exc),
+                    'native_mapping_invalidated': True}
 
     def snapshot(self, workspace: str) -> dict:
         with self._lock:
@@ -305,4 +351,4 @@ class QualityImpactInspector:
                 'network': network, 'probabilistic_backing': backing,
                 'evidence': _link_evidence(network, evidence),
                 'acceptance': summary['comparison'],
-                'notice': 'The concluded network and historical acceptance remain immutable. Hypothetical SAT evidence counts are kept only in an independent QI-2 overlay; no forward evaluation, causal claims or source changes.'}
+                'notice': 'The concluded network and historical acceptance remain immutable. QI-2 SAT count scenarios are separate from QI-3 native Standard evaluation, which requires an explicit mapping. No MI inference, causal claims or source modifications.'}

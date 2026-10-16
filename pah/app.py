@@ -29,7 +29,7 @@ from .labs import (
     default_lab_registry,
 )
 from .labs.information_network import build_information_network
-from .labs.quality_impact import QualityImpactInspector, QualityImpactError, ScenarioError
+from .labs.quality_impact import QualityImpactInspector, QualityImpactError, ScenarioError, ForwardEvaluationError
 from .labs.runtime_artifact_refresh import reconcile_module_artifacts
 from .module_catalog import MODULE_CATEGORIES, WORKSPACE_PRESETS, default_module_registry
 from .runtime import HostSurfaceRuntimeAdapter, RuntimeRegistry, RuntimeRegistryError
@@ -982,6 +982,21 @@ def create_app(
         except (ScenarioError, QualityImpactError, OSError, ValueError, TypeError) as exc:
             return error_response(exc, 409)
         return jsonify({"ok": True, **result})
+
+    @app.post("/api/orchestration/code-analysis/quality-impact/forward/inputs")
+    def quality_impact_forward_inputs():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return error_response(ValueError('Expected a JSON object'), 400)
+        try:
+            result = quality_impact.bind_native_inputs(quality_impact_workspace_key(), payload.get('path'))
+        except (ForwardEvaluationError, QualityImpactError, OSError, ValueError, TypeError) as exc:
+            return error_response(exc, 409)
+        return jsonify({"ok": True, **result})
+
+    @app.post("/api/orchestration/code-analysis/quality-impact/forward/clear")
+    def quality_impact_forward_clear():
+        return jsonify({"ok": True, **quality_impact.clear_native_inputs(quality_impact_workspace_key())})
 
     @app.post("/api/orchestration/code-analysis/quality-impact/clear")
     def quality_impact_clear():
