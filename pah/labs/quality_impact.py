@@ -11,6 +11,9 @@ import sys
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from threading import RLock
+
+from .quality_impact_scenarios import DiagnosticScenario, ScenarioError
 
 
 class QualityImpactError(ValueError):
@@ -187,53 +190,87 @@ def _link_evidence(network: Mapping[str, Any], evidence: dict | None) -> dict:
 
 
 class QualityImpactInspector:
-    """Workspace-scoped, ephemeral read-only view of one model at a time."""
+    """Workspace-scoped, verified model view with separate hypothetical overlays."""
 
     def __init__(self, reader: Callable | None = None, summarizer: Callable | None = None) -> None:
         self._reader = reader
         self._summarizer = summarizer
         self._selections: dict[str, dict[str, Any]] = {}
+        self._scenarios: dict[str, DiagnosticScenario] = {}
+        self._lock = RLock()
 
     def select(self, workspace: str, path: str, findings_path: str | None = None) -> dict:
         if not isinstance(path, str) or not path.strip():
             raise QualityImpactError('A concluded model directory or ZIP must be selected')
         if findings_path is not None and not isinstance(findings_path, str):
             raise QualityImpactError('SAT findings path must be a string')
-        # Verify all sources before committing a new selection.
+        # Verify all sources before replacing anything, including the scenario.
         result = self._inspect(path, findings_path or None)
-        self._selections[workspace] = {
-            'path': str(Path(path).expanduser().resolve()),
-            'findings_path': str(Path(findings_path).expanduser().resolve()) if findings_path else None,
-            'version_id': result['version_id'],
-            'archive_sha256': result['archive_sha256'],
-            'manifest_sha256': result['manifest_sha256'],
-            'evidence_sha256': (result['evidence']['source'] or {}).get('sha256'),
-        }
-        return result
+        with self._lock:
+            self._selections[workspace] = {
+                'path': str(Path(path).expanduser().resolve()),
+                'findings_path': str(Path(findings_path).expanduser().resolve()) if findings_path else None,
+                'version_id': result['version_id'],
+                'archive_sha256': result['archive_sha256'],
+                'manifest_sha256': result['manifest_sha256'],
+                'evidence_sha256': (result['evidence']['source'] or {}).get('sha256'),
+            }
+            self._scenarios.pop(workspace, None)
+            return self._attach_scenario(workspace, result)
 
     def clear(self, workspace: str) -> None:
-        self._selections.pop(workspace, None)
+        with self._lock:
+            self._selections.pop(workspace, None)
+            self._scenarios.pop(workspace, None)
+
+    def _attach_scenario(self, workspace: str, result: dict) -> dict:
+        scenario = self._scenarios.get(workspace)
+        if scenario is None or not scenario.matches(result):
+            scenario = DiagnosticScenario(result)
+            self._scenarios[workspace] = scenario
+        result['scenarios_enabled'] = bool(scenario.observations)
+        result['scenario'] = scenario.to_dict()
+        return result
 
     def snapshot(self, workspace: str) -> dict:
-        selected = self._selections.get(workspace)
-        if selected is None:
-            return {'schema': 'pah.quality_impact_inspection', 'schema_version': 1, 'selected': False,
-                    'read_only': True, 'scenarios_enabled': False}
-        try:
-            result = self._inspect(selected['path'], selected['findings_path'])
-            for key in ('version_id', 'archive_sha256', 'manifest_sha256'):
-                if result[key] != selected[key]:
-                    raise QualityImpactError(f'The selected concluded package changed its {key}')
-            if (result['evidence']['source'] or {}).get('sha256') != selected['evidence_sha256']:
-                raise QualityImpactError('The selected SAT findings changed on disk')
-            return result
-        except (QualityImpactError, OSError, ValueError) as exc:
-            # Disarm the selection: a repaired file must be selected explicitly,
-            # never silently become trusted again after an integrity failure.
-            self.clear(workspace)
-            return {'schema': 'pah.quality_impact_inspection', 'schema_version': 1, 'selected': False,
-                    'read_only': True, 'scenarios_enabled': False,
-                    'diagnostic': f'Selected model or evidence no longer verifies: {exc}'}
+        with self._lock:
+            selected = self._selections.get(workspace)
+            if selected is None:
+                return {'schema': 'pah.quality_impact_inspection', 'schema_version': 1, 'selected': False,
+                        'read_only': True, 'scenarios_enabled': False}
+            try:
+                result = self._inspect(selected['path'], selected['findings_path'])
+                for key in ('version_id', 'archive_sha256', 'manifest_sha256'):
+                    if result[key] != selected[key]:
+                        raise QualityImpactError(f'The selected concluded package changed its {key}')
+                if (result['evidence']['source'] or {}).get('sha256') != selected['evidence_sha256']:
+                    raise QualityImpactError('The selected SAT findings changed on disk')
+                return self._attach_scenario(workspace, result)
+            except (QualityImpactError, OSError, ValueError) as exc:
+                # A changed source clears the selection AND the hypothetical edits.
+                self.clear(workspace)
+                return {'schema': 'pah.quality_impact_inspection', 'schema_version': 1, 'selected': False,
+                        'read_only': True, 'scenarios_enabled': False,
+                        'diagnostic': f'Selected model or evidence no longer verifies: {exc}'}
+
+    def scenario_action(self, workspace: str, action: Any, *, node_id: Any = None,
+                        value: Any = None, expected_revision: Any = None) -> dict:
+        if action not in ('set', 'undo', 'reset'):
+            raise ScenarioError('Action must be set, undo, or reset')
+        with self._lock:
+            snapshot = self.snapshot(workspace)
+            if not snapshot['selected']:
+                raise ScenarioError('A verified finalized model and SAT evidence must be selected')
+            scenario = self._scenarios[workspace]
+            if not scenario.observations:
+                raise ScenarioError('No explicitly SAT-linked input observations are available for editing')
+            if action == 'set':
+                scenario.set_value(node_id, value, expected_revision=expected_revision)
+            elif action == 'undo':
+                scenario.undo(expected_revision=expected_revision)
+            else:
+                scenario.reset(expected_revision=expected_revision)
+            return self._attach_scenario(workspace, snapshot)
 
     def _inspect(self, path: str, findings_path: str | None) -> dict:
         try:
@@ -268,4 +305,4 @@ class QualityImpactInspector:
                 'network': network, 'probabilistic_backing': backing,
                 'evidence': _link_evidence(network, evidence),
                 'acceptance': summary['comparison'],
-                'notice': 'Read-only concluded network and historical acceptance. No hypothetical edits, forward evaluation, causal claims or source changes.'}
+                'notice': 'The concluded network and historical acceptance remain immutable. Hypothetical SAT evidence counts are kept only in an independent QI-2 overlay; no forward evaluation, causal claims or source changes.'}

@@ -1552,7 +1552,7 @@
     holder.appendChild(row);
   }
 
-  // QI-1: distinct read-only Code Analysis Lab stage. Stage 2 continues to
+  // QI-1/QI-2: immutable concluded sources with ephemeral diagnostic scenarios. Stage 2 continues to
   // own evidence generation and model development; no model editing here.
   function qiElement(tag, text, className) {
     const node = document.createElement(tag);
@@ -1670,6 +1670,7 @@
     const content = qiElement('section', null, 'qi-results');
     holder.appendChild(content);
     let displayId = 0;
+    let selectedScenarioNode = null;
 
     function renderData(payload) {
       content.replaceChildren();
@@ -1686,6 +1687,86 @@
       summary.appendChild(qiElement('span', `Aggregation: ${payload.choice}`));
       summary.appendChild(qiElement('span', `Linked observations: ${payload.evidence.linked_observations}; unmatched: ${payload.evidence.unmatched.length}`));
       content.appendChild(summary);
+      const scenario = payload.scenario;
+      const scenarioSection = qiElement('section', null, 'qi-scenario');
+      scenarioSection.appendChild(qiElement('h3', 'Temporary diagnostic evidence scenario'));
+      scenarioSection.appendChild(qiElement('p', scenario.warning, 'qi-status'));
+      scenarioSection.appendChild(qiElement('p', 'SAT-linked record counts are observed evidence, not necessarily native model inputs. No PF/TQI evaluation or population MI update occurs in QI-2.', 'qi-status'));
+      const scenarioControls = qiElement('div', null, 'qi-scenario-controls');
+      const selector = qiElement('select');
+      selector.setAttribute('aria-label', 'Editable diagnostic input');
+      const placeholder = qiElement('option', 'Choose a source-linked diagnostic');
+      placeholder.value = '';
+      selector.appendChild(placeholder);
+      scenario.rows.forEach(row => {
+        const option = qiElement('option', `${row.node_id} (${row.unit}: ${row.baseline_value})`);
+        option.value = row.node_id;
+        selector.appendChild(option);
+      });
+      if (selectedScenarioNode && scenario.rows.some(row => row.node_id === selectedScenarioNode)) {
+        selector.value = selectedScenarioNode;
+      }
+      const newCount = qiElement('input');
+      newCount.type = 'number'; newCount.min = '0'; newCount.max = '1000000000'; newCount.step = '1';
+      newCount.setAttribute('aria-label', 'Hypothetical SAT observation count');
+      const applyScenario = qiElement('button', 'Set hypothetical count');
+      applyScenario.type = 'button';
+      const undo = qiElement('button', 'Undo last change');
+      undo.type = 'button'; undo.disabled = !scenario.undo_available;
+      const reset = qiElement('button', 'Reset scenario');
+      reset.type = 'button'; reset.disabled = !scenario.changed_count && !scenario.undo_available;
+      const scenarioMessage = qiElement('p', `${scenario.changed_count} altered inputs; revision ${scenario.revision}. Changes live only in this PAH process's in-memory workspace state.`, 'qi-status');
+      function fillScenario() {
+        selectedScenarioNode = selector.value || null;
+        const row = scenario.rows.find(item => item.node_id === selector.value);
+        newCount.disabled = !row;
+        applyScenario.disabled = !row;
+        newCount.value = row ? String(row.scenario_value) : '';
+      }
+      selector.addEventListener('change', fillScenario);
+      fillScenario();
+      async function scenarioAction(action, extra = {}) {
+        try {
+          const result = await api('/api/orchestration/code-analysis/quality-impact/scenario', {
+            method: 'POST', body: JSON.stringify({action, expected_revision: scenario.revision, ...extra}),
+          });
+          ++displayId;
+          renderData(result);
+        } catch (error) { scenarioMessage.textContent = error.message; }
+      }
+      applyScenario.addEventListener('click', () => {
+        if (!selector.value || !/^\d+$/.test(newCount.value.trim())) {
+          scenarioMessage.textContent = 'Enter a nonnegative whole number and choose an observed input.';
+          return;
+        }
+        const value = Number(newCount.value);
+        if (!Number.isSafeInteger(value) || value > 1000000000) {
+          scenarioMessage.textContent = 'The count is outside the supported range.';
+          return;
+        }
+        scenarioAction('set', {node_id: selector.value, value});
+      });
+      undo.addEventListener('click', () => scenarioAction('undo'));
+      reset.addEventListener('click', () => scenarioAction('reset'));
+      scenarioControls.append(selector, newCount, applyScenario, undo, reset);
+      scenarioSection.append(scenarioControls, scenarioMessage);
+      const scenarioRows = qiElement('details');
+      scenarioRows.open = true;
+      scenarioRows.appendChild(qiElement('summary', `Observed diagnostic inputs (${scenario.rows.length} explicitly linked)`));
+      qiTable(scenarioRows, ['Diagnostic node', 'Baseline', 'Hypothetical', 'Δ', 'Unit', 'Source IDs', 'Mapped measures', 'Evidence SHA256'],
+        scenario.rows.map(row => [row.node_id, row.baseline_value, row.scenario_value, row.delta,
+          row.unit, row.diagnostic_ids.join(', '), row.measure_ids.join(', ') || 'Not mapped', row.evidence_sha256]));
+      scenarioSection.appendChild(scenarioRows);
+      const history = qiElement('details');
+      history.appendChild(qiElement('summary', `Scenario audit trail (${scenario.history.length} reversible events)`));
+      qiTable(history, ['Revision', 'Action', 'Node', 'Old', 'New', 'Recorded at'],
+        scenario.history.map(event => [event.revision, event.action, event.node_id,
+          event.old_value, event.new_value, event.recorded_at]));
+      scenarioSection.appendChild(history);
+      if (!payload.scenarios_enabled) {
+        scenarioMessage.textContent = 'No explicitly matched SAT diagnostic input is available. Provide matching SAT JSON evidence to enable QI-2.';
+      }
+      content.appendChild(scenarioSection);
       const networkLabel = qiElement('label', 'Recorded network: ');
       const which = qiElement('select');
       [['primary', payload.network.role], ...(payload.probabilistic_backing
@@ -1705,7 +1786,12 @@
         const inspector = qiElement('pre', 'Select a node to inspect its recorded properties and explicitly matched findings.', 'qi-inspector');
         const inspect = node => {
           const observations = which.value === 'primary' ? (payload.evidence.linked[node.id] || []) : [];
-          inspector.textContent = JSON.stringify({node, matched_findings: observations}, null, 2);
+          inspector.textContent = JSON.stringify({node, matched_findings: observations,
+            hypothetical_observation: scenario.rows.find(row => row.node_id === node.id) || null}, null, 2);
+          if (which.value === 'primary' && scenario.rows.some(row => row.node_id === node.id)) {
+            selector.value = node.id;
+            fillScenario();
+          }
         };
         qiGraph(networkPane, network, inspect);
         networkPane.appendChild(inspector);

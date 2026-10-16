@@ -383,3 +383,11 @@
 .qi-results details { padding: 7px 0; border-top: 1px solid var(--pah-border); }
 @media (max-width: 1000px) { .qi-controls { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 650px) { .qi-controls { grid-template-columns: minmax(0, 1fr); } }
+
+/* QI-2 in-memory, explicitly hypothetical diagnostic evidence scenarios. */
+.qi-scenario { border: 1px solid var(--pah-border); border-radius: 6px; margin: 12px 0; padding: 12px; }
+.qi-scenario h3 { margin: 0 0 7px; }
+.qi-scenario-controls { display: grid; grid-template-columns: minmax(175px, 2fr) minmax(110px, 1fr) repeat(3, auto); gap: 8px; align-items: center; }
+.qi-scenario-controls select, .qi-scenario-controls input { width: 100%; min-width: 0; }
+@media (max-width: 850px) { .qi-scenario-controls { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 500px) { .qi-scenario-controls { grid-template-columns: 1fr; } }
