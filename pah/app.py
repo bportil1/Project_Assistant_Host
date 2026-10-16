@@ -29,6 +29,7 @@ from .labs import (
     default_lab_registry,
 )
 from .labs.information_network import build_information_network
+from .labs.quality_impact import QualityImpactInspector, QualityImpactError
 from .labs.runtime_artifact_refresh import reconcile_module_artifacts
 from .module_catalog import MODULE_CATEGORIES, WORKSPACE_PRESETS, default_module_registry
 from .runtime import HostSurfaceRuntimeAdapter, RuntimeRegistry, RuntimeRegistryError
@@ -133,6 +134,8 @@ def create_app(
     app.extensions["pah_lab_registry"] = lab_registry
     app.extensions["pah_lab_artifacts"] = lab_artifacts
     app.extensions["pah_code_analysis_lab"] = code_analysis_lab
+    quality_impact = QualityImpactInspector()
+    app.extensions["pah_quality_impact"] = quality_impact
     app.extensions["pah_component_versions"] = component_versions
     app.extensions["pah_instance_runtime"] = instance_runtime
     app.extensions["pah_launcher"] = launcher
@@ -942,6 +945,33 @@ def create_app(
         except (ValueError, RuntimeRegistryError) as exc:
             return error_response(exc, 409)
         return jsonify({"ok": True, "step_id": step_id, **launch.to_dict()})
+
+    def quality_impact_workspace_key() -> str:
+        # A live selection belongs to exactly one research workspace; never
+        # retain it as the implicit selection for a different workspace.
+        return str(workspaces.active_workspace_id or workspaces.root or '__unassigned__')
+
+    @app.get("/api/orchestration/code-analysis/quality-impact")
+    def quality_impact_snapshot():
+        return jsonify({"ok": True, **quality_impact.snapshot(quality_impact_workspace_key())})
+
+    @app.post("/api/orchestration/code-analysis/quality-impact/select")
+    def quality_impact_select():
+        payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return error_response(ValueError('Expected a JSON object'), 400)
+        try:
+            selected = quality_impact.select(
+                quality_impact_workspace_key(), payload.get('path'), payload.get('findings_path')
+            )
+        except (QualityImpactError, OSError, ValueError, TypeError) as exc:
+            return error_response(exc, 409)
+        return jsonify({"ok": True, **selected})
+
+    @app.post("/api/orchestration/code-analysis/quality-impact/clear")
+    def quality_impact_clear():
+        quality_impact.clear(quality_impact_workspace_key())
+        return jsonify({"ok": True, **quality_impact.snapshot(quality_impact_workspace_key())})
 
     @app.get("/api/orchestration/code-analysis")
     def orchestration_code_analysis():

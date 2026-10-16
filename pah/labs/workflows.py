@@ -75,11 +75,12 @@ CODE_ANALYSIS_WORKFLOW = WorkflowManifest(
         ),
         WorkflowStep(
             step_id="mi_informed_analysis",
-            label="MI-informed quality analysis",
+            label="Quality Impact Analysis",
             capability="mi_informed_modeling",
             description=(
-                "Inspect HSQA-derived dependence and signed topology, then generate an experimental "
-                "non-negative PIQUE weighting candidate with explicit aggregation and weight-effect controls."
+                "Inspect a verified concluded Standard or MI-Informed PIQUE model and explicitly "
+                "linked SAT findings in a read-only PAH workspace. Scenarios follow in QI-2; "
+                "legacy MI experiment artifacts remain available through pyPIQUE."
             ),
             provider_module="pypique",
             requires=(

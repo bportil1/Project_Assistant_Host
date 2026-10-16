@@ -1509,10 +1509,12 @@
       button.type = 'button';
       button.className = 'lab-step-button';
       button.classList.toggle('active', step.step_id === state.codeAnalysisLab.selectedStep);
-      button.title = `${index + 1}. ${step.label} — ${labStateLabels[step.state] || step.state}`;
+      button.title = step.step_id === 'mi_informed_analysis'
+        ? `${index + 1}. ${step.label} — Read-only concluded-model inspector`
+        : `${index + 1}. ${step.label} — ${labStateLabels[step.state] || step.state}`;
 
       const led = document.createElement('span');
-      led.className = `lab-step-led ${step.state}`;
+      led.className = step.step_id === 'mi_informed_analysis' ? 'lab-step-led' : `lab-step-led ${step.state}`;
       led.setAttribute('aria-hidden', 'true');
 
       const copy = document.createElement('span');
@@ -1521,12 +1523,13 @@
       title.textContent = `${index + 1}. ${step.label}`;
       const provider = document.createElement('span');
       const resolvedProvider = step.resolution?.provider?.display_name;
-      provider.textContent = resolvedProvider || step.provider_module || step.capability;
+      provider.textContent = step.step_id === 'mi_informed_analysis'
+        ? 'PAH · verified pyPIQUE package' : (resolvedProvider || step.provider_module || step.capability);
       copy.append(title, provider);
 
       const status = document.createElement('span');
       status.className = 'lab-step-state';
-      status.textContent = labStateLabels[step.state] || step.state;
+      status.textContent = step.step_id === 'mi_informed_analysis' ? 'Select model' : (labStateLabels[step.state] || step.state);
 
       button.append(led, copy, status);
       button.addEventListener('click', () => {
@@ -1549,12 +1552,234 @@
     holder.appendChild(row);
   }
 
+  // QI-1: distinct read-only Code Analysis Lab stage. Stage 2 continues to
+  // own evidence generation and model development; no model editing here.
+  function qiElement(tag, text, className) {
+    const node = document.createElement(tag);
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    if (className) node.className = className;
+    return node;
+  }
+
+  function qiGraph(holder, network, onSelect) {
+    const nodes = network.nodes || [];
+    const edges = network.edges || [];
+    const kinds = [...new Set(nodes.map(node => String(node.kind || 'untyped')))];
+    const precedence = ['diagnostic', 'cwe', 'feature', 'measure', 'latent', 'hidden',
+      'product_factor', 'quality_aspect', 'tqi'];
+    kinds.sort((a, b) => {
+      const left = precedence.indexOf(a), right = precedence.indexOf(b);
+      return (left < 0 ? 100 : left) - (right < 0 ? 100 : right) || a.localeCompare(b);
+    });
+    const buckets = new Map(kinds.map(kind => [kind, []]));
+    nodes.forEach(node => buckets.get(String(node.kind || 'untyped')).push(node));
+    const nodeById = new Map();
+    kinds.forEach((kind, column) => buckets.get(kind).forEach((node, row) => {
+      nodeById.set(String(node.id), {node, x: 20 + column * 215, y: 42 + row * 37});
+    }));
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const make = (tag, attrs) => {
+      const element = document.createElementNS(svgNS, tag);
+      Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, String(value)));
+      return element;
+    };
+    const viewWidth = Math.max(320, kinds.length * 215 + 25);
+    const viewHeight = Math.max(100, 65 + Math.max(0, ...[...buckets.values()].map(rows => rows.length)) * 37);
+    const scrolling = qiElement('div', null, 'qi-network-scroll');
+    const svg = make('svg', {width: viewWidth, height: viewHeight,
+      viewBox: `0 0 ${viewWidth} ${viewHeight}`, role: 'img',
+      'aria-label': `Recorded ${network.role} network with ${nodes.length} nodes and ${edges.length} edges`});
+    const lines = make('g', {});
+    edges.forEach(edge => {
+      const src = nodeById.get(String(edge.source)), dst = nodeById.get(String(edge.target));
+      if (!src || !dst) return; // Do not invent unresolved endpoints.
+      const line = make('line', {x1: src.x + 155, y1: src.y + 12,
+        x2: dst.x, y2: dst.y + 12, class: 'qi-network-edge'});
+      const tooltip = make('title', {});
+      tooltip.textContent = `${edge.source} → ${edge.target} · ${edge.relationship || 'recorded'} · ${JSON.stringify(edge)}`;
+      line.appendChild(tooltip);
+      lines.appendChild(line);
+    });
+    svg.appendChild(lines);
+    kinds.forEach(kind => {
+      const x = 20 + kinds.indexOf(kind) * 215;
+      const heading = make('text', {x, y: 24, class: 'qi-network-heading'});
+      heading.textContent = kind;
+      svg.appendChild(heading);
+      buckets.get(kind).forEach(node => {
+        const coords = nodeById.get(String(node.id));
+        const group = make('g', {class: 'qi-network-node', tabindex: 0, role: 'button',
+          'aria-label': `Inspect ${node.id}`});
+        group.appendChild(make('rect', {x: coords.x, y: coords.y, width: 155, height: 25, rx: 4}));
+        const text = make('text', {x: coords.x + 5, y: coords.y + 16});
+        const title = make('title', {});
+        title.textContent = String(node.id);
+        text.textContent = String(node.id).slice(0, 22);
+        group.append(text, title);
+        group.addEventListener('click', () => onSelect(node));
+        group.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault(); onSelect(node);
+          }
+        });
+        svg.appendChild(group);
+      });
+    });
+    scrolling.appendChild(svg);
+    holder.appendChild(scrolling);
+  }
+
+  function qiTable(holder, headers, records) {
+    const scrolling = qiElement('div', null, 'qi-table-scroll');
+    const table = qiElement('table', null, 'pah-data-table');
+    const head = qiElement('thead');
+    const tr = qiElement('tr');
+    headers.forEach(header => tr.appendChild(qiElement('th', header)));
+    head.appendChild(tr);
+    const body = qiElement('tbody');
+    records.forEach(record => {
+      const row = qiElement('tr');
+      record.forEach(value => row.appendChild(qiElement('td', value ?? '—')));
+      body.appendChild(row);
+    });
+    table.append(head, body);
+    scrolling.appendChild(table);
+    holder.appendChild(scrolling);
+  }
+
+  function renderQualityImpactPanel(holder) {
+    holder.replaceChildren();
+    holder.appendChild(qiElement('h2', '4. Quality Impact Analysis'));
+    holder.appendChild(qiElement('p', 'Load one verified, immutable concluded Standard or MI-Informed PIQUE model. Inspect its exact recorded network and explicitly source-linked SAT diagnostics. Stage 2 remains unchanged.'));
+    const controls = qiElement('div', null, 'qi-controls');
+    const model = qiElement('input');
+    model.type = 'text';
+    model.placeholder = 'Local finalized model ZIP or version directory';
+    model.setAttribute('aria-label', 'Concluded model path');
+    const findings = qiElement('input');
+    findings.type = 'text';
+    findings.placeholder = 'Optional local SAT findings.json';
+    findings.setAttribute('aria-label', 'SAT findings JSON path');
+    const load = qiElement('button', 'Load verified model');
+    load.type = 'button';
+    const clear = qiElement('button', 'Clear selection');
+    clear.type = 'button';
+    const message = qiElement('p', 'Choose a finalized model ZIP or version directory.', 'qi-status');
+    controls.append(model, findings, load, clear);
+    holder.append(controls, message);
+    const content = qiElement('section', null, 'qi-results');
+    holder.appendChild(content);
+    let displayId = 0;
+
+    function renderData(payload) {
+      content.replaceChildren();
+      if (!payload.selected) {
+        message.textContent = payload.diagnostic || 'No finalized model selected. Nothing has been modified.';
+        return;
+      }
+      model.value = payload.model_path || '';
+      findings.value = payload.evidence?.source?.path || '';
+      message.textContent = `${payload.family} · ${payload.version_id} · SHA256 ${payload.archive_sha256}`;
+      content.appendChild(qiElement('p', payload.notice, 'qi-status'));
+      const summary = qiElement('div', null, 'qi-summary');
+      summary.appendChild(qiElement('strong', 'Verified concluded model · read-only'));
+      summary.appendChild(qiElement('span', `Aggregation: ${payload.choice}`));
+      summary.appendChild(qiElement('span', `Linked observations: ${payload.evidence.linked_observations}; unmatched: ${payload.evidence.unmatched.length}`));
+      content.appendChild(summary);
+      const networkLabel = qiElement('label', 'Recorded network: ');
+      const which = qiElement('select');
+      [['primary', payload.network.role], ...(payload.probabilistic_backing
+        ? [['backing', 'Separate learned probabilistic backing']] : [])].forEach(([key, label]) => {
+        const opt = qiElement('option', label);
+        opt.value = key;
+        which.appendChild(opt);
+      });
+      networkLabel.appendChild(which);
+      content.appendChild(networkLabel);
+      const networkPane = qiElement('div', null, 'qi-network-pane');
+      content.appendChild(networkPane);
+      function drawNetwork() {
+        networkPane.replaceChildren();
+        const network = which.value === 'backing' ? payload.probabilistic_backing : payload.network;
+        networkPane.appendChild(qiElement('p', `${network.semantics}. ${network.nodes.length} recorded nodes, ${network.edges.length} recorded links.`));
+        const inspector = qiElement('pre', 'Select a node to inspect its recorded properties and explicitly matched findings.', 'qi-inspector');
+        const inspect = node => {
+          const observations = which.value === 'primary' ? (payload.evidence.linked[node.id] || []) : [];
+          inspector.textContent = JSON.stringify({node, matched_findings: observations}, null, 2);
+        };
+        qiGraph(networkPane, network, inspect);
+        networkPane.appendChild(inspector);
+        const nodeDetails = qiElement('details');
+        nodeDetails.appendChild(qiElement('summary', `All ${network.nodes.length} nodes (exact IDs and kinds)`));
+        qiTable(nodeDetails, ['Node', 'Kind', 'Source-linked SAT findings'], network.nodes.map(n => [
+          n.id, n.kind || '—', which.value === 'primary' ? (payload.evidence.linked[n.id] || []).length : 'separate backing',
+        ]));
+        const edgeDetails = qiElement('details');
+        edgeDetails.appendChild(qiElement('summary', `All ${network.edges.length} recorded links (no inferred links)`));
+        qiTable(edgeDetails, ['Source', 'Target', 'Relationship', 'Recorded fields'], network.edges.map(e => [
+          e.source, e.target, e.relationship || '—', JSON.stringify(e),
+        ]));
+        networkPane.append(nodeDetails, edgeDetails);
+      }
+      which.addEventListener('change', drawNetwork);
+      drawNetwork();
+      const evidenceSection = qiElement('details');
+      evidenceSection.appendChild(qiElement('summary', `Source-linked diagnostic evidence (${payload.evidence.linked_observations} links, ${payload.evidence.unmatched.length} unmatched)`));
+      evidenceSection.appendChild(qiElement('p', payload.evidence.note));
+      qiTable(evidenceSection, ['Diagnostic', 'File', 'Line', 'Provider', 'Message'],
+        Object.values(payload.evidence.linked).flat().concat(payload.evidence.unmatched).map(row => [
+          row.diagnostic_id, row.file_path, row.line, row.provider, row.message,
+        ]));
+      content.appendChild(evidenceSection);
+      const acceptance = qiElement('details');
+      acceptance.appendChild(qiElement('summary', 'Historical reference vs concluded acceptance (not a hypothetical scenario)'));
+      acceptance.appendChild(qiElement('p', `Recorded unit: ${payload.acceptance.unit}`));
+      qiTable(acceptance, ['PF / TQI', 'Reference', 'Concluded', 'Recorded Δ'],
+        (payload.acceptance.rows || []).map(row => [row.name, row.reference, row.concluded, row.delta]));
+      content.appendChild(acceptance);
+    }
+
+    async function loadSnapshot() {
+      const requestId = ++displayId;
+      try {
+        const result = await api('/api/orchestration/code-analysis/quality-impact');
+        if (requestId === displayId && state.codeAnalysisLab.selectedStep === 'mi_informed_analysis') renderData(result);
+      } catch (error) {
+        if (requestId === displayId) message.textContent = error.message;
+      }
+    }
+    load.addEventListener('click', async () => {
+      try {
+        const result = await api('/api/orchestration/code-analysis/quality-impact/select', {
+          method: 'POST', body: JSON.stringify({path: model.value, findings_path: findings.value || null}),
+        });
+        ++displayId;
+        renderData(result);
+      } catch (error) { message.textContent = error.message; }
+    });
+    clear.addEventListener('click', async () => {
+      try {
+        const result = await api('/api/orchestration/code-analysis/quality-impact/clear', {
+          method: 'POST', body: '{}',
+        });
+        ++displayId;
+        model.value = ''; findings.value = '';
+        renderData(result);
+      } catch (error) { message.textContent = error.message; }
+    });
+    loadSnapshot();
+  }
+
   function renderCodeAnalysisStepDetail(stepId) {
     const holder = $('codeAnalysisStepDetail');
     const step = codeAnalysisStep(stepId);
     if (!holder || !step) return;
     holder.replaceChildren();
 
+    if (stepId === 'mi_informed_analysis') {
+      renderQualityImpactPanel(holder);
+      return;
+    }
     const title = document.createElement('h2');
     title.textContent = step.label;
     const description = document.createElement('p');

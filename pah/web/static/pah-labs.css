@@ -365,3 +365,21 @@
   color: var(--pah-muted);
   font-size: 9px;
 }
+
+/* QI-1 read-only Quality Impact inspector (fourth workflow stage) */
+.qi-controls { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto auto; gap: 8px; margin: 12px 0; align-items: center; }
+.qi-controls input { min-width: 0; width: 100%; }
+.qi-status { color: var(--pah-muted); overflow-wrap: anywhere; font-size: 12px; }
+.qi-summary { display: flex; flex-wrap: wrap; gap: 14px; padding: 9px 0; }
+.qi-network-scroll { overflow: auto; max-height: 540px; border: 1px solid var(--pah-border); margin: 9px 0; background: var(--pah-surface); }
+.qi-network-edge { stroke: var(--pah-muted-2); opacity: .35; stroke-width: 1; }
+.qi-network-heading { font-size: 12px; font-weight: 700; fill: var(--pah-text); }
+.qi-network-node { cursor: pointer; }
+.qi-network-node rect { fill: var(--pah-surface-2); stroke: var(--pah-border); }
+.qi-network-node text { font-size: 11px; fill: var(--pah-text); }
+.qi-network-node:hover rect, .qi-network-node:focus rect { stroke: var(--pah-blue-600); stroke-width: 2; }
+.qi-inspector { max-height: 180px; overflow: auto; border: 1px solid var(--pah-border); padding: 8px; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.qi-table-scroll { max-height: 360px; overflow: auto; margin: 8px 0; }
+.qi-results details { padding: 7px 0; border-top: 1px solid var(--pah-border); }
+@media (max-width: 1000px) { .qi-controls { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 650px) { .qi-controls { grid-template-columns: minmax(0, 1fr); } }
