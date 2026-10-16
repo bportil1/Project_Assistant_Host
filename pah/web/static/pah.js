@@ -1833,6 +1833,69 @@
         forwardSection.appendChild(qiElement('p', forward.reason || 'MI uses a separate inference contract (QI-5).', 'qi-status'));
       }
       content.appendChild(forwardSection);
+      if (payload.family === 'mi_informed_pique') {
+        const mi = payload.mi_handoff || {};
+        const miSection = qiElement('section', null, 'qi-scenario');
+        miSection.appendChild(qiElement('h3', 'MI inference provider handoff (QI-5)'));
+        miSection.appendChild(qiElement('p',
+          'This is an evidence-to-provider request contract, NOT an inference execution. A changed SAT count is not a changed population distribution, PMI, PF or TQI.', 'qi-status'));
+        const miControls = qiElement('div', null, 'qi-scenario-controls');
+        const adapterPath = qiElement('input');
+        adapterPath.type = 'text';
+        adapterPath.placeholder = 'Local MI provider/feature adapter JSON';
+        adapterPath.setAttribute('aria-label', 'MI provider and feature adapter JSON path');
+        const bindAdapter = qiElement('button', 'Bind MI provider mapping');
+        bindAdapter.type = 'button';
+        const clearAdapter = qiElement('button', 'Clear MI mapping');
+        clearAdapter.type = 'button';
+        const prepare = qiElement('button', 'Export unexecuted MI request');
+        prepare.type = 'button';
+        prepare.disabled = mi.status !== 'ready_to_prepare';
+        const miStatus = qiElement('p',
+          `${mi.status || 'needs_adapter'} · ${mi.reason || ''}. Provider identity is declared, not connected or authenticated.`, 'qi-status');
+        bindAdapter.addEventListener('click', async () => {
+          try {
+            const result = await api('/api/orchestration/code-analysis/quality-impact/mi/adapter', {
+              method: 'POST', body: JSON.stringify({path: adapterPath.value}),
+            });
+            ++displayId; renderData(result);
+          } catch (error) { miStatus.textContent = error.message; }
+        });
+        clearAdapter.addEventListener('click', async () => {
+          try {
+            const result = await api('/api/orchestration/code-analysis/quality-impact/mi/clear', {
+              method: 'POST', body: '{}',
+            });
+            ++displayId; renderData(result);
+          } catch (error) { miStatus.textContent = error.message; }
+        });
+        prepare.addEventListener('click', async () => {
+          try {
+            const result = await api('/api/orchestration/code-analysis/quality-impact/mi/prepare', {
+              method: 'POST', body: JSON.stringify({expected_revision: scenario.revision}),
+            });
+            const envelope = result.request;
+            const blob = new Blob([JSON.stringify(envelope, null, 2) + '\n'], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `mi-inference-request-${scenario.revision}-${envelope.request_sha256.slice(0, 12)}.json`;
+            document.body.appendChild(link);
+            link.click(); link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            miStatus.textContent = 'An unexecuted, fingerprint-bound request was offered for local download. No provider was invoked and no new MI statistics were computed.';
+          } catch (error) { miStatus.textContent = error.message; }
+        });
+        miControls.append(adapterPath, bindAdapter, clearAdapter, prepare);
+        miSection.append(miControls, miStatus);
+        if (mi.provider) {
+          miSection.appendChild(qiElement('p',
+            `Declared provider: ${mi.provider.id} (${mi.provider.version}); capability: ${mi.provider.capability}; mapped inputs: ${mi.mapped_inputs}.`, 'qi-status'));
+        }
+        miSection.appendChild(qiElement('p',
+          `Unmapped changed features: ${(mi.unmapped_changed_inputs || []).join(', ') || 'none'}. Statistical reestimation begins only in the later MI-U provider implementation.`, 'qi-status'));
+        content.appendChild(miSection);
+      }
       const comparison = payload.comparison || {};
       const comparisonSection = qiElement('section', null, 'qi-scenario');
       comparisonSection.appendChild(qiElement('h3', 'Result comparison & recorded network paths (QI-4)'));

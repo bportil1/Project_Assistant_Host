@@ -30,6 +30,7 @@ from .labs import (
 )
 from .labs.information_network import build_information_network
 from .labs.quality_impact import QualityImpactInspector, QualityImpactError, ScenarioError, ForwardEvaluationError, ComparisonError
+from .labs.quality_impact_mi import MIContractError
 from .labs.runtime_artifact_refresh import reconcile_module_artifacts
 from .module_catalog import MODULE_CATEGORIES, WORKSPACE_PRESETS, default_module_registry
 from .runtime import HostSurfaceRuntimeAdapter, RuntimeRegistry, RuntimeRegistryError
@@ -997,6 +998,33 @@ def create_app(
     @app.post("/api/orchestration/code-analysis/quality-impact/forward/clear")
     def quality_impact_forward_clear():
         return jsonify({"ok": True, **quality_impact.clear_native_inputs(quality_impact_workspace_key())})
+
+    @app.post("/api/orchestration/code-analysis/quality-impact/mi/adapter")
+    def quality_impact_mi_adapter():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return error_response(ValueError('Expected a JSON object'), 400)
+        try:
+            snapshot = quality_impact.bind_mi_adapter(quality_impact_workspace_key(), payload.get('path'))
+        except (MIContractError, QualityImpactError, OSError, ValueError, TypeError) as exc:
+            return error_response(exc, 409)
+        return jsonify({"ok": True, **snapshot})
+
+    @app.post("/api/orchestration/code-analysis/quality-impact/mi/clear")
+    def quality_impact_mi_clear():
+        return jsonify({"ok": True, **quality_impact.clear_mi_adapter(quality_impact_workspace_key())})
+
+    @app.post("/api/orchestration/code-analysis/quality-impact/mi/prepare")
+    def quality_impact_mi_prepare():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return error_response(ValueError('Expected a JSON object'), 400)
+        try:
+            envelope = quality_impact.prepare_mi_request(
+                quality_impact_workspace_key(), expected_revision=payload.get('expected_revision'))
+        except (MIContractError, QualityImpactError, OSError, ValueError, TypeError) as exc:
+            return error_response(exc, 409)
+        return jsonify({"ok": True, "request": envelope})
 
     @app.post("/api/orchestration/code-analysis/quality-impact/comparison")
     def quality_impact_comparison_action():

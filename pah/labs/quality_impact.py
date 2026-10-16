@@ -18,6 +18,7 @@ from threading import RLock
 from .quality_impact_scenarios import DiagnosticScenario, ScenarioError
 from .quality_impact_forward import (ForwardEvaluationError, read_native_mapping, forward_result)
 from .quality_impact_comparison import ComparisonError, build_comparison
+from .quality_impact_mi import MIContractError, read_mi_adapter, build_mi_request
 
 
 class QualityImpactError(ValueError):
@@ -204,6 +205,7 @@ class QualityImpactInspector:
         self._selections: dict[str, dict[str, Any]] = {}
         self._scenarios: dict[str, DiagnosticScenario] = {}
         self._native_mappings: dict[str, dict[str, Any]] = {}
+        self._mi_adapters: dict[str, dict[str, Any]] = {}
         self._checkpoints: dict[str, list[dict[str, Any]]] = {}
         self._comparison_targets: dict[str, str] = {}
         self._lock = RLock()
@@ -226,6 +228,7 @@ class QualityImpactInspector:
             }
             self._scenarios.pop(workspace, None)
             self._native_mappings.pop(workspace, None)
+            self._mi_adapters.pop(workspace, None)
             self._checkpoints.pop(workspace, None)
             self._comparison_targets.pop(workspace, None)
             return self._attach_scenario(workspace, result)
@@ -235,6 +238,7 @@ class QualityImpactInspector:
             self._selections.pop(workspace, None)
             self._scenarios.pop(workspace, None)
             self._native_mappings.pop(workspace, None)
+            self._mi_adapters.pop(workspace, None)
             self._checkpoints.pop(workspace, None)
             self._comparison_targets.pop(workspace, None)
 
@@ -334,6 +338,7 @@ class QualityImpactInspector:
                     'forward_evaluation': current['forward_evaluation'],
                     'comparison': current['comparison'],
                     'comparison_checkpoints': current['comparison_checkpoints'],
+                    'mi_handoff': current['mi_handoff'],
                     'sources_modified': False, 'automatic_persistence': False,
                     'interpretation': ('Hypothetical count scenarios are not verified SAT findings. '
                                        'Native outputs come only from explicitly mapped concluded Standard evaluations. '
@@ -347,7 +352,67 @@ class QualityImpactInspector:
         result['scenarios_enabled'] = bool(scenario.observations)
         result['scenario'] = scenario.to_dict()
         result['forward_evaluation'] = self._forward_snapshot(workspace, result)
+        result['mi_handoff'] = self._mi_snapshot(workspace, result)
         return self._with_comparison(workspace, result)
+
+    def _mi_snapshot(self, workspace: str, result: dict) -> dict:
+        status = {'schema': 'pah.mi_inference_handoff_status', 'schema_version': 1}
+        if result.get('family') != 'mi_informed_pique':
+            return {**status, 'status': 'not_applicable', 'reason': 'Standard PIQUE uses the native evaluator, not an MI distribution-update provider'}
+        mapping = self._mi_adapters.get(workspace)
+        if mapping is None:
+            return {**status, 'status': 'needs_adapter',
+                    'reason': 'Bind an explicit provider-owned feature mapping before preparing an MI handoff; no inference is performed'}
+        try:
+            current = read_mi_adapter(mapping['path'], result)
+            if current['sha256'] != mapping['sha256']:
+                raise MIContractError('Bound MI adapter JSON changed on disk')
+        except (MIContractError, OSError, ValueError, TypeError, KeyError) as exc:
+            self._mi_adapters.pop(workspace, None)
+            return {**status, 'status': 'blocked', 'reason': str(exc), 'adapter_invalidated': True}
+        sources = {row['source_node_id'] for row in mapping['feature_mappings']}
+        changed = {row['node_id'] for row in result['scenario']['rows'] if row['changed']}
+        unmapped = sorted(changed - sources)
+        return {**status, 'status': ('needs_scenario' if not changed else
+                                    'unmapped_changes' if unmapped else 'ready_to_prepare'),
+                'adapter_sha256': mapping['sha256'], 'provider': mapping['provider'],
+                'protocol': mapping['protocol'], 'mapped_inputs': len(sources),
+                'unmapped_changed_inputs': unmapped,
+                'reason': ('An explicit hypothetical count change is required' if not changed else
+                           'Changed inputs lack explicit mappings' if unmapped else
+                           'Ready to prepare an unexecuted request; provider has NOT been invoked'),
+                'inference_executed': False}
+
+    def bind_mi_adapter(self, workspace: str, path: Any) -> dict:
+        """Bind and hash explicit MI mapping without touching hypothetical edits."""
+        if not isinstance(path, str) or not path.strip():
+            raise MIContractError('A local MI adapter JSON path is required')
+        with self._lock:
+            current = self.snapshot(workspace)
+            if not current.get('selected'):
+                raise MIContractError('Select a verified concluded MI model with SAT evidence first')
+            bound = read_mi_adapter(path, current)
+            self._mi_adapters[workspace] = bound
+            return self._attach_scenario(workspace, current)
+
+    def clear_mi_adapter(self, workspace: str) -> dict:
+        with self._lock:
+            self._mi_adapters.pop(workspace, None)
+            return self.snapshot(workspace)
+
+    def prepare_mi_request(self, workspace: str, *, expected_revision: Any) -> dict:
+        """On explicit request, return a fingerprint-bound envelope, NOT estimates."""
+        with self._lock:
+            current = self.snapshot(workspace)
+            if not current.get('selected') or current['family'] != 'mi_informed_pique':
+                raise MIContractError('Select a verified MI conclusion first')
+            revision = current['scenario']['revision']
+            if isinstance(expected_revision, bool) or not isinstance(expected_revision, int) or expected_revision != revision:
+                raise MIContractError('Scenario revision is stale; refresh before preparing a request')
+            if current['mi_handoff']['status'] != 'ready_to_prepare':
+                raise MIContractError(current['mi_handoff'].get('reason') or 'MI adapter is not ready')
+            mapping = self._mi_adapters[workspace]
+            return build_mi_request(current, mapping)
 
     def bind_native_inputs(self, workspace: str, path: Any) -> dict:
         """Attach explicitly sourced native diagnostic inputs without editing QI-2 state."""
@@ -440,10 +505,13 @@ class QualityImpactInspector:
             raise QualityImpactError(f'Concluded model verification failed: {exc}') from exc
         family = concluded['family']
         docs = concluded['documents']
+        signed_sha = backing_sha = None
         if family == 'standard_pique':
             network = _standard_network(docs['model.json'])
             backing = None
         elif family == 'mi_informed_pique':
+            signed_sha = (concluded['manifest'].get('files') or {}).get('signed_information_topology.json')
+            backing_sha = (concluded['manifest'].get('files') or {}).get('probabilistic_model.json')
             network = _recorded_network(docs['signed_information_topology.json'],
                                         role='signed_information_topology', edge_key='edges')
             backing = _recorded_network(docs['probabilistic_model.json'],
@@ -458,6 +526,8 @@ class QualityImpactInspector:
                 'archive_sha256': concluded['archive_sha256'],
                 'manifest_sha256': concluded['manifest_sha256'],
                 'choice': concluded['manifest']['choice'],
+                'mi_signed_network_sha256': signed_sha,
+                'mi_backing_model_sha256': backing_sha,
                 'network': network, 'probabilistic_backing': backing,
                 'evidence': _link_evidence(network, evidence),
                 'acceptance': summary['comparison'],
