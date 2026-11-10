@@ -46,7 +46,7 @@
       topics: [],
       selected: null,
     },
-    mode: 'workspace',
+    mode: 'uca',
     codeAnalysisLab: {snapshot: null, selectedStep: null, railCollapsed: false},
     mlLab: {available: false, running: false, url: null, message: null, artifacts: []},
     git: {git_available: false, workspace: null, is_repository: false, repository_root: null, branch: null, detached: false, head: null, changes: [], staged_count: 0, unstaged_count: 0, untracked_count: 0, submodules: [], remotes: [], tracking: null, connectivity_mode: 'local_only', local_only: true, remote_enabled: false},
@@ -76,7 +76,7 @@
       projectWidth: 265,
       contextWidth: 360,
       terminalHeight: 250,
-      lastMode: 'workspace',
+      lastMode: 'uca',
     },
   };
 
@@ -241,7 +241,7 @@
     projectWidth: 265,
     contextWidth: 360,
     terminalHeight: 250,
-    lastMode: 'workspace',
+    lastMode: 'uca',
   });
   const layoutSizeConfig = Object.freeze({
     project: {stateKey: 'projectWidth', targetId: 'workspaceMode', cssVar: '--project-pane-expanded-width', min: 180, max: 480},
@@ -274,7 +274,7 @@
       }
     }
     if (['workspace', 'uca', 'analysis', 'documents', 'references'].includes(saved.lastMode)) {
-      state.layout.lastMode = saved.lastMode;
+      state.layout.lastMode = saved.lastMode === 'workspace' ? 'uca' : saved.lastMode;
     }
   }
 
@@ -371,15 +371,20 @@
   }
 
   async function focusWorkspaceEditor() {
-    if (state.mode !== 'workspace') await setMode('workspace');
+    if (state.mode !== 'uca') await setMode('uca');
     const tab = activeTab();
     if (tab && editor) editor.focus();
     else $('workspacePath')?.focus();
   }
 
   async function restoreLastMode() {
-    const mode = state.layout.lastMode;
-    if (mode === 'workspace' || (!state.workspace && !state.researchWorkspace.catalog?.active_workspace_id)) return;
+    // The legacy Workspace surface remains mounted as an editor docking source,
+    // but is no longer a top-level navigation destination.
+    const mode = state.layout.lastMode === 'workspace' ? 'uca' : state.layout.lastMode;
+    if (!state.workspace && !state.researchWorkspace.catalog?.active_workspace_id && mode !== 'uca') {
+      await setMode('uca');
+      return;
+    }
     await setMode(mode);
   }
 
@@ -658,7 +663,7 @@
       frame.src = 'about:blank';
       delete frame.dataset.toolUrl;
     }
-    if (state.mode === name) await setMode('workspace');
+    if (state.mode === name) await setMode('uca');
     return true;
   }
 
@@ -824,7 +829,7 @@
     // Route it directly through setMode so the Workspace button always returns
     // from Analysis/Documents/References to the editor workspace.
     if (name === 'workspace' || name === 'uca') {
-      await setMode(name);
+      await setMode('uca');
       return;
     }
     const config = surfaceConfig(name);
@@ -1286,7 +1291,7 @@
 
   async function openOverleafBib(path) {
     $('overleafSyncDialog')?.close();
-    await setMode('workspace');
+    await setMode('uca');
     await openFile(path);
   }
 
@@ -5539,9 +5544,9 @@
   $('mlLabRefreshArtifacts')?.addEventListener('click', () => refreshMlLabStatus().catch(error => toast(error.message, true)));
   $('mlLabReload')?.addEventListener('click', () => reloadMlLab().catch(error => toast(error.message, true)));
   $('mlLabOpenWindow')?.addEventListener('click', () => { if (state.mlLab.url) window.open(state.mlLab.url, '_blank', 'noopener'); else openMlLab().catch(error => toast(error.message, true)); });
-  $('mlLabBackWorkspace')?.addEventListener('click', () => setMode('workspace').catch(error => toast(error.message, true)));
+  $('mlLabBackWorkspace')?.addEventListener('click', () => setMode('uca').catch(error => toast(error.message, true)));
   $('refreshCodeAnalysisLab')?.addEventListener('click', () => refreshCodeAnalysisLab().catch(error => toast(error.message, true)));
-  $('codeAnalysisBackWorkspace')?.addEventListener('click', () => setMode('workspace').catch(error => toast(error.message, true)));
+  $('codeAnalysisBackWorkspace')?.addEventListener('click', () => setMode('uca').catch(error => toast(error.message, true)));
   $('codeAnalysisRailToggle')?.addEventListener('click', () => setCodeAnalysisRailCollapsed(!state.codeAnalysisLab.railCollapsed));
 
   document.querySelectorAll('.mode-button[data-mode]').forEach(button => {
@@ -5582,7 +5587,7 @@
   function handleWorkspaceSaveShortcut(event) {
     const modifier = event.ctrlKey || event.metaKey;
     if (!modifier || event.altKey || event.shiftKey || event.key.toLowerCase() !== 's') return false;
-    if (event.defaultPrevented || state.mode !== 'workspace' || !activeTab()) return false;
+    if (event.defaultPrevented || !['workspace', 'uca'].includes(state.mode) || !activeTab()) return false;
     event.preventDefault();
     if (!event.repeat) saveActive().catch(error => toast(error.message, true));
     return true;

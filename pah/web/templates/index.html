@@ -20,8 +20,7 @@
   <header class="topbar">
     <div class="brand">PAH <span>Project Assistant Host</span></div>
     <nav class="mode-nav" aria-label="PAH work modes and services">
-      <button class="mode-button active" data-mode="workspace">Workspace</button>
-      <button class="mode-button" data-mode="uca">Unified Analysis</button>
+      <button class="mode-button active" data-mode="uca">Unified Analysis</button>
 
       <div class="mode-launcher labs-launcher">
         <button id="labsMenuToggle" class="mode-button labs-menu-button" type="button" data-menu-toggle="labsMenu" aria-controls="labsMenu" aria-expanded="false" aria-haspopup="menu">Labs ▾</button>
@@ -360,7 +359,7 @@
         <button id="ucaEditorShareSelection" type="button">Locate selection in analysis</button>
         <p id="ucaEditorShareStatus" role="status" aria-live="polite"></p>
         <div id="ucaEditorMount" class="uca-editor-mount" aria-label="Docked PAH source editor"></div>
-        <p class="uca-editor-hint">Same editor, tabs, and unsaved buffers as Workspace. Save and Run remain in the main toolbar.</p>
+        <p class="uca-editor-hint">Uses the existing editor, open files, and unsaved buffers. Save and Run remain in the main toolbar.</p>
       </section>
       <section class="uca-pane" data-uca-pane="pypique" aria-label="pyPIQUE pane">
         <header><strong>pyPIQUE</strong><label>Width <input type="range" data-uca-width="pypique" min="15" max="70" value="33" aria-label="pyPIQUE width"></label></header>
@@ -453,7 +452,7 @@
           <p id="codeAnalysisLabDescription">Software structure, security, quality modeling, and learned representation analysis.</p>
         </div>
         <div class="lab-header-actions">
-          <button id="codeAnalysisBackWorkspace" type="button">Back to Workspace</button>
+          <button id="codeAnalysisBackWorkspace" type="button">Back to Unified Analysis</button>
         </div>
       </header>
 
@@ -495,7 +494,7 @@
         <button id="mlLabRefreshArtifacts" type="button">Refresh Artifacts</button>
         <button id="mlLabReload" type="button">Reload</button>
         <button id="mlLabOpenWindow" type="button">Open in New Window</button>
-        <button id="mlLabBackWorkspace" type="button">Back to Workspace</button>
+        <button id="mlLabBackWorkspace" type="button">Back to Unified Analysis</button>
       </div>
     </div>
     <iframe id="mlLabToolFrame" title="ML Lab" referrerpolicy="no-referrer"></iframe>
