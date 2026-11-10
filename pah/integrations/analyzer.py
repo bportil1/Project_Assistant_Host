@@ -44,10 +44,32 @@ class AnalyzerIntegration:
             return self._analyzer_class
         try:
             module = importlib.import_module("code_analyzer")
-            analyzer_class = getattr(module, "CodeAnalyzer")
         except Exception as exc:  # optional dependency may be wholly absent
             self._import_error = f"{type(exc).__name__}: {exc}"
             return None
+
+        analyzer_class = getattr(module, "CodeAnalyzer", None)
+        if not callable(analyzer_class):
+            # Older/incomplete installs sometimes expose the public API module
+            # but not the root-level re-export. Never alter sys.path or inject
+            # a guessed checkout: only accept the active package's own API.
+            try:
+                api = importlib.import_module("code_analyzer.api")
+                analyzer_class = getattr(api, "CodeAnalyzer", None)
+                if not callable(analyzer_class):
+                    raise AttributeError("code_analyzer.api has no callable CodeAnalyzer")
+            except Exception as exc:
+                origin = getattr(module, "__file__", None)
+                if not origin:
+                    locations = list(getattr(module, "__path__", ()))
+                    origin = ", ".join(str(path) for path in locations) or "unknown location"
+                self._import_error = (
+                    f"Incompatible code_analyzer package at {origin}: "
+                    "neither the package root nor its API provides CodeAnalyzer "
+                    f"({type(exc).__name__}: {exc}). "
+                    "Reinstall the local modules/code_analyzer checkout in PAH's .venv."
+                )
+                return None
         self._analyzer_class = analyzer_class
         self._import_error = None
         return analyzer_class
@@ -94,9 +116,16 @@ class AnalyzerIntegration:
     def analyze(self) -> dict[str, Any]:
         analyzer_class = self._load_class()
         if analyzer_class is None:
-            raise AnalyzerIntegrationError(
+            incompatible = (self._import_error or "").startswith("Incompatible code_analyzer")
+            explanation = (
+                "Code Analyzer was imported but is incompatible with PAH. "
+                if incompatible else
                 "CodeAnalyzer is not installed in the PAH environment. "
-                "Initialize modules/code_analyzer and run scripts/setup.sh."
+            )
+            raise AnalyzerIntegrationError(
+                explanation
+                + "Verify the local modules/code_analyzer checkout and reinstall it "
+                "in the active PAH virtual environment."
                 + (f" Import error: {self._import_error}" if self._import_error else "")
             )
         with self._lock:

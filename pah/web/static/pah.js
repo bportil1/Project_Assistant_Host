@@ -20,6 +20,7 @@
     terminalRawHistory: '',
     analyzer: {
       available: false,
+      importError: null,
       analyzed: false,
       stale: false,
       generation: 0,
@@ -380,7 +381,9 @@
   async function restoreLastMode() {
     // The legacy Workspace surface remains mounted as an editor docking source,
     // but is no longer a top-level navigation destination.
-    const mode = state.layout.lastMode === 'workspace' ? 'uca' : state.layout.lastMode;
+    const detachedPane = new URLSearchParams(window.location.search).get('uca_pane');
+    const mode = ['editor','pypique','analyzer'].includes(detachedPane) ? 'uca'
+      : (state.layout.lastMode === 'workspace' ? 'uca' : state.layout.lastMode);
     if (!state.workspace && !state.researchWorkspace.catalog?.active_workspace_id && mode !== 'uca') {
       await setMode('uca');
       return;
@@ -1386,8 +1389,10 @@
       loadToolFrame(mode);
     }
     state.mode = mode;
-    state.layout.lastMode = mode;
-    persistLayoutPreferences();
+    if (!['editor','pypique','analyzer'].includes(new URLSearchParams(window.location.search).get('uca_pane'))) {
+      state.layout.lastMode = mode;
+      persistLayoutPreferences();
+    }
     document.querySelectorAll('.mode-button').forEach(button => {
       button.classList.toggle('active', button.dataset.mode === mode);
     });
@@ -4099,8 +4104,10 @@
     }
     if (!state.analyzer.available) {
       badge.className = 'badge missing';
-      badge.textContent = 'module missing';
-      setAnalyzerMessage('CodeAnalyzer is not installed in this PAH environment. Add the code-analyzer submodule and run scripts/setup.sh.', 'error');
+      badge.textContent = state.analyzer.importError ? 'import error' : 'module missing';
+      setAnalyzerMessage(state.analyzer.importError
+        ? `Code Analyzer import failed: ${state.analyzer.importError}`
+        : 'Code Analyzer is unavailable in this PAH environment. Check its local installation with scripts/doctor.sh.', 'error');
       return;
     }
     if (!state.analyzer.analyzed) {
@@ -4129,6 +4136,7 @@
   async function refreshAnalyzerStatus() {
     const data = await api('/api/analyzer/status');
     state.analyzer.available = Boolean(data.available);
+    state.analyzer.importError = typeof data.import_error === 'string' ? data.import_error : null;
     state.analyzer.analyzed = Boolean(data.analyzed);
     state.analyzer.stale = Boolean(data.stale);
     state.analyzer.generation = Number(data.generation || 0);

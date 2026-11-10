@@ -7,7 +7,10 @@ const safePath = value => typeof value === 'string' && value.length > 0 && value
 export function readProjection(data) {
   if (!data || data.schema !== 'pypique.source-evidence-projections@1'
       || typeof data.project_id !== 'string' || !data.project_id
-      || !Array.isArray(data.results) || data.results.length > 100) {
+      || !Array.isArray(data.results)
+      || !Number.isSafeInteger(data.total) || data.total < 0
+      || !Number.isSafeInteger(data.offset) || data.offset < 0
+      || data.results.length > data.total || data.offset + data.results.length > data.total) {
     throw new Error('Incompatible pyPIQUE finding projection');
   }
   return data;

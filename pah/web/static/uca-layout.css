@@ -61,3 +61,44 @@
 .uca-artifact-handoff { margin-top:10px; }
 .uca-artifact-handoff textarea { width:100%; box-sizing:border-box; font-family:monospace; }
 .uca-artifact-handoff pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:230px; overflow:auto; }
+
+/* UCA layout repair: the original project tree is docked beside three panes. */
+.uca-body { display:flex; align-items:stretch; min-height:360px; min-width:0; gap:8px; }
+.uca-explorer-mount { flex:0 0 245px; min-width:190px; max-width:360px; min-height:0; display:flex; border:1px solid var(--pah-border,#ccd4df); border-radius:6px; overflow:hidden; }
+.uca-explorer-mount[hidden] { display:none !important; }
+.uca-explorer-mount #projectPane { flex:1 1 auto; min-width:0; min-height:0; width:100%; overflow:auto; }
+.uca-explorer-mount #projectPaneResize { display:none; }
+.uca-grid { flex:1 1 auto; width:100%; min-width:0; overflow-x:auto; gap:0; align-items:stretch; }
+.uca-grid > .uca-pane { min-width:0; flex-shrink:1; overflow:auto; }
+.uca-grid > .uca-pane[hidden] { display:none !important; }
+.uca-grip { flex:0 0 12px; cursor:col-resize; align-self:stretch; position:relative; touch-action:none; z-index:2; background:transparent; border-radius:4px; }
+.uca-grip::after { content:""; width:4px; background:var(--pah-border-strong,#8da3b6); border-radius:3px; position:absolute; top:8px; bottom:8px; left:4px; }
+.uca-grip:hover::after,.uca-grip:focus-visible::after,.uca-grip.dragging::after { background:var(--pah-blue-600,#247ba0); width:6px; left:3px; }
+.uca-grip:focus-visible { outline:2px solid var(--pah-blue-600,#247ba0); }
+.uca-findings-pagination { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:.78rem; }
+.uca-findings-pagination button { padding:4px 9px; }
+@media (max-width:800px) {
+  .uca-body { flex-direction:column; }
+  .uca-explorer-mount { flex:0 0 210px; max-width:none; }
+  .uca-grid { min-height:330px; flex-direction:row; }
+  .uca-grid > .uca-pane { min-width:180px; }
+}
+
+/* Standalone panes are same-origin PAH documents, not adopted live Ace DOM. */
+html[data-uca-standalone] .mode-nav,
+html[data-uca-standalone] #ucaMode .uca-observations { display:none !important; }
+html[data-uca-standalone] #ucaMode .uca-body { flex:1 1 auto; min-height:0; }
+html[data-uca-standalone] #ucaMode .uca-grid { flex:1 1 auto; min-height:0; }
+html[data-uca-standalone] #ucaMode .uca-pane { flex:1 1 auto !important; min-height:0; }
+html[data-uca-standalone="pypique"] #ucaExplorerDock,
+html[data-uca-standalone="analyzer"] #ucaExplorerDock { display:none !important; }
+html[data-uca-standalone] #ucaCloseWindow { display:inline-flex !important; }
+html[data-uca-standalone] #ucaMode .uca-header { align-items:center; }
+
+/* Keep the new close-window control accessible in popouts. */
+.uca-pane header label[hidden] { display:none !important; }
+html[data-uca-standalone] #ucaMode .uca-tools > :not(#ucaCloseWindow) { display:none !important; }
+html[data-uca-standalone="editor"] #ucaMode [data-uca-pane]:not([data-uca-pane="editor"]),
+html[data-uca-standalone="pypique"] #ucaMode [data-uca-pane]:not([data-uca-pane="pypique"]),
+html[data-uca-standalone="analyzer"] #ucaMode [data-uca-pane]:not([data-uca-pane="analyzer"]) { display:none !important; }
+.uca-explorer-mount #projectPane .tree { min-height:0; flex:1 1 auto; }

@@ -342,7 +342,7 @@
     </aside>
   </main>
 
-  <!-- UCA-02: layout shell only. Editor/SAT/structural adapters are UCA-03–06. -->
+  <!-- Unified Analysis: reuse existing editor and File Explorer, separate producer panes. -->
   <main id="ucaMode" class="mode-surface uca-workspace hidden" aria-label="Unified code analysis workspace">
     <header class="uca-header">
       <div><h1>Unified Code Analysis</h1><p id="ucaScope" aria-live="polite">No active repository selected</p></div>
@@ -350,35 +350,43 @@
         <label><input type="checkbox" data-uca-toggle="editor" checked> Editor</label>
         <label><input type="checkbox" data-uca-toggle="pypique" checked> pyPIQUE</label>
         <label><input type="checkbox" data-uca-toggle="analyzer" checked> Code Analyzer</label>
+        <button id="ucaExplorerToggle" type="button" aria-pressed="true" aria-controls="ucaExplorerDock">File Explorer</button>
+        <button data-uca-detach="editor" type="button" title="Open editor in a separate local PAH window">↗ Editor</button>
+        <button data-uca-detach="pypique" type="button" title="Open pyPIQUE in a separate local PAH window">↗ pyPIQUE</button>
+        <button data-uca-detach="analyzer" type="button" title="Open Code Analyzer in a separate local PAH window">↗ Analyzer</button>
         <button id="ucaReset" type="button">Reset layout</button>
+        <button id="ucaCloseWindow" type="button" hidden>Close pane window</button>
       </div>
     </header>
+    <div class="uca-body">
+    <aside id="ucaExplorerDock" class="uca-explorer-mount" aria-label="File Explorer"></aside>
     <div id="ucaGrid" class="uca-grid" aria-label="Configurable analysis panes">
       <section class="uca-pane" data-uca-pane="editor" aria-label="Source editor pane">
-        <header><strong>Source editor</strong><label>Width <input type="range" data-uca-width="editor" min="15" max="70" value="34" aria-label="Source editor width"></label></header>
+        <header><strong>Source editor</strong><label hidden>Width <input type="range" data-uca-width="editor" min="15" max="70" value="34" aria-label="Source editor width"></label></header>
         <button id="ucaEditorShareSelection" type="button">Locate selection in analysis</button>
         <p id="ucaEditorShareStatus" role="status" aria-live="polite"></p>
         <div id="ucaEditorMount" class="uca-editor-mount" aria-label="Docked PAH source editor"></div>
         <p class="uca-editor-hint">Uses the existing editor, open files, and unsaved buffers. Save and Run remain in the main toolbar.</p>
       </section>
       <section class="uca-pane" data-uca-pane="pypique" aria-label="pyPIQUE pane">
-        <header><strong>pyPIQUE</strong><label>Width <input type="range" data-uca-width="pypique" min="15" max="70" value="33" aria-label="pyPIQUE width"></label></header>
+        <header><strong>pyPIQUE</strong><label hidden>Width <input type="range" data-uca-width="pypique" min="15" max="70" value="33" aria-label="pyPIQUE width"></label></header>
         <div class="uca-findings">
           <div class="uca-findings-controls">
             <label for="ucaFindingView">Findings</label>
             <select id="ucaFindingView"><option value="all">All</option><option value="scoring">Scoring</option></select>
             <button id="ucaFindingLoad" type="button">Load findings</button>
           </div>
+          <div class="uca-findings-pagination" role="group" aria-label="Finding pages"><button id="ucaFindingPrev" type="button" disabled>Previous</button><span id="ucaFindingPage">—</span><button id="ucaFindingNext" type="button" disabled>Next</button></div>
           <p id="ucaFindingStatus" role="status" aria-live="polite">Load verified findings from the active repository.</p>
           <label for="ucaFindingSelect">Select source evidence</label>
           <select id="ucaFindingSelect" disabled><option value="">No findings loaded</option></select>
           <p id="ucaFindingPreviewStatus" role="status" aria-live="polite">No source evidence selected.</p>
           <pre id="ucaFindingExcerpt" class="uca-finding-excerpt" hidden></pre>
-          <p class="uca-finding-note">Read-only verification; editing and cross-pane navigation are not enabled here yet.</p>
+          <p class="uca-finding-note">Read-only source verification; explicit verified selections can navigate to the editor.</p>
         </div>
       </section>
       <section class="uca-pane" data-uca-pane="analyzer" aria-label="Code Analyzer pane">
-        <header><strong>Code Analyzer</strong><label>Width <input type="range" data-uca-width="analyzer" min="15" max="70" value="33" aria-label="Code Analyzer width"></label></header>
+        <header><strong>Code Analyzer</strong><label hidden>Width <input type="range" data-uca-width="analyzer" min="15" max="70" value="33" aria-label="Code Analyzer width"></label></header>
         <div class="uca-analyzer-browser">
           <div class="uca-analyzer-actions">
             <button id="ucaAnalyzerLoad" type="button">Load existing analysis</button>
@@ -408,6 +416,7 @@
         </div>
       </section>
     </div>
+    </div><!-- /.uca-body -->
     <section class="uca-observations" aria-label="Producer job and artifact observations">
       <header><strong>Analysis jobs and artifacts</strong>
         <button id="ucaObservationRefresh" type="button">Refresh observations</button>
@@ -466,7 +475,8 @@
         </div>
         <label for="sourceEvidenceFindingSelect">Select a verified finding</label>
         <select id="sourceEvidenceFindingSelect" disabled><option value="">No findings loaded</option></select>
-        <p id="sourceEvidenceFindingsStatus" role="status" aria-live="polite">The producer must be available locally; at most 100 findings are loaded per view.</p>
+        <div class="uca-findings-pagination" role="group" aria-label="Lab finding pages"><button id="sourceEvidencePrev" type="button" disabled>Previous</button><span id="sourceEvidencePage">—</span><button id="sourceEvidenceNext" type="button" disabled>Next</button></div>
+          <p id="sourceEvidenceFindingsStatus" role="status" aria-live="polite">The producer must be available locally; findings are paginated without a total cap.</p>
         <label for="sourceEvidenceLocator">Evidence locator (JSON)</label>
         <textarea id="sourceEvidenceLocator" rows="5" spellcheck="false" placeholder='{"producer_module":"pypique","finding_id":"…","project_id":"…","relative_path":"src/example.py","start_line":1,"end_line":2,"source_sha256":"…"}'></textarea>
         <div class="inline-actions">
@@ -851,6 +861,7 @@
 <script type="module" src="{{ url_for('static', filename='uca-analyzer.mjs') }}"></script>
 <script type="module" src="{{ url_for('static', filename='uca-provider-navigation.mjs') }}"></script>
 <script type="module" src="{{ url_for('static', filename='uca-navigation.mjs') }}"></script>
+<script type="module" src="{{ url_for('static', filename='uca-window-navigation.mjs') }}"></script>
 <script type="module" src="{{ url_for('static', filename='uca-observations.mjs') }}"></script>
 <script type="module" src="{{ url_for('static', filename='uca-handoff.mjs') }}"></script>
 <script src="{{ url_for('static', filename='job-monitor.js') }}"></script>

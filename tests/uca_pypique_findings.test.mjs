@@ -4,7 +4,7 @@ import {readProjection, eligibleFinding, checkedEvidence} from '../pah/web/stati
 const loc={producer_module:'pypique',project_id:'p',relative_path:'src/a.py',source_sha256:'a'.repeat(64),start_line:2,end_line:3};
 const finding={status:'ready_for_pah_verification',locator:loc};
 test('valid producer projection and eligible finding',()=>{
-  assert.equal(readProjection({schema:'pypique.source-evidence-projections@1',project_id:'p',results:[finding]}).results.length,1);
+  assert.equal(readProjection({schema:'pypique.source-evidence-projections@1',project_id:'p',total:1,offset:0,results:[finding]}).results.length,1);
   assert.equal(eligibleFinding(finding,'p'),true);
 });
 test('rejects incomplete or forged evidence',()=>{
@@ -18,7 +18,10 @@ test('requires matching read-only source response',()=>{
   for (const change of [{source_sha256:'b'.repeat(64)}, {start_line:1}, {project_id:'q'}, {mode:'editable'}])
     assert.throws(()=>checkedEvidence({ok:true,evidence:{...valid.evidence,...change}},loc),/does not match/);
 });
-test('rejects overlarge and malformed finding collections',()=>{
-  assert.throws(()=>readProjection({schema:'pypique.source-evidence-projections@1',project_id:'p',results:Array(101).fill(finding)}));
-  assert.throws(()=>readProjection({schema:'wrong',project_id:'p',results:[]}));
+test('accepts paginated finding collections beyond the old 100-finding cap',()=>{
+  const data={schema:'pypique.source-evidence-projections@1',project_id:'p',total:1200,offset:200,results:Array(200).fill(finding)};
+  assert.equal(readProjection(data).results.length,200);
+  assert.throws(()=>readProjection({...data,total:300}));
+  assert.throws(()=>readProjection({...data,offset:-1}));
+  assert.throws(()=>readProjection({...data,schema:'wrong'}));
 });

@@ -9,7 +9,7 @@ def test_selection_contract_source():
     app = (base / "app.py").read_text()
     ui = (base / "web/static/source-evidence.js").read_text()
     html = (base / "web/templates/index.html").read_text()
-    assert 'project_findings_evidence(str(root), project_id=project_id, view=view, limit=100)' in app
+    assert 'project_findings_evidence(' in app and 'limit=200, offset=offset' in app
     assert 'workspaces.is_module_enabled("pypique")' in app
     assert 'sourceEvidenceFindingSelect' in html
     assert "verify.click()" in ui

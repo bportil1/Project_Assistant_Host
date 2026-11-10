@@ -36,3 +36,17 @@ export function layoutKey(workspaceId, repositoryRoot) {
   if (typeof repositoryRoot !== 'string' || !repositoryRoot.trim()) return null;
   return JSON.stringify([workspaceId, repositoryRoot]);
 }
+
+// Resize a *pair* without changing the sum of weights or jumping other panes.
+// No global 100%-sum assumption: hidden panes keep their previous preferences.
+export function resizeAdjacent(layout, left, right, fraction) {
+  if (!PANES.includes(left) || !PANES.includes(right) || left === right ||
+      !Number.isFinite(fraction)) throw new TypeError('Invalid adjacent resize');
+  const current=normalizeLayout(layout);
+  const total=current.widths[left]+current.widths[right];
+  const lower=Math.max(15,total-70);
+  const upper=Math.min(70,total-15);
+  const leftWeight=Math.min(upper,Math.max(lower,Math.round(total*fraction)));
+  return normalizeLayout({...current,widths:{...current.widths,
+    [left]:leftWeight,[right]:total-leftWeight}});
+}

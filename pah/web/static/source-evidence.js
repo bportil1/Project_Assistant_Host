@@ -11,6 +11,11 @@
   const loadFindings = document.getElementById('sourceEvidenceLoadFindings');
   const findSelect = document.getElementById('sourceEvidenceFindingSelect');
   const findingsStatus = document.getElementById('sourceEvidenceFindingsStatus');
+  const previous = document.getElementById('sourceEvidencePrev');
+  const next = document.getElementById('sourceEvidenceNext');
+  const pageLabel = document.getElementById('sourceEvidencePage');
+  const PAGE_SIZE = 200;
+  let pageOffset = 0;
   let findingsRequest = 0;
   let projected = [];
   const clearFindings = (message) => {
@@ -21,19 +26,27 @@
       findSelect.disabled = true;
     }
     if (findingsStatus) findingsStatus.textContent = message;
+    if (previous) previous.disabled = true;
+    if (next) next.disabled = true;
+    if (pageLabel) pageLabel.textContent = '—';
   };
   if (loadFindings && findSelect && findView && findingsStatus) {
-    loadFindings.addEventListener('click', async () => {
+    async function loadPage(offset) {
       clearFindings('Loading producer-owned finding projections…');
+      pageOffset = offset;
       const ticket = findingsRequest;
       loadFindings.disabled = true;
       try {
-        const response = await fetch('/api/orchestration/code-analysis/source-evidence/findings?view=' + encodeURIComponent(findView.value), {credentials: 'same-origin', cache: 'no-store'});
+        const response = await fetch('/api/orchestration/code-analysis/source-evidence/findings?view='
+          + encodeURIComponent(findView.value) + '&offset=' + pageOffset,
+          {credentials: 'same-origin', cache: 'no-store'});
         const data = await response.json();
         if (ticket !== findingsRequest) return;
         if (!response.ok || !data.ok) throw new Error(data.error || 'Findings unavailable');
         const payload = data.projection;
-        if (payload?.schema !== 'pypique.source-evidence-projections@1' || !Array.isArray(payload.results) || payload.results.length > 100) {
+        if (payload?.schema !== 'pypique.source-evidence-projections@1' || !Array.isArray(payload.results)
+            || !Number.isSafeInteger(payload.total) || payload.total < 0
+            || payload.offset !== pageOffset || pageOffset + payload.results.length > payload.total) {
           throw new Error('Incompatible pyPIQUE finding list');
         }
         projected = payload.results;
@@ -48,13 +61,20 @@
           findSelect.add(option);
         });
         findSelect.disabled = actionable === 0;
-        findingsStatus.textContent = `${projected.length} findings loaded; ${actionable} have explicit source fingerprints. Select one to verify.`;
+        previous.disabled = pageOffset === 0;
+        next.disabled = pageOffset + projected.length >= payload.total || !projected.length;
+        pageLabel.textContent = payload.total
+          ? `${pageOffset+1}–${pageOffset+projected.length} of ${payload.total}` : 'No findings';
+        findingsStatus.textContent = `${projected.length} findings on this page; ${actionable} have source fingerprints. Select to verify.`;
       } catch (error) {
         if (ticket === findingsRequest) { clearFindings('Unavailable: ' + error.message); loadFindings.disabled = false; }
       } finally {
         if (ticket === findingsRequest) loadFindings.disabled = false;
       }
-    });
+    }
+    loadFindings.addEventListener('click', () => loadPage(0));
+    previous?.addEventListener('click', () => loadPage(Math.max(0,pageOffset-PAGE_SIZE)));
+    next?.addEventListener('click', () => loadPage(pageOffset+PAGE_SIZE));
     findSelect.addEventListener('change', () => {
       if (!findSelect.value) return;
       const selected = projected[Number(findSelect.value)];
@@ -62,7 +82,7 @@
       input.value = JSON.stringify(selected.locator, null, 2);
       verify.click();  // Existing server-side source verification, not an editor action.
     });
-    findView.addEventListener('change', () => clearFindings('Finding view changed. Reload to select.'));
+    findView.addEventListener('change', () => {pageOffset=0;clearFindings('Finding view changed. Reload to select.');});
   }
   let requestNumber = 0;
   const reset = (message) => {
@@ -105,13 +125,17 @@
   // A workspace switch invalidates any prior preview, even when a fetch is in flight.
   document.getElementById('researchWorkspaceSelect')?.addEventListener('change', () => {
     requestNumber += 1;
-    clearFindings('Workspace changed. Reload findings.');
+    pageOffset=0;clearFindings('Workspace changed. Reload findings.');
     reset('Workspace changed. Reverify the source evidence.');
     verify.disabled = false;
   });
+  document.getElementById('workspacePath')?.addEventListener('change', () => {
+    requestNumber++;pageOffset=0;clearFindings('Repository changed. Reload findings.');
+    reset('Repository changed. Reverify source evidence.');verify.disabled=false;
+  });
   document.getElementById('openWorkspace')?.addEventListener('click', () => {
     requestNumber += 1;
-    clearFindings('Workspace selection changed. Reload findings.');
+    pageOffset=0;clearFindings('Workspace selection changed. Reload findings.');
     reset('Workspace selection changed. Reverify the source evidence.');
     verify.disabled = false;
   });

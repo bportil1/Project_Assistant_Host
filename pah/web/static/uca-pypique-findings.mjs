@@ -5,6 +5,11 @@ const pane = document.querySelector('#ucaMode [data-uca-pane="pypique"]');
 if (pane) {
   const load = document.getElementById('ucaFindingLoad');
   const view = document.getElementById('ucaFindingView');
+  const previous = document.getElementById('ucaFindingPrev');
+  const next = document.getElementById('ucaFindingNext');
+  const pageLabel = document.getElementById('ucaFindingPage');
+  const PAGE_SIZE = 200;
+  let pageOffset = 0;
   const select = document.getElementById('ucaFindingSelect');
   const status = document.getElementById('ucaFindingStatus');
   const previewStatus = document.getElementById('ucaFindingPreviewStatus');
@@ -29,27 +34,33 @@ if (pane) {
     select.disabled = true;
     select.replaceChildren(new Option('No findings loaded', ''));
     status.textContent = message;
+    previous.disabled = true;
+    next.disabled = true;
+    pageLabel.textContent = '—';
     clearPreview('No source evidence selected.');
   };
   scope = scopeNow();
   const checkScope = () => {
     const now = scopeNow();
-    if (now !== scope) { scope = now; clear('Workspace/repository changed. Reload findings.'); }
+    if (now !== scope) { scope = now; pageOffset = 0; clear('Workspace/repository changed. Reload findings.'); }
   };
-  load.addEventListener('click', async () => {
+  async function loadPage(offset) {
     checkScope();
     clear('Loading findings…');
+    pageOffset = offset;
     const ticket = generation;
     const originScope = scope;
     load.disabled = true;
     try {
       const response = await fetch('/api/orchestration/code-analysis/source-evidence/findings?view='
-        + encodeURIComponent(view.value), {credentials:'same-origin', cache:'no-store'});
+        + encodeURIComponent(view.value) + '&offset=' + pageOffset,
+        {credentials:'same-origin', cache:'no-store'});
       const data = await response.json();
       checkScope();
       if (ticket !== generation || originScope !== scope) return;
       if (!response.ok || !data.ok) throw new Error(data?.error || 'Findings unavailable');
       const projection = readProjection(data.projection);
+      if (projection.offset !== pageOffset) throw new Error('Finding page offset changed during loading');
       active = projection.results;
       projectId = projection.project_id;
       let available = 0;
@@ -66,13 +77,20 @@ if (pane) {
         if (ready) available++;
       });
       select.disabled = !available;
-      status.textContent = `${active.length} findings; ${available} eligible for server verification.`;
+      previous.disabled = pageOffset === 0;
+      next.disabled = pageOffset + active.length >= projection.total || !active.length;
+      pageLabel.textContent = projection.total
+        ? `${pageOffset+1}–${pageOffset+active.length} of ${projection.total}` : 'No findings';
+      status.textContent = `${active.length} findings on this page; ${available} eligible for server verification.`;
     } catch (error) {
       if (ticket === generation) clear(`Unavailable: ${error.message}`);
     } finally {
       if (ticket === generation) load.disabled = false;
     }
-  });
+  }
+  load.addEventListener('click', () => loadPage(0));
+  previous.addEventListener('click', () => loadPage(Math.max(0, pageOffset - PAGE_SIZE)));
+  next.addEventListener('click', () => loadPage(pageOffset + PAGE_SIZE));
   select.addEventListener('change', async () => {
     checkScope();
     const item = active[Number(select.value)];
@@ -120,7 +138,7 @@ if (pane) {
       ? `${matching.length} SAT finding(s) with matching source revision and overlapping lines (select to inspect).`
       : 'No loaded SAT finding with matching file revision and source range.';
   });
-  view.addEventListener('change', () => clear('Finding view changed. Reload findings.'));
+  view.addEventListener('change', () => {pageOffset=0;clear('Finding view changed. Reload findings.');});
   workspace?.addEventListener('change', checkScope);
   repository?.addEventListener('change', checkScope);
   document.getElementById('openWorkspace')?.addEventListener('click', () => clear('Workspace selection changed. Reload findings.'));

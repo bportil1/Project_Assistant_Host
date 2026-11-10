@@ -76,14 +76,50 @@ def _exercise(page):
             else:
                 checks['editor_docking_' + '_'.join(combo)] = 'passed'
     reset.click()
-    width = page.locator('[data-uca-width="editor"]')
-    width.evaluate("el => { el.value = '45'; el.dispatchEvent(new Event('input', {bubbles: true})); }")
-    checks['resizable_width'] = ('passed' if width.input_value() == '45'
-                                 and panes['editor'].evaluate('(el) => el.style.flexGrow') == '45'
-                                 else 'failed')
-    page.locator('[data-mode="workspace"]').click()
+    # The former Workspace navigation button is intentionally absent; its
+    # original explorer and Ace editor are now docked into Unified Analysis.
+    checks['file_explorer_docked'] = ('passed' if page.locator('#ucaExplorerDock #projectPane').count() == 1
+                                      else 'failed')
+    explorer = page.locator('#ucaExplorerToggle')
+    explorer.click()
+    checks['file_explorer_toggle'] = ('passed' if page.locator('#ucaExplorerDock #projectPane').count() == 0
+                                     else 'failed')
+    explorer.click()
+    grip = page.locator('[data-uca-grip="editor-pypique"]')
+    if grip.count() and grip.is_visible():
+        before = float(panes['editor'].evaluate('(el) => el.style.flexGrow'))
+        grip.press('ArrowRight')
+        after = float(panes['editor'].evaluate('(el) => el.style.flexGrow'))
+        checks['resizable_width'] = 'passed' if after > before else 'failed'
+    else:
+        checks['resizable_width'] = 'failed'
+    for name in PANES:
+        reset.click()
+        detach = page.locator(f'[data-uca-detach="{name}"]')
+        try:
+            with page.expect_popup(timeout=6000) as opened:
+                detach.click()
+            popup = opened.value
+            popup.locator('#ucaMode').wait_for(state='visible', timeout=9000)
+            checks[f'detach_{name}'] = ('passed' if not panes[name].is_visible()
+                and popup.locator(f'[data-uca-pane="{name}"]').is_visible() else 'failed')
+            popup.close()
+            panes[name].wait_for(state='visible', timeout=4500)
+            checks[f'reattach_{name}'] = 'passed'
+        except Exception:
+            checks[f'detach_{name}'] = 'failed'
+            checks[f'reattach_{name}'] = 'failed'
+            # A popup can be blocked in the actual installed browser; record
+            # failure rather than silently treating the UI as accepted.
+            break
+    # Hiding the Editor pane must return the *same* Ace DOM, not clone it.
+    reset.click()
+    toggles['editor'].uncheck()
     checks['editor_restore'] = ('passed' if page.locator('#workspaceMode > .main-pane #editor').count() == 1
                                 and editor.count() == 1 else 'failed')
+    toggles['editor'].check()
+    checks['editor_redock'] = ('passed' if page.locator('#ucaEditorMount #editor').count() == 1
+                               and editor.count() == 1 else 'failed')
     return checks
 
 

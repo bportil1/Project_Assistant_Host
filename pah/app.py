@@ -1293,9 +1293,19 @@ def create_app(
             # The producer owns parsing, finding identities and projection rules.
             # Never derive scan-time fingerprints from the current checkout.
             from pique_py.source_evidence_locator import project_findings_evidence
-            projection = project_findings_evidence(str(root), project_id=project_id, view=view, limit=100)
+            raw_offset = request.args.get("offset", "0")
+            if not raw_offset.isascii() or not raw_offset.isdecimal() or len(raw_offset) > 12:
+                return jsonify({"ok": False, "error": "Invalid finding page offset"}), 400
+            offset = int(raw_offset)
+            # Page size limits only the response payload, never the number of
+            # findings a user can access. Each page is read from the producer.
+            projection = project_findings_evidence(
+                str(root), project_id=project_id, view=view, limit=200, offset=offset
+            )
         except ImportError:
             return jsonify({"ok": False, "error": "pyPIQUE finding projection is unavailable in this PAH environment"}), 503
+        except TypeError:
+            return jsonify({"ok": False, "error": "pyPIQUE finding adapter must be updated for paginated evidence"}), 503
         except (OSError, ValueError, KeyError) as exc:
             return jsonify({"ok": False, "error": str(exc)}), 409
         if projection.get("schema") != "pypique.source-evidence-projections@1" or projection.get("project_id") != project_id:

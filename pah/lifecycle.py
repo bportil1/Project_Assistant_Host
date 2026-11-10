@@ -140,6 +140,14 @@ def install_python_components(root: Path, python: Path) -> None:
             continue
         print(f"Installing {component.label}: {component.install_spec}")
         _run([python, "-m", "pip", "install", "-e", component.install_spec], cwd=root)
+        if component.key == "code_analyzer":
+            api_ok, api_error = _code_analyzer_api_status(python, root=root)
+            if not api_ok:
+                raise LifecycleError(
+                    "Code Analyzer was installed but its public API is not usable "
+                    f"in PAH's virtual environment: {api_error}. "
+                    "Check for a conflicting code_analyzer import or incomplete checkout."
+                )
 
 
 def provision_assets(root: Path, python: Path, *, force: bool = False) -> list[str]:
@@ -350,6 +358,40 @@ def _import_status(python: Path, imports: tuple[str, ...], *, root: Path) -> tup
     return result.returncode == 0, [str(value) for value in missing]
 
 
+def _code_analyzer_api_status(python: Path, *, root: Path) -> tuple[bool, str | None]:
+    """Validate Code Analyzer's public facade in the PAH venv, not just find_spec.
+
+    A similarly named or incomplete package can satisfy find_spec yet lack
+    CodeAnalyzer, which would otherwise fail only when Analyze is clicked.
+    """
+    code = (
+        "import importlib,json,sys\n"
+        "try:\n"
+        "    package=importlib.import_module('code_analyzer')\n"
+        "    facade=getattr(package,'CodeAnalyzer',None)\n"
+        "    if not callable(facade):\n"
+        "        raise AttributeError('code_analyzer.CodeAnalyzer is unavailable')\n"
+        "    web=importlib.import_module('code_analyzer.web.app')\n"
+        "    if not callable(getattr(web,'create_app',None)):\n"
+        "        raise AttributeError('code_analyzer.web.app.create_app is unavailable')\n"
+        "    print(json.dumps({'ok':True}))\n"
+        "except Exception as exc:\n"
+        "    package=sys.modules.get('code_analyzer')\n"
+        "    origin=getattr(package,'__file__',None) or str(list(getattr(package,'__path__',())))\n"
+        "    print(json.dumps({'ok':False,'error':f'{type(exc).__name__}: {exc}; import origin: {origin}'}))\n"
+        "    sys.exit(1)\n"
+    )
+    result = _run([python, "-c", code], cwd=root, check=False, capture=True)
+    try:
+        report = json.loads((result.stdout or "").strip())
+        if result.returncode == 0 and report.get("ok") is True:
+            return True, None
+        return False, str(report.get("error") or "Code Analyzer facade could not be loaded")
+    except (ValueError, TypeError):
+        detail = (result.stderr or "").strip().splitlines()
+        return False, (detail[-1] if detail else "Code Analyzer facade check failed")
+
+
 def _entry_point_status(
     python: Path,
     requirements: tuple[tuple[str, str], ...],
@@ -417,6 +459,8 @@ def doctor_report(root: Path) -> dict:
             "submodule_state": submodules.get(component.path),
             "python_ok": False,
             "missing_imports": [],
+            "module_api_ok": True,
+            "module_api_error": None,
             "entry_points_ok": not component.pah_entry_points,
             "missing_entry_points": [],
         }
@@ -427,7 +471,13 @@ def doctor_report(root: Path) -> dict:
             item["entry_points_ok"], item["missing_entry_points"] = _entry_point_status(
                 venv_python, component.pah_entry_points, root=root
             )
-        item["ok"] = bool(present and item["python_ok"] and item["entry_points_ok"])
+            if component.key == "code_analyzer" and item["python_ok"]:
+                item["module_api_ok"], item["module_api_error"] = _code_analyzer_api_status(
+                    venv_python, root=root
+                )
+        item["ok"] = bool(
+            present and item["python_ok"] and item["entry_points_ok"] and item["module_api_ok"]
+        )
         if component.required and not item["ok"]:
             report["ok"] = False
         report["components"].append(item)
@@ -503,6 +553,8 @@ def print_doctor(report: dict) -> None:
             detail.append("virtual environment not ready")
         elif not item["python_ok"]:
             detail.append("missing Python: " + ", ".join(item["missing_imports"]))
+        if not item.get("module_api_ok", True):
+            detail.append("public API: " + str(item["module_api_error"]))
         if not item.get("entry_points_ok", True):
             detail.append("PAH discovery: " + ", ".join(item["missing_entry_points"]))
         if item.get("submodule_state") in {"uninitialized", "conflict", "different_commit"}:
