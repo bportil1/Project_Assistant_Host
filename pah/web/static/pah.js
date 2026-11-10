@@ -10,7 +10,7 @@
     workspace: null,
     researchWorkspace: {catalog: null, selectedRootId: null},
     workspaceInitialization: {data: null, selectedModules: new Set(), presetId: 'full_research'},
-    moduleProfile: {workspace_id: null, modules: [], categories: {}},
+    moduleProfile: {workspace_id: null, context_token: null, modules: [], categories: {}},
     tabs: [],
     active: null,
     selectedTree: null,
@@ -81,9 +81,16 @@
   };
 
   async function api(url, options = {}) {
+    const method = String(options.method || 'GET').toUpperCase();
+    const contextToken = state.moduleProfile.context_token;
+    const guarded = url.startsWith('/api/orchestration/') && !['GET', 'HEAD'].includes(method);
     const response = await fetch(url, {
-      headers: {'Content-Type': 'application/json', ...(options.headers || {})},
       ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(guarded && contextToken ? {'X-PAH-Context-Token': contextToken} : {}),
+        ...(options.headers || {}),
+      },
     });
     let data = {};
     try { data = await response.json(); } catch (_) {}
@@ -266,7 +273,7 @@
         state.layout[config.stateKey] = clampNumber(savedValue, config.min, config.max);
       }
     }
-    if (['workspace', 'analysis', 'documents', 'references'].includes(saved.lastMode)) {
+    if (['workspace', 'uca', 'analysis', 'documents', 'references'].includes(saved.lastMode)) {
       state.layout.lastMode = saved.lastMode;
     }
   }
@@ -816,8 +823,8 @@
     // Workspace is a normal docked PAH mode, not a detachable service surface.
     // Route it directly through setMode so the Workspace button always returns
     // from Analysis/Documents/References to the editor workspace.
-    if (name === 'workspace') {
-      await setMode('workspace');
+    if (name === 'workspace' || name === 'uca') {
+      await setMode(name);
       return;
     }
     const config = surfaceConfig(name);
@@ -1353,7 +1360,7 @@
   }
 
   async function setMode(mode) {
-    if (!['workspace', 'analysis', 'documents', 'references', 'code_analysis_lab', 'ml_lab'].includes(mode)) return;
+    if (!['workspace', 'uca', 'analysis', 'documents', 'references', 'code_analysis_lab', 'ml_lab'].includes(mode)) return;
     closeServiceMenus();
     if (surfaceModuleIds[mode]) requireWorkspaceModule(surfaceModuleIds[mode]);
     if (mode !== 'workspace' && isSurfaceDetached(mode)) {
@@ -1380,6 +1387,7 @@
       button.classList.toggle('active', button.dataset.mode === mode);
     });
     $('workspaceMode').classList.toggle('hidden', mode !== 'workspace');
+    $('ucaMode')?.classList.toggle('hidden', mode !== 'uca');
     $('analysisMode').classList.toggle('hidden', mode !== 'analysis');
     $('documentsMode').classList.toggle('hidden', mode !== 'documents');
     $('referencesMode').classList.toggle('hidden', mode !== 'references');
@@ -1387,7 +1395,10 @@
     $('mlLabMode')?.classList.toggle('hidden', mode !== 'ml_lab');
     $('labsMenuToggle')?.classList.toggle('active', ['code_analysis_lab', 'ml_lab'].includes(mode));
     $('app').classList.toggle('full-mode', mode !== 'workspace');
-    if (mode === 'workspace' && editor) window.requestAnimationFrame(() => editor.resize(true));
+    // The UCA shell owns only the docking location; this controller retains
+    // the sole Ace instance, tabs, dirty buffers, and save permissions.
+    window.dispatchEvent(new CustomEvent('pah:uca-mode', {detail: {active: mode === 'uca'}}));
+    if (['workspace', 'uca'].includes(mode) && editor) window.requestAnimationFrame(() => editor.resize(true));
   }
 
   async function launchRegisteredModule(moduleId, {detached = false} = {}) {
@@ -1633,22 +1644,34 @@
     holder.appendChild(scrolling);
   }
 
+  // P5-04: PAH provides read-only Quality Impact rows; PAH_Shared owns
+  // filtering, sorting, pagination, rendering and CSV/PNG/SVG/TeX exports.
+  let qiSharedTableIndex = 0;
   function qiTable(holder, headers, records) {
-    const scrolling = qiElement('div', null, 'qi-table-scroll');
-    const table = qiElement('table', null, 'pah-data-table');
-    const head = qiElement('thead');
-    const tr = qiElement('tr');
-    headers.forEach(header => tr.appendChild(qiElement('th', header)));
-    head.appendChild(tr);
-    const body = qiElement('tbody');
-    records.forEach(record => {
-      const row = qiElement('tr');
-      record.forEach(value => row.appendChild(qiElement('td', value ?? '—')));
-      body.appendChild(row);
+    const host = qiElement('div', null, 'qi-table-scroll');
+    holder.appendChild(host);
+    const n = ++qiSharedTableIndex;
+    const columnIds = headers.map((_,i)=>`column-${i}`);
+    const columns = headers.map((title,i)=>{
+      const numeric = records.length > 0 && records.every(row=>{
+        const v=row[i]; return v==null || (typeof v==='number' && Number.isFinite(v));
+      });
+      return {id:columnIds[i],title:String(title),kind:numeric?'number':'text'};
     });
-    table.append(head, body);
-    scrolling.appendChild(table);
-    holder.appendChild(scrolling);
+    const rows = records.map((values,index)=>({id:`row-${index}`,
+      values:Object.fromEntries(values.map((value,i)=>{
+        const typed=columns[i].kind==='number'?(value??null):String(value??'—');
+        return [columnIds[i],typed];
+      })),
+      display_values:Object.fromEntries(values.map((value,i)=>[columnIds[i],String(value??'—')]))
+    }));
+    const snapshot={schema_version:'1.0',data_scope:'complete',
+      source:{owner:'PAH',artifact_id:`quality-impact/table-${n}`,revision:'selected-read-only-analysis'},
+      columns,rows,view:{page:{index:0,size:50}},capabilities:{export:true}};
+    import('/pah-shared/table_component.mjs').then(({mountTable})=>{
+      if(!host.isConnected)return;
+      mountTable(host,snapshot,{title:String(headers[0]??'Quality impact analysis'),filename:`pah-quality-impact-${n}`});
+    }).catch(error=>{host.textContent=`Shared table unavailable: ${error.message}`;});
   }
 
   function renderQualityImpactPanel(holder) {
@@ -2909,6 +2932,7 @@
     const data = await api('/api/orchestration/modules');
     state.moduleProfile = {
       workspace_id: data.workspace_id || null,
+      context_token: data.context_token || null,
       modules: data.modules || [],
       categories: data.categories || {},
     };
@@ -5450,6 +5474,66 @@
   // ---------------------------------------------------------------------------
   // Event wiring
   // ---------------------------------------------------------------------------
+  // UCA-06.3: publish on explicit user action, never on unsaved cursor changes.
+  $('ucaEditorShareSelection')?.addEventListener('click', () => {
+    const status=$('ucaEditorShareStatus'), tab=activeTab();
+    if(state.mode!=='uca' || !tab || tab.dirty || !editor || !state.workspace ||
+        !globalThis.crypto?.subtle) {
+      if(status)status.textContent='Save the active file before sharing its source selection.';
+      return;
+    }
+    const range=editor.getSelectionRange();
+    const begin=range.start.row+1, end=range.end.row+1;
+    if(end-begin>79) {if(status)status.textContent='Select at most 80 source lines.';return;}
+    window.dispatchEvent(new CustomEvent('pah:uca-source-selection-request',
+      {detail:{producer:'editor',relative_path:tab.path,start_line:begin,end_line:end}}));
+    if(status)status.textContent='Verifying selected source revision…';
+  });
+  window.addEventListener('pah:uca-navigation-status', event=>{
+    if(event.detail?.producer==='editor' && $('ucaEditorShareStatus'))
+      $('ucaEditorShareStatus').textContent=event.detail.ok
+        ? `Verified source: ${event.detail.path}:${event.detail.line}`
+        : `Navigation unavailable: ${event.detail.error}`;
+  });
+  // UCA-06: navigate the authoritative existing editor only after the loaded
+  // disk revision matches the producer's server-verified source fingerprint.
+  let ucaNavigationTicket = 0;
+  window.addEventListener('pah:uca-navigate-editor', async event => {
+    const selection = event.detail?.selection;
+    if (state.mode !== 'uca' || !selection || selection.schema !== 'pah.source-selection@1' ||
+        selection.producer !== 'pypique' ||
+        selection.workspace_id !== selection.workspace ||
+        selection.project_id !== selection.workspace_id ||
+        !/^repo-[0-9a-f]{64}$/.test(selection.repository_id || '') ||
+        $('researchWorkspaceSelect')?.value !== selection.workspace ||
+        state.workspace !== selection.repository) return;
+    const ticket = ++ucaNavigationTicket, workspaceRoot = state.workspace;
+    try {
+      // Open through PAH's existing authorized file API; never bypass its path checks.
+      await openFile(selection.relative_path);
+      if (ticket !== ucaNavigationTicket || state.workspace !== workspaceRoot || state.mode !== 'uca') return;
+      const tab = activeTab();
+      if (!tab || tab.path !== selection.relative_path || tab.dirty ||
+          !globalThis.crypto?.subtle || !globalThis.TextEncoder) throw new Error('Source is unavailable, modified, or unsaved');
+      const bytes = new TextEncoder().encode(tab.saved);
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      const hash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2,'0')).join('');
+      if (ticket !== ucaNavigationTicket || state.workspace !== workspaceRoot || state.mode !== 'uca') return;
+      if (hash !== selection.source_sha256) throw new Error('Editor source revision differs from verified SAT evidence');
+      if (editor && Number.isSafeInteger(selection.start_line)) {
+        editor.gotoLine(selection.start_line, 0, true);
+        editor.scrollToLine(selection.start_line-1,true,true,()=>{});
+      }
+      toast(`Verified source location: ${selection.relative_path}:${selection.start_line}`);
+    } catch(error) { if(ticket===ucaNavigationTicket) toast(`UCA navigation blocked: ${error.message}`,true); }
+  });
+  $('researchWorkspaceSelect')?.addEventListener('change',()=>{ucaNavigationTicket++;});
+  $('workspacePath')?.addEventListener('change',()=>{ucaNavigationTicket++;});
+  window.addEventListener('pah:uca-mode', event => {if(!event.detail?.active)ucaNavigationTicket++;});
+
+  window.addEventListener('pah:uca-editor-layout', () => {
+    if (state.mode === 'uca' && editor) window.requestAnimationFrame(() => editor.resize(true));
+  });
   $('openCodeAnalysisLab')?.addEventListener('click', () => openCodeAnalysisLab().catch(error => toast(error.message, true)));
   $('openMlLab')?.addEventListener('click', () => openMlLab().catch(error => toast(error.message, true)));
   $('mlLabRefreshArtifacts')?.addEventListener('click', () => refreshMlLabStatus().catch(error => toast(error.message, true)));

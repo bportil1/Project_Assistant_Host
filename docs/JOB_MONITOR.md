@@ -193,3 +193,25 @@ Hosted Flask module requests use a per-request context variable to select the
 workspace job-monitor directory. No global environment override or process
 control is introduced. When a module runs without PAH, no monitor package is
 required and scientific/API behavior remains unchanged.
+
+## P5-06: Versioned job observation and optional history
+
+The read-only `/api/jobs` aggregate now returns additional `observations`
+with schema `pah.job-observation`, version 1. `producer_state` describes what
+the module reported, whereas `observed_state` reflects PAH's current monitoring
+view. `telemetry_status` is current, stale, undated, or unavailable. Telemetry
+silence does not authorize a terminal outcome.
+
+Modules may call `JobRegistry.request_cancellation(job_id)` to **record a
+request**. This never sends a process signal and does not change job state. A
+producer must independently transition to `cancelled` if its worker actually
+stops. Cancelled and interrupted are distinct terminal states. A monitor-only
+client must never call the producer's cancellation method.
+
+`pah_jobs.observation_history.ObservationHistory(project_root)` is an
+**optional** project-local SQLite index of observation changes. PAH callers
+can explicitly record `snapshot()["observations"]` and query `recent()`; this
+does not run automatically and does not store logs or scientific results.
+Set `PAH_JOB_OBSERVATION_HISTORY=1` when starting PAH to enable automatic
+recording of changes observed through `/api/jobs` for the active project.
+The history can be deleted without changing producer state.

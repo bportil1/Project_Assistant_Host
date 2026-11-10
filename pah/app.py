@@ -4,10 +4,11 @@ import atexit
 import json
 import os
 import shlex
+import sqlite3
 from pathlib import Path
 from threading import Lock
 
-from flask import Flask, abort, jsonify, render_template, request, send_file
+from flask import Flask, Response, abort, jsonify, render_template, request, send_file
 
 from .core.environments import EnvironmentError, EnvironmentManager
 from .core.filesystem import FileSystemError, FileSystemService
@@ -18,17 +19,26 @@ from .component_versions import ComponentVersionError, ComponentVersionManager
 from .full_tools import FullToolManager
 from .jobs import JobMonitorAggregator
 from pah_jobs.exchange import WorkspaceJobReader
+from pah_jobs.observation_history import ObservationHistory
 from .job_instrumentation import HostWorkflowMonitor
 from .instance_runtime import InstanceRuntime
+from .context_scope import WorkspaceContextGuard, StaleWorkspaceContext
 from .launcher import LauncherError, LauncherManager
 from .contracts import ArtifactRef, ArtifactRequirement, ModuleContext, coerce_artifact_ref
 from .labs import (
     ArtifactInventory,
+    ArtifactReferenceIndex,
+    publish_reference,
+    observe_reference_status,
     CodeAnalysisLabController,
     RegistryError,
     default_lab_registry,
 )
 from .labs.information_network import build_information_network
+from .labs.source_evidence import SourceEvidenceError, SourceEvidenceLocator, read_source_evidence
+from .contracts.uca_scope import navigation_scope
+from .contracts.uca_coordination import AnalysisHandoff, HandoffError, inspect_handoff
+from .contracts.uca_source_revision import verified_selection
 from .labs.quality_impact import QualityImpactInspector, QualityImpactError, ScenarioError, ForwardEvaluationError, ComparisonError
 from .labs.quality_impact_mi import MIContractError
 from .labs.runtime_artifact_refresh import reconcile_module_artifacts
@@ -91,6 +101,19 @@ def create_app(
         host=host,
         preferred_ports=requested_ports,
     )
+    context_guard = WorkspaceContextGuard(instance_runtime.instance_id)
+    app.extensions["pah_context_guard"] = context_guard
+
+    def context_selection():
+        # Only the selected workspace profile is part of this instance's
+        # context version. Inactive workspace edits do not invalidate it.
+        return context_guard.capture(
+            workspace_id=workspaces.active_workspace_id,
+            project_root=workspaces.root,
+            resources=workspaces.workspace_snapshot().get("resources", {}),
+            enabled_modules=workspaces.enabled_modules(),
+        )
+
     environments = EnvironmentManager(workspaces)
     terminals = TerminalManager()
     git_service = LocalGitService(workspaces.root)
@@ -122,6 +145,10 @@ def create_app(
     runtime_registry.register(HostSurfaceRuntimeAdapter("reference_manager", "references", full_tools), replace=True)
     lab_registry = default_lab_registry()
     lab_artifacts = ArtifactInventory(state_path=instance_runtime.runtime_dir / "artifact-registry.json")
+    # P5-05: disposable, host-owned SQLite lookup over JSON artifact descriptors.
+    # This is never a producer data store; deleting the SQLite file is safe.
+    artifact_references = ArtifactReferenceIndex(instance_runtime.runtime_dir / "artifact-references.sqlite3")
+    app.extensions["pah_artifact_reference_index"] = artifact_references
     code_analysis_lab = CodeAnalysisLabController(
         module_registry,
         lab=lab_registry.get("code_analysis_lab"),
@@ -147,6 +174,7 @@ def create_app(
     job_monitor.attach(job_observer.registry.reader())
     app.extensions["pah_job_observer"] = job_observer
     def bind_workspace_services() -> None:
+        context_selection()  # invalidate previously issued context tokens
         instance_runtime.set_workspace(workspaces.active_workspace_id)
         enabled_registry = module_registry.subset(workspaces.enabled_modules())
         code_analysis_lab.bind_modules(enabled_registry)
@@ -203,6 +231,7 @@ def create_app(
         return FileSystemService(workspaces.require_root())
 
     def orchestration_context() -> ModuleContext:
+        selection = context_selection()
         repository_root = workspaces.root
         output_root = workspaces.resolve_resource("outputs")
         results_root = (output_root / "ml_lab_results") if output_root is not None else (
@@ -214,6 +243,8 @@ def create_app(
             results_root=results_root,
             workspace_id=workspaces.active_workspace_id,
             workspace_name=workspaces.active_workspace_name,
+            host_project_id=selection.host_project_id,
+            context_token=selection.context_token,
             resources=workspaces.resolved_resources(),
             ports={"ml_lab": instance_runtime.port("ml_lab")},
             runtime={
@@ -251,7 +282,7 @@ def create_app(
         for module_id in all_ids:
             manifest = manifests.get(module_id)
             installed = manifest is not None
-            runtime = runtime_registry.status(module_id, context).to_dict() if installed else {
+            runtime = runtime_registry.status(module_id, context.for_module(module_id)).to_dict() if installed else {
                 "module_id": module_id,
                 "available": False,
                 "running": False,
@@ -275,8 +306,12 @@ def create_app(
                 "runtime": runtime,
             })
             modules.append(payload)
+        selection = context_selection()
         return {
             "workspace_id": workspaces.active_workspace_id,
+            "context_token": selection.context_token,
+            "context_revision": selection.revision,
+            "host_project_id": selection.host_project_id,
             "categories": dict(MODULE_CATEGORIES),
             "modules": modules,
             "discovery_errors": list(module_registry.snapshot()["discovery_errors"]),
@@ -503,7 +538,7 @@ def create_app(
             return
         resolved_context = context or orchestration_context()
         try:
-            discovered = runtime_registry.artifacts(module_id, resolved_context)
+            discovered = runtime_registry.artifacts(module_id, resolved_context.for_module(module_id))
         except Exception as exc:
             job_observer.discovery_error(module_id, exc)
             raise
@@ -678,6 +713,15 @@ def create_app(
     def handle_known_error(exc):
         return error_response(exc)
 
+    @app.get("/pah-shared/<asset>")
+    def shared_table_asset(asset: str):
+        """Serve the pinned shared table UI without copying common JS/CSS."""
+        if asset not in {"table.css", "table_view.mjs", "table_component.mjs", "table_exports.mjs"}:
+            abort(404)
+        from pah_shared import static_asset
+        mime = "text/css" if asset.endswith(".css") else "text/javascript"
+        return Response(static_asset(asset).read_bytes(), mimetype=mime)
+
     @app.get("/")
     def index():
         return render_template("index.html")
@@ -701,6 +745,24 @@ def create_app(
     @app.post("/api/launcher/instances/<instance_id>/stop")
     def launcher_stop_instance(instance_id: str):
         return jsonify({"ok": True, **launcher.stop_instance(instance_id)})
+
+    @app.before_request
+    def check_orchestration_selection():
+        # Opt-in optimistic concurrency: updated PAH clients attach the token
+        # observed with their module profile. Older clients remain compatible.
+        if request.path.startswith("/api/orchestration/") and request.method in {"POST", "PUT", "DELETE"}:
+            selected_token = request.headers.get("X-PAH-Context-Token")
+            if selected_token is not None:
+                context_selection()
+                try:
+                    context_guard.require_current(selected_token)
+                except StaleWorkspaceContext as exc:
+                    return error_response(exc, 409)
+        return None
+
+    @app.get("/api/orchestration/context")
+    def orchestration_context_identity():
+        return jsonify({"ok": True, **context_selection().to_dict()})
 
     @app.get("/api/orchestration/modules")
     def orchestration_modules():
@@ -757,7 +819,7 @@ def create_app(
 
     @app.get("/api/orchestration/modules/<module_id>/runtime")
     def orchestration_module_runtime(module_id: str):
-        return jsonify({"ok": True, **runtime_registry.status(module_id, orchestration_context()).to_dict()})
+        return jsonify({"ok": True, **runtime_registry.status(module_id, orchestration_context().for_module(module_id)).to_dict()})
 
     @app.post("/api/orchestration/modules/<module_id>/launch")
     def orchestration_module_launch(module_id: str):
@@ -767,7 +829,7 @@ def create_app(
                 require_enabled_module(module_id)
                 launch = runtime_registry.launch(
                     module_id,
-                    orchestration_context(),
+                    orchestration_context().for_module(module_id),
                     detached=bool(payload.get("detached", False)),
                 )
                 observed.launched(launch)
@@ -777,7 +839,7 @@ def create_app(
 
     @app.post("/api/orchestration/modules/<module_id>/shutdown")
     def orchestration_module_shutdown(module_id: str):
-        runtime_registry.shutdown(module_id, orchestration_context())
+        runtime_registry.shutdown(module_id, orchestration_context().for_module(module_id))
         return jsonify({"ok": True, "module_id": module_id})
 
     @app.get("/api/orchestration/ml-lab")
@@ -787,7 +849,7 @@ def create_app(
         if enabled:
             sync_runtime_artifacts("ml_lab", context)
         lab = lab_registry.lab_snapshot("ml_lab", active_module_registry())
-        runtime = runtime_registry.status("ml_lab", context).to_dict()
+        runtime = runtime_registry.status("ml_lab", context.for_module("ml_lab")).to_dict()
         if not enabled:
             runtime.update({
                 "available": False,
@@ -809,6 +871,71 @@ def create_app(
             return jsonify({"ok": True, **lab_registry.lab_snapshot(lab_id, active_module_registry())})
         except RegistryError as exc:
             return error_response(exc, 404)
+
+    @app.get("/api/orchestration/artifact-references")
+    def orchestration_artifact_references():
+        # The selected context, never caller-supplied project IDs, scopes reads.
+        selection = context_selection()
+        try:
+            result = artifact_references.query(
+                lab_artifacts,
+                host_project_id=selection.host_project_id,
+                workspace_id=selection.workspace_id,
+                producer_module=request.args.get("producer_module"),
+                kind=request.args.get("kind"),
+                schema_id=request.args.get("schema_id"),
+                capability=request.args.get("capability"),
+                search=request.args.get("search"),
+                include_history=request.args.get("include_history", "false").lower() == "true",
+                include_aliases=request.args.get("include_aliases", "false").lower() == "true",
+                limit=int(request.args.get("limit", "50")),
+                offset=int(request.args.get("offset", "0")),
+            )
+        except ValueError as exc:
+            return error_response(exc, 400)
+        return jsonify({"ok": True, "context": selection.to_dict(), **result})
+
+    @app.post("/api/orchestration/artifact-references")
+    def orchestration_publish_artifact_reference():
+        # A new producer must explicitly acknowledge the selected host context;
+        # this is stronger than the optional legacy orchestration token header.
+        payload = request.get_json(silent=True)
+        try:
+            if not isinstance(payload, dict):
+                raise ValueError("Publication must be a JSON object")
+            selection = context_selection()
+            descriptor, created = publish_reference(
+                lab_artifacts, payload, active_context=selection,
+                known_modules={item.module_id for item in module_registry.all()},
+            )
+        except (ValueError, TypeError) as exc:
+            # Immutable duplicate IDs and scope errors are conflicts, not
+            # opportunities to overwrite previously published references.
+            return error_response(exc, 409)
+        return jsonify({"ok": True, "artifact": descriptor, "created": created}), (201 if created else 200)
+
+    @app.post("/api/orchestration/artifact-references/<artifact_id>/status")
+    def orchestration_artifact_reference_status(artifact_id: str):
+        payload = request.get_json(silent=True)
+        try:
+            if not isinstance(payload, dict):
+                raise ValueError("Reference status request must be a JSON object")
+            selection = context_selection()
+            if payload.get("context_token") != selection.context_token:
+                raise ValueError("Workspace context changed; refresh the selection")
+            module_id = payload.get("module_id")
+            if not isinstance(module_id, str) or module_registry.get(module_id) is None:
+                raise ValueError("Unknown artifact producer")
+            descriptor = observe_reference_status(
+                lab_artifacts, artifact_id, state=payload.get("state"),
+                reason=payload.get("reason", ""), active_context=selection,
+                module_id=module_id,
+            )
+        except KeyError as exc:
+            return error_response(exc, 404)
+        except (TypeError, ValueError) as exc:
+            return error_response(exc, 409)
+        return jsonify({"ok": True, "artifact": descriptor})
 
     @app.get("/api/orchestration/artifacts")
     def orchestration_artifacts():
@@ -939,7 +1066,7 @@ def create_app(
                 observed.note(f"Selected inputs: {', '.join(sorted((context.runtime.get('input_artifacts') or {}).keys())) or 'none'}")
                 launch = runtime_registry.launch(
                     module_id,
-                    context,
+                    context.for_module(module_id),
                     detached=bool(payload.get("detached", False)),
                 )
                 observed.launched(launch)
@@ -1056,6 +1183,152 @@ def create_app(
     def quality_impact_clear():
         quality_impact.clear(quality_impact_workspace_key())
         return jsonify({"ok": True, **quality_impact.snapshot(quality_impact_workspace_key())})
+
+    @app.post("/api/uca/navigation/verify-source")
+    def uca_verify_source_selection():
+        """Verify a user-selected disk source revision. Never returns source content."""
+        if request.mimetype != "application/json":
+            return jsonify({"ok":False,"error":"Expected application/json"}), 415
+        origin = request.headers.get("Origin")
+        if origin:
+            from urllib.parse import urlsplit
+            parsed = urlsplit(origin)
+            if parsed.scheme not in ("http", "https") or parsed.netloc != request.host:
+                return jsonify({"ok":False,"error":"Cross-origin request denied"}), 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"ok":False,"error":"Invalid selection"}), 400
+        project_id = workspaces.active_workspace_id
+        root = workspaces.resolve_resource("repository")
+        if not project_id or root is None or payload.get("project_id") != project_id:
+            return jsonify({"ok":False,"error":"Active project/repository mismatch"}), 409
+        try:
+            selection = verified_selection(root, project_id, payload.get("relative_path"),
+                                          payload.get("start_line"), payload.get("end_line"))
+        except (SourceEvidenceError, ValueError, OSError) as exc:
+            return jsonify({"ok":False,"error":str(exc)}), 409
+        response = jsonify({"ok":True,"selection":selection})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.post("/api/uca/analysis-handoff/inspect")
+    def uca_analysis_handoff_inspect():
+        """Explicit read-only job/artifact verification; no inferred associations."""
+        if request.content_length is None or request.content_length > 8192:
+            return jsonify({"ok": False, "error": "Bounded JSON request required"}), 413
+        if request.mimetype != "application/json":
+            return jsonify({"ok": False, "error": "JSON request required"}), 415
+        # Same-origin script can use this endpoint; reject cross-origin browser writes.
+        origin = request.headers.get("Origin")
+        if origin and origin.rstrip("/") != request.host_url.rstrip("/"):
+            return jsonify({"ok": False, "error": "Cross-origin request rejected"}), 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"ok": False, "error": "Invalid handoff JSON"}), 400
+        try:
+            scope = navigation_scope(workspaces.active_workspace_id,
+                                     workspaces.resolve_resource("repository"),
+                                     context_selection().context_token,
+                                     context_selection().revision)
+            expected = {"schema", "project_id", "repository_id", "producer", "source_sha256", "job_id", "artifact_id"}
+            if set(payload) - expected or payload.get("schema") != "pah.uca-analysis-handoff@1":
+                raise HandoffError("Unsupported handoff schema or fields")
+            handoff = AnalysisHandoff(project_id=payload.get("project_id"),
+                                      repository_id=payload.get("repository_id"),
+                                      producer=payload.get("producer"),
+                                      source_sha256=payload.get("source_sha256"),
+                                      job_id=payload.get("job_id"),
+                                      artifact_id=payload.get("artifact_id"))
+            # Artifact identity must be issued by the producer and present in PAH's
+            # existing registry. Never register or synthesize it here.
+            artifact = lab_artifacts.get(handoff.artifact_id) if handoff.artifact_id else None
+            attach_workspace_job_sources()
+            result = inspect_handoff(handoff,
+                project_id=scope["project_id"], repository_id=scope["repository_id"],
+                readers=job_monitor.readers_snapshot(), artifact=artifact)
+            # Invalidate if workspace context was switched during the lookup.
+            latest = context_selection()
+            if (latest.context_token != scope["context_token"] or
+                    latest.revision != scope["context_revision"] or
+                    workspaces.active_workspace_id != scope["project_id"]):
+                raise HandoffError("Workspace changed during verification")
+        except (HandoffError, ValueError, OSError, RuntimeError, TypeError) as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        response = jsonify({"ok": True, "result": result})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/api/uca/navigation/scope")
+    def uca_navigation_scope():
+        """Return only the currently authorized workspace/repository identity.
+
+        Does not publish navigation or allow source access. Consumers must
+        verify source evidence independently, including after project changes.
+        """
+        selection = context_selection()
+        try:
+            result = navigation_scope(
+                workspaces.active_workspace_id,
+                workspaces.resolve_resource("repository"),
+                selection.context_token,
+                selection.revision,
+            )
+        except (ValueError, OSError, RuntimeError) as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        response = jsonify({"ok": True, "scope": result})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/api/orchestration/code-analysis/source-evidence/findings")
+    def code_analysis_source_evidence_findings():
+        """Opt-in pyPIQUE projection: selection only, never reads source files."""
+        project_id = workspaces.active_workspace_id
+        root = workspaces.resolve_resource("repository")
+        if not project_id or root is None or not workspaces.is_module_enabled("pypique"):
+            return jsonify({"ok": False, "error": "An active project, repository and pyPIQUE module are required"}), 409
+        view = request.args.get("view", "all")
+        if view not in ("all", "scoring"):
+            return jsonify({"ok": False, "error": "Unsupported findings view"}), 400
+        try:
+            # The producer owns parsing, finding identities and projection rules.
+            # Never derive scan-time fingerprints from the current checkout.
+            from pique_py.source_evidence_locator import project_findings_evidence
+            projection = project_findings_evidence(str(root), project_id=project_id, view=view, limit=100)
+        except ImportError:
+            return jsonify({"ok": False, "error": "pyPIQUE finding projection is unavailable in this PAH environment"}), 503
+        except (OSError, ValueError, KeyError) as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        if projection.get("schema") != "pypique.source-evidence-projections@1" or projection.get("project_id") != project_id:
+            return jsonify({"ok": False, "error": "Unexpected pyPIQUE projection contract"}), 409
+        response = jsonify({"ok": True, "projection": projection})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.post("/api/orchestration/code-analysis/source-evidence/preview")
+    def code_analysis_source_evidence_preview():
+        """Explicit, same-origin, read-only preview; never invokes an editor."""
+        if request.mimetype != "application/json":
+            return jsonify({"ok": False, "error": "Expected application/json"}), 415
+        origin = request.headers.get("Origin")
+        if origin:
+            from urllib.parse import urlsplit
+            parsed = urlsplit(origin)
+            if parsed.scheme not in ("http", "https") or parsed.netloc != request.host:
+                return jsonify({"ok": False, "error": "Cross-origin evidence preview denied"}), 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"ok": False, "error": "Expected a JSON locator"}), 400
+        project_id = workspaces.active_workspace_id
+        root = workspaces.resolve_resource("repository")
+        if not project_id or root is None:
+            return jsonify({"ok": False, "error": "An active research workspace and repository resource are required"}), 409
+        try:
+            locator = SourceEvidenceLocator.from_mapping(payload)
+            excerpt = read_source_evidence(
+                repository_root=root, active_project_id=project_id, locator=locator)
+        except (SourceEvidenceError, OSError, ValueError) as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        return jsonify({"ok": True, "evidence": excerpt})
 
     @app.get("/api/orchestration/code-analysis")
     def orchestration_code_analysis():
@@ -1216,7 +1489,7 @@ def create_app(
         workspace = workspaces.set_module_enabled(workspace_id, module_id, payload["enabled"])
         if workspace.get("active"):
             if not payload["enabled"]:
-                runtime_registry.shutdown(module_id, orchestration_context())
+                runtime_registry.shutdown(module_id, orchestration_context().for_module(module_id))
             bind_workspace_services()
         return jsonify({
             "ok": True,
@@ -1590,6 +1863,50 @@ def create_app(
         command = shlex.join([str(environments.interpreter()), str(file_path), *[str(x) for x in args]])
         terminals.write(session_id, command + "\n")
         return jsonify({"ok": True, "terminal_id": session_id, "command": command})
+
+    @app.post("/api/uca/analyzer/provider-navigation")
+    def uca_provider_navigation():
+        """Explicit read-only Python/ATLAS analysis of one selected source file.
+
+        The installed Code Analyzer module owns parsing, capabilities, and
+        source-revision verification. PAH owns workspace authorization only.
+        """
+        if request.mimetype != "application/json":
+            return jsonify({"ok": False, "error": "Expected application/json"}), 415
+        origin = request.headers.get("Origin")
+        if origin:
+            from urllib.parse import urlsplit
+            parsed = urlsplit(origin)
+            if parsed.scheme not in ("http", "https") or parsed.netloc != request.host:
+                return jsonify({"ok": False, "error": "Cross-origin request denied"}), 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"ok": False, "error": "Expected a JSON object"}), 400
+        project_id = workspaces.active_workspace_id
+        root = workspaces.resolve_resource("repository")
+        if (not project_id or root is None or
+                not workspaces.is_module_enabled("code_analyzer") or
+                payload.get("project_id") != project_id):
+            return jsonify({"ok": False, "error": "Active project/repository mismatch"}), 409
+        relative = payload.get("relative_path")
+        if not isinstance(relative, str) or not relative or len(relative) > 2048:
+            return jsonify({"ok": False, "error": "Invalid source path"}), 400
+        before = context_selection()
+        try:
+            from code_analyzer.language_providers.navigation import build_navigation_snapshot
+            snapshot = build_navigation_snapshot(relative, root)
+        except (ImportError, OSError, ValueError, RuntimeError) as exc:
+            # Never return source text, absolute filesystem paths or tracebacks.
+            return jsonify({"ok": False, "error": "Provider unavailable or source could not be verified"}), 409
+        after = context_selection()
+        if (before.context_token != after.context_token or
+                before.revision != after.revision or
+                project_id != workspaces.active_workspace_id or
+                root != workspaces.resolve_resource("repository")):
+            return jsonify({"ok": False, "error": "Workspace changed during analysis"}), 409
+        response = jsonify({"ok": True, "project_id": project_id, "snapshot": snapshot})
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/api/analyzer/status")
     def analyzer_status():
@@ -2030,7 +2347,17 @@ def create_app(
         job_observer._safe(job_observer.attach_runtime_readers, runtime_registry, job_monitor)
         attach_workspace_job_sources()
         job_observer._safe(job_observer.observe_processes)
-        response = jsonify({"ok": True, **job_monitor.snapshot()})
+        monitor_snapshot = job_monitor.snapshot()
+        if (os.environ.get("PAH_JOB_OBSERVATION_HISTORY") == "1" and
+                workspaces.root is not None):
+            try:
+                ObservationHistory(workspaces.root).record(monitor_snapshot["observations"])
+            except (OSError, ValueError, RuntimeError):
+                # Observation history is optional; monitoring never breaks jobs.
+                pass
+            except sqlite3.Error:
+                pass
+        response = jsonify({"ok": True, **monitor_snapshot})
         response.headers["Cache-Control"] = "no-store"
         return response
 

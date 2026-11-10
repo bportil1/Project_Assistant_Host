@@ -1,0 +1,63 @@
+/* UCA-02: isolated layout shell; no global pane or scientific styles. */
+.uca-workspace { min-height: 0; height: 100%; flex: 1 1 auto; overflow: auto; padding: 14px; background: var(--pah-page, #f4f6f9); color: var(--pah-text, #172634); }
+.uca-header { display:flex; align-items: center; justify-content:space-between; gap: 14px; flex-wrap:wrap; margin-bottom:12px; }
+.uca-header h1 { font-size: 1.25rem; margin:0 0 3px; }
+.uca-header p { margin: 0; font-size:.8rem; }
+.uca-tools { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+.uca-tools label { display:inline-flex; gap:5px; align-items:center; cursor:pointer; }
+.uca-grid { display:flex; align-items:stretch; gap:8px; min-height: min(58vh, 600px); overflow-x:auto; }
+.uca-pane { box-sizing:border-box; flex: 1 1 0; min-width: 190px; min-height:300px; padding:12px; border:1px solid var(--pah-border, #ccd4df); background:var(--pah-surface, #fff); border-radius:6px; }
+.uca-pane[hidden] { display:none !important; }
+.uca-pane header { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px; padding-bottom:10px; border-bottom:1px solid var(--pah-border, #ccd4df); }
+.uca-pane header label { font-size:.75rem; display:flex; align-items:center; gap:4px; }
+.uca-pane header input { width:90px; }
+.uca-pane p { font-size:.85rem; line-height:1.5; }
+.uca-notice { font-size:.8rem; margin-top:10px; }
+@media (max-width:650px) { .uca-grid { min-height:0; flex-direction:column; } .uca-pane { min-height:160px; } }
+
+/* UCA-03: existing Workspace .main-pane is physically docked here. */
+.uca-pane[data-uca-pane="editor"] { display:flex; flex-direction:column; min-height: 360px; }
+.uca-editor-mount { flex:1 1 auto; min-width:0; min-height:300px; display:flex; }
+.uca-editor-mount > .main-pane { flex:1 1 auto; width:100%; min-width:0; min-height:300px; }
+.uca-editor-hint { margin:6px 0 0; font-size:.72rem !important; color:var(--pah-text-muted, #64748b); }
+@media (max-width:650px) { .uca-editor-mount { min-height:260px; } }
+
+/* UCA-04: read-only producer-owned finding inspection. */
+.uca-findings { display:flex; flex-direction:column; gap:8px; min-width:0; }
+.uca-findings-controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.uca-findings select { max-width:100%; min-width:0; }
+.uca-findings label { font-size:.8rem; }
+.uca-findings p { margin:2px 0; overflow-wrap:anywhere; }
+.uca-finding-excerpt { margin:0; padding:10px; max-height:320px; overflow:auto; background:var(--pah-page, #f4f6f9); border:1px solid var(--pah-border, #ccd4df); white-space:pre; font-size:.77rem; }
+.uca-findings .uca-finding-note { font-size:.73rem; color:var(--pah-text-muted, #64748b); }
+
+/* UCA-05: read-only Code Analyzer structure browser. */
+.uca-analyzer-browser { display:flex; flex-direction:column; gap:9px; min-width:0; }
+.uca-analyzer-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.uca-analyzer-browser label { font-size:.8rem; }
+.uca-analyzer-browser select { width:100%; min-width:0; }
+.uca-analyzer-browser p { margin:2px 0; overflow-wrap:anywhere; }
+.uca-analyzer-details { display:grid; grid-template-columns:minmax(55px,auto) minmax(0,1fr); gap:6px 10px; font-size:.8rem; overflow-wrap:anywhere; }
+.uca-analyzer-details dt { font-weight:600; } .uca-analyzer-details dd { margin:0; }
+.uca-analyzer-dependencies { font-size:.8rem; overflow-wrap:anywhere; }
+.uca-analyzer-note { font-size:.73rem; color:var(--pah-text-muted, #64748b); }
+
+/* UCA-09: language provider results remain separate from legacy Python catalog. */
+.uca-provider-navigation { display:flex; flex-direction:column; gap:7px; min-width:0; border:1px solid var(--pah-border,#ccd4df); padding:10px; margin:4px 0; }
+.uca-provider-navigation legend { font-weight:600; font-size:.85rem; }
+.uca-provider-navigation input { box-sizing:border-box; width:100%; min-width:0; }
+.uca-provider-navigation button { align-self:flex-start; }
+.uca-provider-diagnostics { max-height:130px; overflow:auto; font-size:.78rem; padding-left:18px; overflow-wrap:anywhere; }
+
+/* UCA-10: explicitly observed jobs only; artifact links require producer handoff. */
+.uca-observations { margin-top:10px; padding:10px; border:1px solid var(--pah-border,#ccd4df); border-radius:6px; }
+.uca-observations header { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.uca-observations header strong { margin-right:auto; }
+.uca-observations ul { margin:8px 0; padding-left:20px; max-height:180px; overflow:auto; }
+.uca-observations li { font-size:.8rem; overflow-wrap:anywhere; }
+.uca-observation-caveat { font-size:.73rem; color:var(--pah-text-muted,#64748b); }
+
+/* UCA-10: manual producer handoff inspection; never populate from observed jobs. */
+.uca-artifact-handoff { margin-top:10px; }
+.uca-artifact-handoff textarea { width:100%; box-sizing:border-box; font-family:monospace; }
+.uca-artifact-handoff pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:230px; overflow:auto; }

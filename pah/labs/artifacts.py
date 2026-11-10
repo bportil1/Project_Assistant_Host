@@ -85,6 +85,7 @@ class ArtifactRegistry:
         state_path: str | Path | None = None,
         archive_dir: str | Path | None = None,
     ):
+        self._revision = 0
         self._artifacts: dict[str, ArtifactRef] = {}
         self._selections: dict[str, str] = {}
         self._state_path = Path(state_path).expanduser().resolve() if state_path else None
@@ -128,7 +129,13 @@ class ArtifactRegistry:
                 if str(key) and str(value)
             }
 
+    @property
+    def revision(self) -> int:
+        """Monotonic in-process change counter for rebuildable lookup indexes."""
+        return self._revision
+
     def _persist(self) -> None:
+        self._revision += 1
         if self._state_path is None:
             return
         self._state_path.parent.mkdir(parents=True, exist_ok=True)

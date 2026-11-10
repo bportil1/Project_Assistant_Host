@@ -66,7 +66,7 @@ class PublishedJobRegistry(JobRegistry):
 
     def _event(self, job_id: str, event_type: str, detail: object = "") -> None:
         super()._event(job_id, event_type, detail)
-        if event_type in {"started", "state"} or time.monotonic() - self._last_write >= 0.7:
+        if event_type in {"started", "state", "cancel_requested"} or time.monotonic() - self._last_write >= 0.7:
             self._write_snapshot()
 
 
@@ -124,6 +124,13 @@ def finish(owner: str, job_id: str | None, *, state: str = "succeeded",
             registry.transition(job_id, state, reason=reason, exit_code=exit_code)
         except (KeyError, ValueError, OSError):
             pass
+
+
+def request_cancellation(owner: str, job_id: str | None, *, reason: str | None = None) -> None:
+    """Producer-only request; this never stops a worker or confirms cancellation."""
+    registry = publisher(owner)
+    if registry is not None and job_id:
+        registry.request_cancellation(job_id, reason=reason)
 
 
 def heartbeat(owner: str, job_id: str | None, *, progress: float | None = None) -> None:
@@ -244,11 +251,23 @@ class WorkspaceJobReader:
                         result["liveness"] = observation.status
                         result["cpu_seconds"] = observation.cpu_seconds
                         result["rss_bytes"] = observation.rss_bytes
+                result["reported_state"] = result.get("state")
+                result["publisher_alive"] = record["writer_alive"]
+                result["telemetry_epoch"] = record.get("updated_epoch")
                 if not record["writer_alive"] and result.get("state") in {
                     "running", "paused", "completing", "queued"
                 }:
                     result["state"] = "unknown"
                     result["reason"] = "Publisher process no longer observable; result unconfirmed"
+                    result["observation_status"] = "unavailable"
+                else:
+                    age = record.get("updated_epoch")
+                    if not isinstance(age, (int, float)) or isinstance(age, bool):
+                        result["observation_status"] = "undated"
+                    elif age > time.time() + 300 or time.time() - age > 30:
+                        result["observation_status"] = "stale"
+                    else:
+                        result["observation_status"] = "current"
                 if states is None or result.get("state") in states:
                     jobs.append(result)
         return {"owner": self.owner, "sequence": 0, "jobs": jobs}

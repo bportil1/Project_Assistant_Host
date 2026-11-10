@@ -17,7 +17,7 @@ from uuid import uuid4
 from .models import JobEvent, JobOutput, JobSnapshot
 from .process import observe_pid
 
-TERMINAL = frozenset({"succeeded", "failed", "timed_out", "interrupted"})
+TERMINAL = frozenset({"succeeded", "failed", "timed_out", "interrupted", "cancelled"})
 STATES = frozenset({"queued", "running", "paused", "completing", *TERMINAL, "unknown"})
 TRANSITIONS = {
     "queued": frozenset({"running", "paused", "unknown", *TERMINAL}),
@@ -227,6 +227,25 @@ class JobRegistry:
                                    exit_code=exit_code,
                                    reason=self._clean(reason) if reason is not None else None)
             self._event(job_id, "state", state)
+
+    def request_cancellation(self, job_id: str, *, reason: str | None = None) -> None:
+        """Record the owner's intent; only its execution loop may confirm cancellation.
+
+        This is never a process signal, thread interruption, or forced transition.
+        """
+        from dataclasses import replace
+        with self._lock:
+            job = self._job(job_id)
+            if job.snapshot.state in TERMINAL:
+                raise ValueError("cannot request cancellation for completed job")
+            if job.snapshot.cancellation_requested_at is not None:
+                return
+            job.snapshot = replace(
+                job.snapshot, cancellation_requested_at=_now(),
+                cancellation_reason=self._clean(reason) if reason is not None else None,
+                updated_at=_now(),
+            )
+            self._event(job_id, "cancel_requested", "Producer must acknowledge cancellation")
 
     def heartbeat(self, job_id: str, *, progress: float | None = None) -> None:
         from dataclasses import replace

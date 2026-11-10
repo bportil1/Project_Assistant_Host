@@ -29,6 +29,8 @@ class JobSnapshot:
     reason: str | None
     cpu_seconds: float | None
     rss_bytes: int | None
+    cancellation_requested_at: str | None = None
+    cancellation_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

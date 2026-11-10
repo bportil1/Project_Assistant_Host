@@ -1,0 +1,6 @@
+/* P5-18: self-contained read-only evidence panel */
+.source-evidence-panel { margin: 1rem; padding: 1rem; border: 1px solid var(--border, #777); border-radius: 0.5rem; }
+.source-evidence-panel h2 { font-size: 1.1rem; margin: 0 0 .5rem; }
+.source-evidence-panel h2 small { font-weight: normal; }
+.source-evidence-panel textarea { width: 100%; max-width: 100%; box-sizing: border-box; font-family: monospace; }
+.source-evidence-panel pre { overflow: auto; white-space: pre; max-height: 22rem; border: 1px solid var(--border, #777); padding: .75rem; }

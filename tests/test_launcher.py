@@ -152,5 +152,5 @@ def test_launcher_frontend_and_http_contracts_are_present():
     assert 'data-new-instance' in js
     assert 'data-stop-instance' in js
     assert 'Open New Instance' in js
-    assert '"/launcher"' in run_py
+    assert 'landing_path = "/"' in run_py  # Direct start opens the workspace, not the launcher
     assert 'parser.add_argument("--workspace-id"' in run_py

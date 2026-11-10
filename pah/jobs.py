@@ -8,6 +8,7 @@ from __future__ import annotations
 from threading import RLock
 
 from pah_jobs import JobReader
+from pah_jobs.observations import observe
 
 
 class JobMonitorAggregator:
@@ -25,11 +26,20 @@ class JobMonitorAggregator:
         with self._lock:
             self._readers.pop(owner, None)
 
+    def readers_snapshot(self) -> dict[str, JobReader]:
+        """Copy explicitly attached readers for a bounded read-only handoff check."""
+        with self._lock:
+            return dict(self._readers)
+
     def snapshot(self, *, states=None) -> dict:
         with self._lock:
             readers = tuple(self._readers.values())
         data = [reader.snapshot(states=states) for reader in readers]
-        return {"sources": data, "job_count": sum(len(source["jobs"]) for source in data)}
+        observations = [observe(job, owner=source["owner"])
+                        for source in data for job in source["jobs"]]
+        return {"sources": data, "job_count": sum(len(source["jobs"]) for source in data),
+                "observation_schema": "pah.job-observation", "observation_version": 1,
+                "observations": observations}
 
     def outputs(self, owner: str, job_id: str, *, limit: int = 100) -> list[dict]:
         with self._lock:

@@ -1,0 +1,5 @@
+# UCA-06.3 — Editor/Code Analyzer source-origin navigation
+
+This increment adds explicit selection commands to the existing editor and Code Analyzer panes. The host verifies a bounded file/line selection using the descriptor-safe P5-18 reader and returns a disk SHA-256 without returning file contents. Requests require same-origin checks and the active project. JavaScript fetches the current host scope, verifies the source, and dispatches navigation to other panes only when scope still matches. The editor refuses to originate an unsaved buffer. The Code Analyzer refuses stale known results; its AST-to-source relation is still labeled **candidate**, since independent AST revision equivalence has not been proved.
+
+Source fingerprints identify disk bytes only. The new endpoint is not a grant to read arbitrary files, does not modify source, does not recompute SAT, and does not mark Code Analyzer ASTs as revision-verified. Browser-to-Python UCA-01 coordinator integration and browser acceptance remain pending. Legacy routes remain unchanged.

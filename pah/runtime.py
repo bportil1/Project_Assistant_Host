@@ -89,6 +89,13 @@ class RuntimeRegistry:
                     "surface": launch.surface,
                     "url": launch.url,
                     **dict(launch.metadata or {}),
+                    # Host scope is recorded independently of optional adapter
+                    # metadata, so a later project switch can identify the
+                    # original binding without reading a module-private DB.
+                    "workspace_id": context.workspace_id if context else None,
+                    "host_project_id": context.host_project_id if context else None,
+                    "module_instance_id": context.module_instance_id if context else None,
+                    "module_local_project_id": context.module_local_project_id if context else None,
                 },
             )
         return launch

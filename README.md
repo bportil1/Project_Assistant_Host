@@ -545,3 +545,28 @@ imports recognized ML Lab result artifacts into PAH's neutral artifact registry.
 Add the ML Lab repository once at `modules/ml_lab` (for example with the helper
 `./scripts/add_ml_lab_submodule.sh <ml-lab-git-url>`), then run `./scripts/setup.sh`
 to install `modules/ml_lab[ui]` into PAH's environment.
+
+
+### P5-01: explicit host context identity
+
+PAH now exposes an instance-local, revisioned workspace context for module
+launches and workflow selections. See
+[`docs/compatibility/P5-01_PROJECT_CONTEXT.md`](docs/compatibility/P5-01_PROJECT_CONTEXT.md)
+for the additive identity fields, stale-selection header, compatibility and rollback.
+
+### P5-04 — shared Quality Impact analysis tables
+
+The read-only Quality Impact tables use `pah-shared>=0.3,<0.4`'s exact
+interactive table implementation. PAH only supplies its already-computed rows.
+PAH_Shared owns filtering, sorting, pagination, neutral styling and
+CSV/PNG/SVG/LaTeX exports. Module-update selection tables remain separate
+action forms; this patch does not change the component update workflow.
+Install PAH_Shared from the local wheel before launching PAH.
+
+### P5-05: searchable artifact references
+
+For the optional, versioned producer publication API and project-scoped PAH
+SQLite lookup index, see
+[`docs/architecture/P5-05_ARTIFACT_REFERENCES.md`](docs/architecture/P5-05_ARTIFACT_REFERENCES.md).
+The original files and private databases remain owned by their producing
+modules. Existing artifact endpoints remain available during migration.

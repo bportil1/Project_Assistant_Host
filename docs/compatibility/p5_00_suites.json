@@ -1,0 +1,106 @@
+{
+  "modules": {
+    "code_analyzer": {
+      "archive_baseline": {
+        "filename": "Code_Repository_Cataloguer-main(1).zip",
+        "sha256": "dd85d8a5b678d79c7f7a0ccc79541cc310f4ff20e05b6a838316c1201768bbef"
+      },
+      "pythonpath": ".",
+      "suites": {
+        "baseline": [
+          "tests"
+        ]
+      }
+    },
+    "hsqa_dbn": {
+      "archive_baseline": {
+        "filename": "HSQA_DBN-refactor(6)(1).zip",
+        "sha256": "c5e55d2aecf79aa2604335571af3796f0400250780ff9df772e96ff73d7114e4"
+      },
+      "pythonpath": ".",
+      "suites": {
+        "baseline": [
+          "tests/test_architecture_boundaries.py",
+          "tests/test_experiment_config.py",
+          "tests/test_dataset_semantics.py",
+          "tests/test_distribution_comparison.py",
+          "tests/test_module_ui_architecture.py",
+          "tests/test_pah_module_adapter.py",
+          "tests/test_representation_bundle.py"
+        ]
+      }
+    },
+    "ml_lab": {
+      "archive_baseline": {
+        "filename": "ML_Lab-main(3).zip",
+        "sha256": "fa61d89af860002d59b54ae614829ce8149cb7db0f56c3f4938a8275a0672f63"
+      },
+      "pythonpath": "src",
+      "suites": {
+        "baseline": [
+          "tests/test_experiment_store.py",
+          "tests/test_experiment_artifacts.py",
+          "tests/test_experiment_dataset_handoff.py",
+          "tests/test_experiment_models.py",
+          "tests/test_experiment_training.py",
+          "tests/test_experiment_optimization.py",
+          "tests/test_experiment_visualizations.py",
+          "tests/test_experiment_synthetic.py",
+          "tests/test_xml_collection_recipe.py",
+          "tests/test_xml_collection_scale.py",
+          "tests/test_xml_collection_export.py",
+          "tests/test_xml_collection_provenance.py",
+          "tests/test_xml_collection_similarity.py",
+          "tests/test_s7_1_pah_hardening.py",
+          "tests/test_pah_integration.py"
+        ]
+      }
+    },
+    "pah": {
+      "archive_baseline": {
+        "filename": "Project_Assistant_Host-main(5).zip",
+        "sha256": "b8badf76527cd3085cbc650fa29dbc486b19828bba1a07b0205d610086c9f70a"
+      },
+      "pythonpath": ".",
+      "suites": {
+        "baseline": [
+          "tests/test_workspace.py",
+          "tests/test_component_lifecycle.py",
+          "tests/test_launcher.py",
+          "tests/test_jm1_registry.py"
+        ]
+      }
+    },
+    "pypique": {
+      "archive_baseline": {
+        "filename": "pyPIQUE-main(3)(1).zip",
+        "sha256": "b890adbe474d29fa79d6da72b7e43501449a085fa5351a66a39a5502ce96b780"
+      },
+      "pythonpath": "src",
+      "suites": {
+        "baseline": [
+          "tests/test_core.py",
+          "tests/test_calibration_methods.py",
+          "tests/test_research_models.py",
+          "tests/test_sat_selection.py",
+          "tests/test_pah_integration.py",
+          "tests/test_mr2_native_mi_computation.py"
+        ],
+        "scenario": [
+          "tests/test_mi_u1_evidence_event_contract.py",
+          "tests/test_mi_u2_distribution_protocol.py",
+          "tests/test_mi_u4_attribution_update.py",
+          "tests/test_mi_u5_aggregation_update.py",
+          "tests/test_mi_u6_scenario_update.py",
+          "tests/test_ig3_native_propagation.py",
+          "tests/test_ig4_live_graph_comparison.py",
+          "tests/test_ig5_scenario_history.py",
+          "tests/test_mi_graph_fix4_scenario_reconciliation.py"
+        ]
+      }
+    }
+  },
+  "notes": "Source ZIP signatures are archival provenance only, not checkout constraints. Each selected suite is local and must be run in its owning repository.",
+  "schema": "pah.compatibility.p5_00",
+  "version": 1
+}

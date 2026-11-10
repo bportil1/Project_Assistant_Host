@@ -71,3 +71,5 @@
   .job-monitor { width: 100vw !important; min-width: 0; }
   .job-monitor-resize { display: none; }
 }
+
+.jm-state.cancelled { color: #d9c0fd; }

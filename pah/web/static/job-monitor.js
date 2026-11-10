@@ -4,8 +4,8 @@
   const drawer = $('jobMonitorDrawer');
   if (!drawer) return;
   const activeStates = new Set(['queued', 'running', 'paused', 'completing', 'unknown']);
-  const failedStates = new Set(['failed', 'timed_out', 'interrupted']);
-  const terminalStates = new Set(['succeeded', 'failed', 'timed_out', 'interrupted']);
+  const failedStates = new Set(['failed', 'timed_out', 'interrupted', 'cancelled']);
+  const terminalStates = new Set(['succeeded', 'failed', 'timed_out', 'interrupted', 'cancelled']);
   const expanded = new Set();
   const monitor = {open: false, timer: null, busy: false, requestId: 0, selected: null, sources: []};
   const element = (tag, className, text) => {
@@ -138,7 +138,11 @@
       ['PID', short(job.pid)], ['Liveness', short(job.liveness)],
       ['CPU time', job.cpu_seconds == null ? '—' : `${job.cpu_seconds.toFixed(2)} s`],
       ['Memory', readableBytes(job.rss_bytes)], ['Exit code', short(job.exit_code)],
-      ['Run', short(job.run_id)], ['Checkpoint', short(job.checkpoint_id)], ['Reason', short(job.reason)],
+      ['Run', short(job.run_id)], ['Checkpoint', short(job.checkpoint_id)],
+      ['Reported state', short(job.reported_state || job.state)],
+      ['Telemetry', short(job.observation_status)],
+      ['Cancellation requested', job.cancellation_requested_at ? stamp(job.cancellation_requested_at) : 'No'],
+      ['Reason', short(job.reason)],
     ];
     for (const [label, value] of fields) {
       details.appendChild(element('dt', '', label));

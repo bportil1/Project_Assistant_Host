@@ -224,7 +224,9 @@ class CodeAnalysisLabController:
     def _runtime_snapshot(self, module_id: str | None, context: ModuleContext | None) -> dict[str, Any] | None:
         if not module_id or self.runtimes is None:
             return None
-        return self.runtimes.status(module_id, context=context).to_dict()
+        return self.runtimes.status(
+            module_id, context=context.for_module(module_id) if context is not None else None
+        ).to_dict()
 
     def select_input(
         self,

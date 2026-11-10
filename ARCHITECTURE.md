@@ -782,3 +782,22 @@ The host supplies an explicit `ModuleContext` with the current workspace,
 Recognized ML Lab artifacts are synchronized into PAH's neutral artifact registry
 without changing their domain schemas or confusing ML-3 heuristic relationships
 with ML-4 authoritative provenance.
+
+
+### P5-01: module scope and project selection
+
+The host retains workspace, artifact, and module-local identities as separate
+concepts. `WorkspaceContextGuard` issues an ephemeral context token per active
+selection, and `ModuleContext.for_module()` scopes runtime adapters without
+changing module-owned storage. See
+[`docs/compatibility/P5-01_PROJECT_CONTEXT.md`](docs/compatibility/P5-01_PROJECT_CONTEXT.md).
+
+### P5-05: published artifact references and local lookup
+
+PAH's authoritative host artifact registry continues to use JSON history and
+selection records; producers own all original bytes. A versioned publication
+contract and rebuildable SQLite **reference-only** index allow scoped,
+searchable discovery without reading producer databases. Published reference
+identity and producer-observed availability are distinct from checksum
+verification. See
+[`docs/architecture/P5-05_ARTIFACT_REFERENCES.md`](docs/architecture/P5-05_ARTIFACT_REFERENCES.md).
