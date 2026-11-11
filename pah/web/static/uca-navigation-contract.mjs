@@ -66,7 +66,7 @@ export function bindHostIdentity(selection, host) {
 export function fromVerifiedSourceRevision(result, {producer, workspace, repository}, host) {
   const source=result?.selection;
   if (result?.ok!==true || source?.schema!=='pah.uca-source-revision@1' ||
-      !['editor','code_analyzer'].includes(producer) ||
+      !['editor','code_analyzer','pypique'].includes(producer) ||
       source.project_id!==host.project_id || !safePath(source.relative_path) ||
       !sha.test(source.source_sha256 || '') ||
       !Number.isSafeInteger(source.start_line) || source.start_line<1 ||
@@ -77,5 +77,6 @@ export function fromVerifiedSourceRevision(result, {producer, workspace, reposit
     relative_path:source.relative_path,source_sha256:source.source_sha256,
     start_line:source.start_line,end_line:source.end_line,workspace,repository,
     workspace_id:host.workspace_id,repository_id:host.repository_id,
-    context_token:host.context_token,context_revision:host.context_revision});
+    context_token:host.context_token,context_revision:host.context_revision,
+    source_origin: producer === 'pypique' ? 'current_location_only' : 'current_source_revision'});
 }

@@ -24,6 +24,15 @@ export function eligibleFinding(item, projectId) {
     && Number.isSafeInteger(loc?.start_line) && loc.start_line > 0
     && Number.isSafeInteger(loc?.end_line) && loc.end_line >= loc.start_line;
 }
+// A canonical file/line is navigable as a *candidate*, not scan-time proof.
+export function candidateFinding(item, projectId) {
+  const candidate = item?.candidate;
+  return candidate?.schema === 'pypique.source-location-candidate@1' &&
+    candidate.project_id === projectId && safePath(candidate.relative_path) &&
+    Number.isSafeInteger(candidate.start_line) && candidate.start_line > 0 &&
+    Number.isSafeInteger(candidate.end_line) && candidate.end_line >= candidate.start_line &&
+    candidate.end_line - candidate.start_line < 80;
+}
 export function checkedEvidence(data, locator) {
   const evidence = data?.evidence;
   if (!data?.ok || evidence?.schema !== 'pah.source-evidence@1'

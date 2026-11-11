@@ -36,7 +36,7 @@ if(root){
   window.addEventListener('pah:uca-source-selection-request', async event => {
     if(root.classList.contains('hidden')) return;
     const detail=event.detail || {};
-    if(!['editor','code_analyzer'].includes(detail.producer)) return;
+    if(!['editor','code_analyzer','pypique'].includes(detail.producer)) return;
     const current=scope();
     if(!current.every(Boolean)) return;
     const ticket=++requestEpoch;
@@ -60,8 +60,8 @@ if(root){
       if(ticket!==requestEpoch || JSON.stringify(scope())!==JSON.stringify(current) || root.classList.contains('hidden'))return;
       const selection=fromVerifiedSourceRevision(sourceData,{producer:detail.producer,
         workspace:current[0],repository:current[1]},host);
-      // A disk fingerprint does not establish freshness of an analyzer AST.
-      // The origin's own stale check remains independent.
+      // Current disk verification never establishes scan-time pyPIQUE provenance
+      // or Code Analyzer AST revision equivalence. These remain distinct claims.
       if(!bus)bus=createNavigationBus(current);
       bus.switchScope(current);
       const navigation=bus.publish(selection);
