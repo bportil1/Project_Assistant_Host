@@ -1,0 +1,65 @@
+/* PAH_Shared: generic scientific tables, independent of any host theme.
+   May be overridden via --ps-* custom properties. No global CSS reset. */
+.ps-table-frame {
+  --ps-surface: var(--ps-table-surface, #ffffff);
+  --ps-text: var(--ps-table-text, #24282d);
+  --ps-header: var(--ps-table-header, #f3f4f6);
+  --ps-border: var(--ps-table-border, #d5d9de);
+  --ps-hover: var(--ps-table-hover, #f7f9fb);
+  --ps-focus: var(--ps-table-focus, #205bbb);
+  max-width: 100%;
+  overflow: auto;
+  background: var(--ps-surface);
+  border: 1px solid var(--ps-border);
+  border-radius: 4px;
+  color: var(--ps-text);
+  color-scheme: light;
+}
+.ps-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+.ps-table :is(th, td) {
+  text-align: left;
+  white-space: nowrap;
+  padding: 5px 9px;
+  border-right: 1px solid var(--ps-border);
+  border-bottom: 1px solid var(--ps-border);
+}
+.ps-table :is(th, td):last-child { border-right: none; }
+.ps-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 600;
+  background: var(--ps-header);
+}
+.ps-table tbody tr:hover td { background: var(--ps-hover); }
+.ps-table tbody tr:last-child td { border-bottom: none; }
+.ps-table td.ps-table__numeric { text-align: right; }
+.ps-table :is(a, button, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--ps-focus);
+  outline-offset: -2px;
+}
+/* Universal toolbar and paging used identically in Dash and Flask consumers. */
+.ps-table-workspace {--ps-font:system-ui,sans-serif;font:13px var(--ps-font);color:#24282d;max-width:100%;margin:8px 0 16px;}
+.ps-controls,.ps-pages {display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:5px 0;}
+.ps-controls input,.ps-filters input {font:inherit;border:1px solid #ccd2da;border-radius:3px;padding:5px 7px;background:#fff;color:#24282d;min-width:0;}
+.ps-controls input {min-width:180px;flex:1;max-width:340px;}
+.ps-controls button,.ps-pages button,.ps-sort {font:inherit;cursor:pointer;color:#24282d;background:#f7f8fa;border:1px solid #ccd2da;border-radius:3px;padding:5px 9px;}
+.ps-sort {display:block;width:100%;background:transparent;border:0;text-align:left;padding:0;font-weight:600;}
+.ps-controls button:hover,.ps-pages button:not(:disabled):hover {background:#e9eef4;}
+.ps-pages button:disabled {opacity:.4;cursor:default;}
+.ps-status {margin-left:auto;color:#505966;font-size:12px;}
+.ps-filters input {width:100%;max-width:150px;box-sizing:border-box;font-size:12px;}
+.ps-table-workspace .ps-table-frame {max-height:580px;overflow:auto;}
+.ps-table-workspace .ps-table th {min-width:82px;}
+
+.ps-table__activatable {cursor:pointer;}
+.ps-table__activatable:focus-visible {outline:2px solid #3977ae;outline-offset:-2px;}

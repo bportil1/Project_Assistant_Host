@@ -15,6 +15,8 @@ from typing import Iterable, Sequence
 import urllib.error
 import urllib.request
 
+from .shared_bootstrap import SharedBootstrapError, bootstrap_pah_shared
+
 from .components import (
     BROWSER_ASSETS,
     GIT_COMPONENTS,
@@ -130,6 +132,12 @@ def ensure_venv(root: Path, *, python_executable: str = sys.executable) -> Path:
 def install_python_components(root: Path, python: Path) -> None:
     print("\n== Python components ==")
     _run([python, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], cwd=root)
+    # Install local, version-compatible PAH_Shared before PAH or pyPIQUE extras.
+    # The vendored 0.3 snapshot is the offline fallback when older machines lack a checkout.
+    try:
+        bootstrap_pah_shared(root, python, run=_run)
+    except SharedBootstrapError as exc:
+        raise LifecycleError(str(exc)) from exc
     for component in PYTHON_COMPONENTS:
         if not _component_present(root, component):
             if component.required:
