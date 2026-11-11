@@ -102,3 +102,9 @@ html[data-uca-standalone="editor"] #ucaMode [data-uca-pane]:not([data-uca-pane="
 html[data-uca-standalone="pypique"] #ucaMode [data-uca-pane]:not([data-uca-pane="pypique"]),
 html[data-uca-standalone="analyzer"] #ucaMode [data-uca-pane]:not([data-uca-pane="analyzer"]) { display:none !important; }
 .uca-explorer-mount #projectPane .tree { min-height:0; flex:1 1 auto; }
+
+/* UCA: clear, persistent Ace highlight for an explicitly navigated SAT source span. */
+.ace_marker-layer .pah-uca-source-highlight {
+  position:absolute; background:rgba(255,190,52,.32);
+  border-left:4px solid #d89b16; box-sizing:border-box;
+}

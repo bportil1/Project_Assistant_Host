@@ -3365,7 +3365,8 @@
     let tab = state.tabs.find(item => item.path === path);
     if (!tab) {
       const data = await api(`/api/file?path=${encodeURIComponent(path)}`);
-      tab = {path: data.path, content: data.content, saved: data.content, language: data.language, dirty: false};
+      tab = {path: data.path, content: data.content, saved: data.content, language: data.language,
+        sourceSha256: data.source_sha256, dirty: false};
       state.tabs.push(tab);
     }
     state.active = tab.path;
@@ -3455,6 +3456,8 @@
     if (!tab) return;
     const data = await api('/api/file', {method: 'PUT', body: JSON.stringify({path: tab.path, content: tab.content})});
     tab.saved = tab.content;
+    // A saved buffer is no longer the original file-read byte snapshot.
+    tab.sourceSha256 = null;
     tab.dirty = false;
     if (data.analyzer_stale) markAnalyzerStaleLocal();
     renderTabs();
@@ -5511,38 +5514,61 @@
   // UCA-06: navigate the authoritative existing editor only after the loaded
   // disk revision matches the producer's server-verified source fingerprint.
   let ucaNavigationTicket = 0;
+  let ucaSourceMarker = null;
+  const clearUcaSourceMarker = () => {
+    if (ucaSourceMarker) {
+      try { ucaSourceMarker.session.removeMarker(ucaSourceMarker.id); } catch (_) { /* closed tab/session */ }
+      ucaSourceMarker = null;
+    }
+  };
   window.addEventListener('pah:uca-navigate-editor', async event => {
     const selection = event.detail?.selection;
     if (state.mode !== 'uca' || !selection || selection.schema !== 'pah.source-selection@1' ||
-        selection.producer !== 'pypique' ||
+        !['pypique', 'code_analyzer'].includes(selection.producer) ||
         selection.workspace_id !== selection.workspace ||
         selection.project_id !== selection.workspace_id ||
         !/^repo-[0-9a-f]{64}$/.test(selection.repository_id || '') ||
         $('researchWorkspaceSelect')?.value !== selection.workspace ||
         state.workspace !== selection.repository) return;
     const ticket = ++ucaNavigationTicket, workspaceRoot = state.workspace;
+    const stillCurrent = () => ticket === ucaNavigationTicket && state.workspace === workspaceRoot &&
+      state.mode === 'uca' && $('researchWorkspaceSelect')?.value === selection.workspace &&
+      $('workspacePath')?.value === selection.repository && activeTab()?.path === selection.relative_path;
     try {
       // Open through PAH's existing authorized file API; never bypass its path checks.
       await openFile(selection.relative_path);
-      if (ticket !== ucaNavigationTicket || state.workspace !== workspaceRoot || state.mode !== 'uca') return;
+      if (!stillCurrent()) return;
       const tab = activeTab();
-      if (!tab || tab.path !== selection.relative_path || tab.dirty ||
-          !globalThis.crypto?.subtle || !globalThis.TextEncoder) throw new Error('Source is unavailable, modified, or unsaved');
-      const bytes = new TextEncoder().encode(tab.saved);
-      const digest = await crypto.subtle.digest('SHA-256', bytes);
-      const hash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2,'0')).join('');
-      if (ticket !== ucaNavigationTicket || state.workspace !== workspaceRoot || state.mode !== 'uca') return;
-      if (hash !== selection.source_sha256) throw new Error('Editor source revision differs from verified SAT evidence');
-      if (editor && Number.isSafeInteger(selection.start_line)) {
-        editor.gotoLine(selection.start_line, 0, true);
-        editor.scrollToLine(selection.start_line-1,true,true,()=>{});
+      if (!tab || tab.dirty || !globalThis.crypto?.subtle || !globalThis.TextEncoder)
+        throw new Error('Source is unavailable, modified, or unsaved');
+      // Prefer the exact byte hash issued with /api/file. Path.read_text() does
+      // newline translation, so re-encoding tab.saved can disagree on CRLF.
+      let hash = tab.sourceSha256;
+      if (!/^[0-9a-f]{64}$/.test(hash || '')) {
+        const bytes = new TextEncoder().encode(tab.saved);
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        hash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2,'0')).join('');
       }
-      toast(`Verified source location: ${selection.relative_path}:${selection.start_line}`);
+      if (!stillCurrent()) return;
+      if (hash !== selection.source_sha256) throw new Error('Editor source revision differs from current disk verification');
+      if (!editor) throw new Error('Ace editor is unavailable');
+      // The editor may have just been docked or resized. Reveal only after its
+      // layout has had a frame to settle; stale asynchronous selections are discarded.
+      const {revealAceSource} = await import('./uca-ace-source-target.mjs');
+      await new Promise(resolve => window.requestAnimationFrame(resolve));
+      if (!stillCurrent() || editor.session !== tab.editorSession || tab.dirty) return;
+      ucaSourceMarker = revealAceSource(editor, window.ace, selection, ucaSourceMarker);
+      const kind = selection.source_origin === 'current_location_only'
+        ? 'Current-file location (scan revision unverified)' : 'Source location';
+      toast(`${kind}: ${selection.relative_path}:${selection.start_line}`);
     } catch(error) { if(ticket===ucaNavigationTicket) toast(`UCA navigation blocked: ${error.message}`,true); }
   });
-  $('researchWorkspaceSelect')?.addEventListener('change',()=>{ucaNavigationTicket++;});
-  $('workspacePath')?.addEventListener('change',()=>{ucaNavigationTicket++;});
-  window.addEventListener('pah:uca-mode', event => {if(!event.detail?.active)ucaNavigationTicket++;});
+  $('researchWorkspaceSelect')?.addEventListener('change',()=>{ucaNavigationTicket++;clearUcaSourceMarker();});
+  $('workspacePath')?.addEventListener('change',()=>{ucaNavigationTicket++;clearUcaSourceMarker();});
+  $('openWorkspace')?.addEventListener('click',()=>{ucaNavigationTicket++;clearUcaSourceMarker();});
+  window.addEventListener('pah:uca-mode', event => {
+    if(!event.detail?.active){ucaNavigationTicket++;clearUcaSourceMarker();}
+  });
 
   window.addEventListener('pah:uca-editor-layout', () => {
     if (state.mode === 'uca' && editor) window.requestAnimationFrame(() => editor.resize(true));

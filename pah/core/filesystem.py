@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 from pathlib import Path
@@ -117,11 +118,19 @@ class FileSystemService:
             raise FileSystemError("Only files can be opened in the editor.")
         if path.stat().st_size > 5 * 1024 * 1024:
             raise FileSystemError("File is larger than the 5 MB editor limit.")
+        # Read once: editor content and its disk SHA must refer to the same bytes.
+        # Path.read_text() translates CRLF, so hashing its returned string would
+        # disagree with the descriptor-safe UCA source verifier on CRLF files.
         try:
-            data = path.read_text(encoding="utf-8")
+            raw = path.read_bytes()
+            if len(raw) > 5 * 1024 * 1024:
+                raise FileSystemError("File is larger than the 5 MB editor limit.")
+            data = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
         except UnicodeDecodeError as exc:
             raise FileSystemError("This file is not UTF-8 text and cannot be opened in the lightweight editor.") from exc
-        return {"path": self.relative(path), "content": data, "mtime_ns": path.stat().st_mtime_ns}
+        return {"path": self.relative(path), "content": data,
+                "source_sha256": hashlib.sha256(raw).hexdigest(),
+                "mtime_ns": path.stat().st_mtime_ns}
 
     def write_text(self, relative: str, content: str) -> dict[str, Any]:
         path = self.resolve(relative)
