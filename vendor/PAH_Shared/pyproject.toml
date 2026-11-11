@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pah-shared"
+version = "0.3.0"
+description = "Offline, host-independent scientific presentation contracts and assets"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pah_shared = ["static/*.mjs", "static/*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
