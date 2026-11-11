@@ -13,15 +13,41 @@ from pathlib import Path
 import subprocess
 import sys
 
+# UCA-12 is built on UCA-07 through UCA-09.  Checking only the final
+# inventory/routes files previously allowed an incomplete checkout to be
+# successfully installed, then fail to import an earlier provider contract.
+# These are files required to expose the existing Python and CPS/ATLAS APIs.
 REQUIRED_FILES = (
     "pyproject.toml",
     "code_analyzer/__init__.py",
     "code_analyzer/api.py",
-    "code_analyzer/language_providers/inventory.py",
-    "code_analyzer/language_providers/navigation.py",
+    "code_analyzer/language_providers/__init__.py",
+    # UCA-07 — provider contracts and Python catalog provider.
+    "code_analyzer/language_providers/contracts.py",
+    "code_analyzer/language_providers/python_provider.py",
+    "code_analyzer/language_providers/registry.py",
+    # UCA-08 — CPS/ATLAS adapter and packaged parser implementation.
+    "code_analyzer/language_providers/atlas_provider.py",
+    "code_analyzer/language_providers/atlas_registry.py",
+    "code_analyzer/language_providers/_atlas_engine/__init__.py",
+    "code_analyzer/language_providers/_atlas_engine/analysis.py",
+    "code_analyzer/language_providers/_atlas_engine/ast.py",
+    "code_analyzer/language_providers/_atlas_engine/grammar_coverage.py",
+    "code_analyzer/language_providers/_atlas_engine/lexer.py",
+    "code_analyzer/language_providers/_atlas_engine/operations.py",
     "code_analyzer/language_providers/_atlas_engine/parser.py",
+    "code_analyzer/language_providers/_atlas_engine/reconnaissance.py",
+    "code_analyzer/language_providers/_atlas_engine/semantics.py",
+    "code_analyzer/language_providers/_atlas_engine/tokens.py",
+    "code_analyzer/language_providers/_atlas_engine/validation.py",
+    # UCA-09 and UCA-12 — source identity, inventory, and browser API.
+    "code_analyzer/language_providers/navigation.py",
+    "code_analyzer/language_providers/inventory.py",
     "code_analyzer/web/atlas_routes.py",
+    "code_analyzer/web/static/atlas.js",
+    "code_analyzer/web/static/atlas.css",
 )
+
 
 # No imports from Code Analyzer in this process; Python can retain old modules
 # in sys.modules even after pip replaces the installed distribution.
@@ -33,11 +59,15 @@ try:
     result["origin"] = getattr(package, "__file__", None)
     result["search_paths"] = list(getattr(package, "__path__", ()))
     from code_analyzer.api import CodeAnalyzer
+    from code_analyzer.language_providers.contracts import CONTRACT_VERSION
+    from code_analyzer.language_providers.registry import default_registry
+    from code_analyzer.language_providers.atlas_provider import AtlasLanguageProvider
     from code_analyzer.language_providers.inventory import atlas_files
     from code_analyzer.language_providers.navigation import build_navigation_snapshot
     from code_analyzer.web.atlas_routes import register_atlas_routes
-    result["ok"] = all(callable(item) for item in
-        (CodeAnalyzer, atlas_files, build_navigation_snapshot, register_atlas_routes))
+    result["ok"] = (bool(CONTRACT_VERSION) and all(callable(item) for item in
+        (CodeAnalyzer, default_registry, AtlasLanguageProvider, atlas_files,
+         build_navigation_snapshot, register_atlas_routes)))
 except Exception as exc:
     result["error"] = f"{type(exc).__name__}: {exc}"
 print(json.dumps(result))
@@ -101,7 +131,8 @@ def main(argv: list[str] | None = None) -> int:
     missing = source_problems(source)
     if missing:
         print(f"ERROR: Local source {source} lacks UCA-12 files: {', '.join(missing)}", file=sys.stderr)
-        print("Apply UCA-07 through UCA-12 to that checkout before reinstalling; PAH's submodule may be older.", file=sys.stderr)
+        print("Restore the missing UCA-07 through UCA-12 provider files in this source checkout before reinstalling.", file=sys.stderr)
+        print("A pip reinstall cannot restore modules that are absent from the source tree.", file=sys.stderr)
         return 2
     print(f"Local UCA-12 source: {source}")
     if not args.repair:
@@ -114,7 +145,9 @@ def main(argv: list[str] | None = None) -> int:
     print("After local reinstall:")
     print(json.dumps(report, indent=2))
     if not ok:
-        print("ERROR: Code Analyzer still resolves to an incompatible package; check its origin/search_paths above.", file=sys.stderr)
+        print("ERROR: Code Analyzer imports are incomplete after installing a source tree with all required files.", file=sys.stderr)
+        print("Inspect installed file metadata with: .venv/bin/python -m pip show -f code-repository-cataloguer", file=sys.stderr)
+        print("Check its origin/search_paths above for an import conflict or a wheel-packaging issue.", file=sys.stderr)
         return 1
     print("Code Analyzer ATLAS provider imports verified. Restart PAH to unload its previous modules.")
     return 0

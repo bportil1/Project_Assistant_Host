@@ -105,3 +105,54 @@ def test_main_refuses_nonvenv_invocations_before_install(tmp_path, monkeypatch):
     monkeypatch.setattr(repair.sys, "prefix", str(tmp_path / "wrong_env"))
     monkeypatch.setattr(repair, "install_source", lambda *a: (_ for _ in ()).throw(AssertionError("should not install")))
     assert repair.main(["--pah-root", str(root), "--source", str(tmp_path), "--repair"]) == 2
+
+
+def test_preflight_rejects_missing_foundational_contract_even_with_u12(tmp_path):
+    """Regression for the observed successful reinstall that omitted contracts.py."""
+    for rel in repair.REQUIRED_FILES:
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# placeholder\n")
+    (tmp_path / "code_analyzer/language_providers/contracts.py").unlink()
+    assert repair.source_problems(tmp_path) == [
+        "code_analyzer/language_providers/contracts.py"
+    ]
+
+
+def test_preflight_checks_uca07_08_09_and_12():
+    required = set(repair.REQUIRED_FILES)
+    assert {
+        "code_analyzer/language_providers/contracts.py",
+        "code_analyzer/language_providers/registry.py",
+        "code_analyzer/language_providers/python_provider.py",
+        "code_analyzer/language_providers/atlas_provider.py",
+        "code_analyzer/language_providers/_atlas_engine/analysis.py",
+        "code_analyzer/language_providers/navigation.py",
+        "code_analyzer/language_providers/inventory.py",
+        "code_analyzer/web/atlas_routes.py",
+    }.issubset(required)
+
+
+def test_import_probe_checks_contracts_and_registry_before_browser():
+    assert "from code_analyzer.language_providers.contracts import CONTRACT_VERSION" in repair.PROBE
+    assert "from code_analyzer.language_providers.registry import default_registry" in repair.PROBE
+    assert "from code_analyzer.language_providers.atlas_provider import AtlasLanguageProvider" in repair.PROBE
+
+
+def test_missing_contracts_block_reinstall_before_pip(tmp_path, monkeypatch):
+    root = tmp_path / "host"
+    venv = root / ".venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("include-system-site-packages = false\n")
+    (venv / "bin" / "python").symlink_to(Path(__import__("sys").executable))
+    source = tmp_path / "cataloguer"
+    for rel in repair.REQUIRED_FILES:
+        if rel.endswith("/contracts.py"):
+            continue
+        path = source / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# placeholder\n")
+    monkeypatch.setattr(repair.sys, "prefix", str(venv))
+    monkeypatch.setattr(repair, "probe_install", lambda *args: (False, {"ok": False}))
+    monkeypatch.setattr(repair, "install_source", lambda *args: (_ for _ in ()).throw(AssertionError("pip should not run")))
+    assert repair.main(["--pah-root", str(root), "--source", str(source), "--repair"]) == 2
