@@ -1,0 +1,12 @@
+{
+  "entries": [],
+  "entry_count": 0,
+  "family_id": "xml-extraction-family:sha256:3cb0e45e8128fd7e4bc3462397ad73a31eefbec2cdec42dd2bc60c9e155e882e",
+  "schema": "ml-lab.xml-extraction-history@1",
+  "source": {
+    "fingerprint": "sha256:1350ba2b0a5d6c42c2db2c2ca16d3e0747bccf8196f9fbbf598a89114729d550",
+    "path": "/home/bryanportillo/Documents/data/DOD SAFE-bq7gYPUBF94TLhUg/DOD SAFE-bq7gYPUBF94TLhUg/Tokenized_Parsed_MPDR_TPS_Results/Tokenized_Parsed_MPDR_TPS_Results/LUF344_PRINTER_0.xml",
+    "sha256": "1350ba2b0a5d6c42c2db2c2ca16d3e0747bccf8196f9fbbf598a89114729d550",
+    "structure_schema": "ml-lab.xml-structure@2"
+  }
+}
