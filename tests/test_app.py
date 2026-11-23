@@ -19,8 +19,19 @@ def test_http_workspace_edit_and_health(tmp_path: Path):
         assert opened.status_code == 200
         file_data = client.get("/api/file", query_string={"path": "main.py"}).get_json()
         assert file_data["language"] == "python"
-        saved = client.put("/api/file", json={"path": "main.py", "content": "print('changed')\n"})
+        saved = client.put("/api/file", json={"path": "main.py", "content": "print('changed')\n", "source_sha256": file_data["source_sha256"]})
         assert saved.status_code == 200
+        assert (project / "main.py").read_text() == "print('changed')\n"
+        assert saved.get_json()["source_sha256"]
+        stale = client.put("/api/file", json={
+            "path": "main.py", "content": "print('overwrite')\n",
+            "source_sha256": file_data["source_sha256"],
+        })
+        assert stale.status_code == 409
+        missing_precondition = client.put("/api/file", json={
+            "path": "main.py", "content": "print('overwrite')\n",
+        })
+        assert missing_precondition.status_code == 428
         assert (project / "main.py").read_text() == "print('changed')\n"
 
 

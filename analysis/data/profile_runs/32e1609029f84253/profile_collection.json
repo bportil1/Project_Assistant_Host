@@ -1,0 +1,38 @@
+{
+  "inventory": {
+    "files": [],
+    "include_hidden": false,
+    "recursive": true,
+    "requested_paths": [
+      "/home/karkaras/home/karkaras/Desktop/ML_Lab_XML_Collection_Test_5_Files"
+    ],
+    "schema": "ml-lab.data-inventory@1",
+    "summary": {
+      "discovered_file_count": 0,
+      "failed_file_count": 0,
+      "parsed_file_count": 0,
+      "partial_file_count": 0,
+      "supported_file_count": 0,
+      "total_size_bytes": 0,
+      "unsupported_file_count": 0
+    },
+    "warnings": [
+      "path does not exist: /home/karkaras/home/karkaras/Desktop/ML_Lab_XML_Collection_Test_5_Files",
+      "No CSV/TSV sources matched the selected paths; XML belongs in XML Data."
+    ]
+  },
+  "profiles": [],
+  "requested_paths": [
+    "/home/karkaras/home/karkaras/Desktop/ML_Lab_XML_Collection_Test_5_Files"
+  ],
+  "schema": "ml-lab.data-profile-collection@1",
+  "summary": {
+    "inventory_file_count": 0,
+    "profile_count": 0,
+    "supported_file_count": 0
+  },
+  "warnings": [
+    "path does not exist: /home/karkaras/home/karkaras/Desktop/ML_Lab_XML_Collection_Test_5_Files",
+    "No CSV/TSV sources matched the selected paths; XML belongs in XML Data."
+  ]
+}

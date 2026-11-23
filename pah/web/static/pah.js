@@ -1328,6 +1328,7 @@
       try {
         const data = await api(`/api/file?path=${encodeURIComponent(tab.path)}`);
         tab.saved = data.content;
+        tab.sourceSha256 = data.source_sha256;
         tab.language = data.language;
         setTabEditorContent(tab, data.content);
         tab.dirty = false;
@@ -3454,10 +3455,11 @@
   async function saveActive() {
     const tab = activeTab();
     if (!tab) return;
-    const data = await api('/api/file', {method: 'PUT', body: JSON.stringify({path: tab.path, content: tab.content})});
+    const data = await api('/api/file', {method: 'PUT', body: JSON.stringify({
+      path: tab.path, content: tab.content, source_sha256: tab.sourceSha256,
+    })});
     tab.saved = tab.content;
-    // A saved buffer is no longer the original file-read byte snapshot.
-    tab.sourceSha256 = null;
+    tab.sourceSha256 = data.source_sha256;
     tab.dirty = false;
     if (data.analyzer_stale) markAnalyzerStaleLocal();
     renderTabs();

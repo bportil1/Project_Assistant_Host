@@ -3,12 +3,19 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
+
+from .file_locking import interprocess_lock
 
 
 class FileSystemError(ValueError):
     pass
+
+
+class FileConflictError(FileSystemError):
+    """A file has changed since the caller loaded its expected revision."""
 
 
 _TEXT_EXTENSIONS = {
@@ -132,15 +139,48 @@ class FileSystemService:
                 "source_sha256": hashlib.sha256(raw).hexdigest(),
                 "mtime_ns": path.stat().st_mtime_ns}
 
-    def write_text(self, relative: str, content: str) -> dict[str, Any]:
+    def write_text(
+        self, relative: str, content: str, *, expected_sha256: str | None = None
+    ) -> dict[str, Any]:
+        """Write atomically, optionally rejecting a stale editor revision.
+
+        expected_sha256=None retains the internal create/scaffold contract.
+        Editor/API saves must supply the hash returned by read_text().  The
+        stable lock path is outside the repository and shared by PAH processes
+        running under the same user account.
+        """
         path = self.resolve(relative)
-        if path.exists() and not path.is_file():
-            raise FileSystemError("Cannot save text over a directory.")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.pah-tmp")
-        tmp.write_text(content, encoding="utf-8")
-        os.replace(tmp, path)
-        return {"path": self.relative(path), "mtime_ns": path.stat().st_mtime_ns}
+        lock_root = Path.home() / ".local" / "share" / "pah" / "file-locks"
+        lock_name = hashlib.sha256(os.fsencode(str(path))).hexdigest() + ".lock"
+        with interprocess_lock(lock_root / lock_name):
+            if path.exists() and not path.is_file():
+                raise FileSystemError("Cannot save text over a directory.")
+            if expected_sha256 is not None:
+                current = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
+                if current != expected_sha256:
+                    raise FileConflictError(
+                        "File changed on disk since it was opened. Reload or compare before saving."
+                    )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = content.encode("utf-8")
+            temp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    prefix=f".{path.name}.pah-", suffix=".tmp", dir=path.parent, delete=False
+                ) as handle:
+                    temp_path = Path(handle.name)
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp_path, path)
+            finally:
+                if temp_path is not None:
+                    temp_path.unlink(missing_ok=True)
+            return {
+                "path": self.relative(path),
+                "mtime_ns": path.stat().st_mtime_ns,
+                "source_sha256": hashlib.sha256(payload).hexdigest(),
+            }
 
     def create(self, relative: str, kind: str) -> dict[str, str]:
         path = self.resolve(relative)

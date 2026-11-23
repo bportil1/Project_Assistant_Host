@@ -40,6 +40,10 @@ def test_analyzer_http_surface(tmp_path: Path):
         similar = client.get("/api/analyzer/similar", query_string={"id": one["id"], "limit": 1}).get_json()
         assert similar["neighbors"][0]["id"] == two["id"]
 
-        saved = client.put("/api/file", json={"path": "main.py", "content": "def one(x):\n    return x\n"}).get_json()
+        before_save = client.get("/api/file", query_string={"path": "main.py"}).get_json()
+        saved = client.put("/api/file", json={
+            "path": "main.py", "content": "def one(x):\n    return x\n",
+            "source_sha256": before_save["source_sha256"],
+        }).get_json()
         assert saved["analyzer_stale"] is True
         assert client.get("/api/analyzer/status").get_json()["stale"] is True

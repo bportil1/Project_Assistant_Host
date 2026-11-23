@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, Iterator
 from uuid import uuid4
+
+from .file_locking import interprocess_lock
 
 
 class WorkspaceError(ValueError):
@@ -84,6 +88,7 @@ class WorkspaceManager:
         default_dir = Path.home() / ".local" / "share" / "pah"
         self.state_dir = Path(state_dir or os.environ.get("PAH_STATE_DIR", default_dir)).expanduser()
         self.state_file = self.state_dir / "state.json"
+        self._catalog_lock_file = self.state_dir / "state.json.lock"
         self._lock = RLock()
         self._available_module_ids: tuple[str, ...] = ()
         self._persist_active_workspace = bool(persist_active_workspace)
@@ -109,12 +114,14 @@ class WorkspaceManager:
             "shared_roots": {},
         }
 
-    def _load(self) -> dict[str, Any]:
+    def _load(self, *, strict: bool = False) -> dict[str, Any]:
         if not self.state_file.exists():
             return self._empty_state()
         try:
             data = json.loads(self.state_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as exc:
+            if strict:
+                raise WorkspaceError(f"Cannot modify an unreadable workspace catalog: {self.state_file}") from exc
             return self._empty_state()
         defaults = self._empty_state()
         for key, value in defaults.items():
@@ -126,10 +133,36 @@ class WorkspaceManager:
             data["shared_roots"] = {}
         return data
 
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        """Read-modify-write under one lock shared by *all* PAH processes.
+
+        A process-local RLock cannot protect a catalog loaded by another PAH
+        host.  Always reload inside the advisory file lock before applying an
+        update; the active workspace selection stays local when persistence
+        is disabled for this host instance.
+        """
+        with self._lock:
+            with interprocess_lock(self._catalog_lock_file):
+                self._state = self._load(strict=True)
+                yield
+
     def _save(self) -> None:
-        tmp = self.state_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
-        tmp.replace(self.state_file)
+        """Atomically commit state while the caller holds _transaction()."""
+        payload = json.dumps(self._state, indent=2).encode("utf-8")
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                prefix=".state-", suffix=".tmp", dir=self.state_dir, delete=False
+            ) as handle:
+                temp_path = Path(handle.name)
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, self.state_file)
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
 
     def _workspace(self, workspace_id: str | None = None) -> dict[str, Any] | None:
         selected = workspace_id or self._active_workspace_id
@@ -189,7 +222,7 @@ class WorkspaceManager:
         normalized = tuple(dict.fromkeys(
             _clean_module_id(value) for value in (module_ids or ())
         ))
-        with self._lock:
+        with self._transaction():
             self._available_module_ids = normalized
             changed = False
             for workspace in self._state.get("research_workspaces", {}).values():
@@ -220,7 +253,7 @@ class WorkspaceManager:
         normalized = list(dict.fromkeys(
             _clean_module_id(value) for value in (module_ids or ())
         ))
-        with self._lock:
+        with self._transaction():
             workspace = self._require_workspace(workspace_id)
             workspace["enabled_modules"] = normalized
             self._save()
@@ -229,12 +262,16 @@ class WorkspaceManager:
     def set_module_enabled(self, workspace_id: str, module_id: str, enabled: bool) -> dict[str, Any]:
         workspace_id = _clean_id(workspace_id, field_name="workspace id")
         module_id = _clean_module_id(module_id)
-        current = list(self.enabled_modules(workspace_id))
-        if enabled and module_id not in current:
-            current.append(module_id)
-        elif not enabled:
-            current = [value for value in current if value != module_id]
-        return self.set_enabled_modules(workspace_id, current)
+        with self._transaction():
+            workspace = self._require_workspace(workspace_id)
+            current = list(self.enabled_modules(workspace_id))
+            if enabled and module_id not in current:
+                current.append(module_id)
+            elif not enabled:
+                current = [value for value in current if value != module_id]
+            workspace["enabled_modules"] = current
+            self._save()
+        return self.workspace_snapshot(workspace_id)
 
     def _resolved_resource(self, role: str, workspace_id: str | None = None) -> dict[str, Any] | None:
         role = str(role or "").strip().lower()
@@ -337,7 +374,7 @@ class WorkspaceManager:
             if candidate.exists() and not candidate.is_dir():
                 raise WorkspaceError(f"Registered root is not a directory: {candidate}")
             local_path = str(candidate.resolve())
-        with self._lock:
+        with self._transaction():
             roots = self._state.setdefault("shared_roots", {})
             existing = dict(roots.get(root_id) or {})
             roots[root_id] = {
@@ -392,7 +429,7 @@ class WorkspaceManager:
         if resources is not None and not isinstance(resources, dict):
             raise WorkspaceError("Workspace resources must be a mapping by resource role.")
 
-        with self._lock:
+        with self._transaction():
             selected_id = _clean_id(workspace_id, field_name="workspace id") if workspace_id else self._unique_workspace_id(display_name)
             if selected_id in self._state.get("research_workspaces", {}):
                 raise WorkspaceError(f"Research workspace already exists: {selected_id}")
@@ -436,7 +473,7 @@ class WorkspaceManager:
 
     def activate(self, workspace_id: str) -> dict[str, Any]:
         workspace_id = _clean_id(workspace_id, field_name="workspace id")
-        with self._lock:
+        with self._transaction():
             self._require_workspace(workspace_id)
             repository = self.resolve_resource("repository", workspace_id=workspace_id)
             self._select_active_workspace(workspace_id, repository)
@@ -461,7 +498,7 @@ class WorkspaceManager:
             raise WorkspaceError(f"Unknown workspace resource role: {role}")
         root_id = _clean_id(root_id, field_name="root id")
         relative = _relative_resource_path(relative_path)
-        with self._lock:
+        with self._transaction():
             workspace = self._require_workspace(workspace_id)
             if root_id not in self._state.get("shared_roots", {}):
                 raise WorkspaceError(f"Unknown registered root: {root_id}")
@@ -482,7 +519,7 @@ class WorkspaceManager:
         role = str(role or "").strip().lower()
         if role not in RESOURCE_ROLES:
             raise WorkspaceError(f"Unknown workspace resource role: {role}")
-        with self._lock:
+        with self._transaction():
             workspace = self._require_workspace(workspace_id)
             workspace.setdefault("resources", {}).pop(role, None)
             if workspace_id == self.active_workspace_id and role == "repository":
@@ -503,7 +540,7 @@ class WorkspaceManager:
             raise WorkspaceError(f"Workspace does not exist: {candidate}")
         if not candidate.is_dir():
             raise WorkspaceError(f"Workspace is not a directory: {candidate}")
-        with self._lock:
+        with self._transaction():
             matched_id = None
             for workspace_id in self._state.get("research_workspaces", {}):
                 repository = self.resolve_resource("repository", workspace_id=workspace_id)
@@ -555,7 +592,7 @@ class WorkspaceManager:
 
     def set_environment(self, path: str | Path | None) -> str | None:
         root = self.require_root()
-        with self._lock:
+        with self._transaction():
             envs = self._state.setdefault("environments", {})
             if path is None:
                 envs.pop(str(root), None)
@@ -591,6 +628,8 @@ class WorkspaceManager:
         }
 
     def catalog_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            self._state = self._load(strict=True)
         workspaces = [
             self.workspace_snapshot(workspace_id)
             for workspace_id in sorted(self._state.get("research_workspaces", {}))
@@ -609,6 +648,8 @@ class WorkspaceManager:
         }
 
     def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            self._state = self._load(strict=True)
         root = self.root
         return {
             "root": str(root) if root else None,

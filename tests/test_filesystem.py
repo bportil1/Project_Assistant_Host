@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from pah.core.filesystem import FileSystemError, FileSystemService
+from pah.core.filesystem import FileConflictError, FileSystemError, FileSystemService
 
 
 def test_file_crud_and_path_safety(tmp_path: Path):
@@ -62,3 +62,35 @@ def test_list_directory_supports_nested_paths_and_hides_git(tmp_path: Path):
 
     items = FileSystemService(tmp_path).list_directory("src")
     assert [item["name"] for item in items] == ["a.py"]
+
+
+def test_editor_save_rejects_stale_revision_without_clobbering_external_change(tmp_path: Path):
+    fs = FileSystemService(tmp_path)
+    path = tmp_path / "paper.md"
+    path.write_bytes(b"original\r\n")
+    original = fs.read_text("paper.md")
+    path.write_text("from second instance\n", encoding="utf-8")
+
+    with pytest.raises(FileConflictError, match="changed on disk"):
+        fs.write_text("paper.md", "first instance edit\n", expected_sha256=original["source_sha256"])
+    assert path.read_text() == "from second instance\n"
+
+
+def test_editor_save_returns_new_revision_for_successive_saves(tmp_path: Path):
+    fs = FileSystemService(tmp_path)
+    (tmp_path / "notes.txt").write_text("one\n")
+    first = fs.read_text("notes.txt")
+    second = fs.write_text("notes.txt", "two\n", expected_sha256=first["source_sha256"])
+    third = fs.write_text("notes.txt", "three\n", expected_sha256=second["source_sha256"])
+    assert third["source_sha256"] == fs.read_text("notes.txt")["source_sha256"]
+    assert not list(tmp_path.glob(".notes.txt.pah-*.tmp"))
+
+
+def test_write_conflict_is_consistent_across_independent_services(tmp_path: Path):
+    (tmp_path / "model.json").write_text('{"version":1}')
+    a, b = FileSystemService(tmp_path), FileSystemService(tmp_path)
+    a_version = a.read_text("model.json")["source_sha256"]
+    b_version = b.read_text("model.json")["source_sha256"]
+    a.write_text("model.json", '{"version":2}', expected_sha256=a_version)
+    with pytest.raises(FileConflictError):
+        b.write_text("model.json", '{"version":3}', expected_sha256=b_version)

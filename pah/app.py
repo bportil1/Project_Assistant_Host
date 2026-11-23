@@ -11,7 +11,7 @@ from threading import Lock
 from flask import Flask, Response, abort, jsonify, render_template, request, send_file
 
 from .core.environments import EnvironmentError, EnvironmentManager
-from .core.filesystem import FileSystemError, FileSystemService
+from .core.filesystem import FileConflictError, FileSystemError, FileSystemService
 from .core.git import GitError, LocalGitService
 from .core.terminal import TerminalError, TerminalManager
 from .core.workspace import WorkspaceError, WorkspaceManager
@@ -693,6 +693,10 @@ def create_app(
 
     def error_response(exc: Exception, status: int = 400):
         return jsonify({"ok": False, "error": str(exc)}), status
+
+    @app.errorhandler(FileConflictError)
+    def handle_file_conflict(exc):
+        return error_response(exc, 409)
 
     @app.errorhandler(WorkspaceError)
     @app.errorhandler(FileSystemError)
@@ -1773,7 +1777,13 @@ def create_app(
     def save_file():
         payload = request.get_json(force=True)
         relative = payload.get("path", "")
-        result = fs().write_text(relative, payload.get("content", ""))
+        if not isinstance(payload.get("source_sha256"), str):
+            return error_response(
+                FileSystemError("An expected source_sha256 is required to save an editor file."), 428
+            )
+        result = fs().write_text(
+            relative, payload.get("content", ""), expected_sha256=payload["source_sha256"]
+        )
         if str(relative).lower().endswith(".py"):
             analyzer.mark_stale()
         return jsonify({"ok": True, **result, "analyzer_stale": analyzer.status()["stale"]})

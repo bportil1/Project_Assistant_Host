@@ -95,3 +95,50 @@ def test_workspace_resource_subpath_cannot_escape_registered_root(tmp_path: Path
 
     with pytest.raises(WorkspaceError, match="stay relative"):
         manager.set_resource("safe", "documents", root_id="base", relative_path="../escape")
+
+
+def test_separate_managers_do_not_lose_catalog_updates(tmp_path: Path):
+    # Both hosts started before either created a workspace (the old failure).
+    state = tmp_path / "state"
+    first = WorkspaceManager(state, persist_active_workspace=False)
+    second = WorkspaceManager(state, persist_active_workspace=False)
+
+    first.create_workspace("A", workspace_id="a", activate=True)
+    second.create_workspace("B", workspace_id="b", activate=True)
+
+    stored = WorkspaceManager(state).catalog_snapshot()
+    assert {workspace["id"] for workspace in stored["workspaces"]} == {"a", "b"}
+    assert first.active_workspace_id == "a"
+    assert second.active_workspace_id == "b"
+    # A catalog refresh on one host must not replace its own active selection.
+    assert {workspace["id"] for workspace in first.catalog_snapshot()["workspaces"]} == {"a", "b"}
+    assert first.active_workspace_id == "a"
+
+
+def test_separate_managers_preserve_other_hosts_root_and_module_changes(tmp_path: Path):
+    state = tmp_path / "state"
+    first = WorkspaceManager(state)
+    second = WorkspaceManager(state)
+    first.configure_available_modules(["ml_lab", "pypique"])
+    first.create_workspace("A", workspace_id="a")
+    second.create_workspace("B", workspace_id="b")
+    first.register_root("papers", path=tmp_path)
+    second.set_enabled_modules("a", ["ml_lab"])
+    first.set_resource("a", "documents", root_id="papers")
+    # This mutation uses a fresh in-transaction module profile, not a stale snapshot.
+    second.set_module_enabled("a", "pypique", True)
+    loaded = WorkspaceManager(state)
+    assert loaded.enabled_modules("a") == ("ml_lab", "pypique")
+    assert loaded.resolve_resource("documents", workspace_id="a") == tmp_path
+    assert {workspace["id"] for workspace in loaded.catalog_snapshot()["workspaces"]} == {"a", "b"}
+
+
+def test_bad_existing_catalog_is_not_silently_overwritten(tmp_path: Path):
+    state = tmp_path / "state"
+    state.mkdir()
+    catalog = state / "state.json"
+    catalog.write_text("{incomplete-json")
+    manager = WorkspaceManager(state)
+    with pytest.raises(WorkspaceError, match="unreadable workspace catalog"):
+        manager.create_workspace("Must not overwrite")
+    assert catalog.read_text() == "{incomplete-json"
