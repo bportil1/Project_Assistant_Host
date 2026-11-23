@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 from threading import RLock
@@ -137,6 +138,8 @@ class ModuleProcessLauncher:
             identity = _valid_module_instance_id(
                 module_instance_id or f"{self.runtime.instance_id}:{module}:{uuid4().hex}"
             )
+            if identity == self.runtime._default_module_instance_id(module):
+                raise ModuleProcessError("The stable host:module identity is reserved for legacy adapters")
         except InstanceRuntimeError as exc:
             raise ModuleProcessError(str(exc)) from exc
         argv = self._argv(command)
@@ -206,6 +209,7 @@ class ModuleProcessLauncher:
                         close_fds=True,
                     )
             except OSError as exc:
+                shutil.rmtree(run_dir, ignore_errors=True)
                 raise ModuleProcessError(f"Could not launch module {module!r}: {exc}") from exc
             try:
                 record = self.runtime.register_module_runtime(

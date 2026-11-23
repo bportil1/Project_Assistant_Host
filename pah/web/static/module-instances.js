@@ -50,10 +50,15 @@
     return button;
   }
 
+  function syncLaunchDisabled() {
+    const selected = modules.find(item => item.module_id === moduleSelect.value);
+    launchButton.disabled = loading || !selected?.enabled || !selected?.multi_instance_launchable;
+  }
+
   function updateCapability() {
     const selected = modules.find(item => item.module_id === moduleSelect.value);
     const supported = Boolean(selected?.multi_instance_launchable);
-    launchButton.disabled = !supported || loading;
+    syncLaunchDisabled();
     if (!selected) info('Select a module.');
     else if (!selected.enabled) info('This module is disabled for the selected workspace. Running siblings remain unaffected.');
     else if (!supported) info('No independent process launch contract. Legacy module launch remains available outside this manager.');
@@ -118,7 +123,7 @@
     loading = true;
     try { await refresh(); }
     catch (error) { updateCapability(); info(error.message, true); }
-    finally { loading = false; launchButton.disabled = !modules.find(item => item.module_id === moduleSelect.value)?.multi_instance_launchable; }
+    finally { loading = false; syncLaunchDisabled(); }
   }
 
   $('moduleInstancesToggle')?.addEventListener('click', () => {
@@ -143,6 +148,6 @@
       await refresh();
       info(`Started instance ${result.instance.module_instance_id}. Use Open window if the module exposes a browser UI.`);
     } catch (error) { info(error.message, true); }
-    finally { loading = false; launchButton.disabled = !modules.find(item => item.module_id === moduleSelect.value)?.multi_instance_launchable; }
+    finally { loading = false; syncLaunchDisabled(); }
   });
 })();

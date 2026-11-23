@@ -76,8 +76,8 @@ def _json_safe(value: Any) -> Any:
 
 def _valid_instance_id(value: str) -> str:
     raw = str(value or "").strip()
-    if not raw:
-        raise InstanceRuntimeError("instance_id must not be empty")
+    if not raw or raw in {".", ".."}:
+        raise InstanceRuntimeError("instance_id must be a nonempty runtime directory name")
     if any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_." for ch in raw):
         raise InstanceRuntimeError("instance_id contains unsupported characters")
     return raw
@@ -243,6 +243,13 @@ class InstanceRuntime:
             if legacy else _valid_module_instance_id(module_instance_id)
         )
         with self._lock:
+            # The stable host:module identity is reserved for old type-level
+            # adapters. A real child must never claim that slot, because a
+            # later legacy launch would overwrite its process record.
+            if not legacy and identity == self._default_module_instance_id(module_id):
+                raise InstanceRuntimeError(
+                    f"Module instance {identity!r} is reserved for the legacy module slot"
+                )
             if identity in self._module_processes and not legacy:
                 raise InstanceRuntimeError(f"Module instance {identity!r} is already registered")
             if identity in self._module_processes and self._module_processes[identity]["module_id"] != module_id:
@@ -291,20 +298,18 @@ class InstanceRuntime:
             }
 
     def module_processes(self) -> dict[str, dict[str, Any]]:
-        """Legacy one-record-per-module view for existing host consumers.
+        """Legacy compatibility view: only stable ``host:module`` slots.
 
-        Parallel registrations remain available via ``module_instances`` and
-        the snapshot's ``module_instances`` field. Prefer the stable legacy
-        registration if present; the legacy map is intentionally not used for
-        multi-instance routing.
+        Never choose an arbitrary modern child for an older module-type reader.
+        All parallel children, even when only one is running, are exclusively
+        visible through ``module_instances()`` and snapshot ``module_instances``.
         """
         with self._lock:
-            by_module: dict[str, dict[str, Any]] = {}
-            for record in self._module_processes.values():
-                module_id = record["module_id"]
-                if module_id not in by_module or record["module_instance_id"] == self._default_module_instance_id(module_id):
-                    by_module[module_id] = deepcopy(record)
-            return by_module
+            return {
+                record["module_id"]: deepcopy(record)
+                for identity, record in self._module_processes.items()
+                if identity == self._default_module_instance_id(record["module_id"])
+            }
 
     def _persist_processes(self) -> None:
         payload = {
