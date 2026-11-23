@@ -307,6 +307,24 @@ class RuntimeRegistry:
         }
 
 
+def register_host_surface_fallbacks(registry: "RuntimeRegistry", full_tools: Any) -> tuple[str, ...]:
+    """Register hosted compatibility adapters only when no module adapter exists.
+
+    Installed submodules' `pah.runtimes` entry points are authoritative. The
+    iframe host is a temporary fallback, not a reason to replace them.
+    """
+    added: list[str] = []
+    for module_id, surface in (
+        ("code_analyzer", "analysis"),
+        ("tech_documents", "documents"),
+        ("reference_manager", "references"),
+    ):
+        if registry.get(module_id) is None:
+            registry.register(HostSurfaceRuntimeAdapter(module_id, surface, full_tools))
+            added.append(module_id)
+    return tuple(added)
+
+
 class HostSurfaceRuntimeAdapter:
     """Bridge a PAH-owned full-tool surface into the generic runtime contract."""
 

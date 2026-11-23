@@ -45,6 +45,7 @@ from .labs.runtime_artifact_refresh import reconcile_module_artifacts
 from .module_catalog import MODULE_CATEGORIES, WORKSPACE_PRESETS, default_module_registry
 from .runtime import (
     HostSurfaceRuntimeAdapter, RuntimeRegistry, RuntimeRegistryError,
+    register_host_surface_fallbacks,
     ModuleInstanceNotFound, ModuleInstanceConflict,
 )
 from .integrations import (
@@ -140,12 +141,9 @@ def create_app(
     )
     runtime_registry = RuntimeRegistry(instance_runtime=instance_runtime)
     runtime_registry.discover_entry_points()
-    # PAH-owned mature tools are bridged into the same runtime contract used by
-    # independently installed modules. Host adapters intentionally replace any
-    # duplicate runtime entry point for these host-owned surfaces.
-    runtime_registry.register(HostSurfaceRuntimeAdapter("code_analyzer", "analysis", full_tools), replace=True)
-    runtime_registry.register(HostSurfaceRuntimeAdapter("tech_documents", "documents", full_tools), replace=True)
-    runtime_registry.register(HostSurfaceRuntimeAdapter("reference_manager", "references", full_tools), replace=True)
+    # Keep independently installed module runtimes authoritative. The old
+    # in-host iframe surfaces are compatibility fallbacks only, not overrides.
+    register_host_surface_fallbacks(runtime_registry, full_tools)
     lab_registry = default_lab_registry()
     lab_artifacts = ArtifactInventory(state_path=instance_runtime.runtime_dir / "artifact-registry.json")
     # P5-05: disposable, host-owned SQLite lookup over JSON artifact descriptors.
@@ -364,7 +362,12 @@ def create_app(
             if workspaces.is_module_enabled(module_id):
                 try:
                     info = full_tools.start(surface)
-                    if info.get("available"):
+                    # An independent adapter is authoritative. Do not
+                    # overwrite its instance registration with compatibility
+                    # iframe metadata merely because the iframe is available.
+                    if info.get("available") and isinstance(
+                        runtime_registry.get(module_id), HostSurfaceRuntimeAdapter
+                    ):
                         instance_runtime.register_module_runtime(
                             module_id,
                             metadata={"presentation": "host_surface", "surface": surface, "url": info.get("url")},
@@ -373,8 +376,10 @@ def create_app(
                     # FullToolManager records startup errors in its own status.
                     pass
             else:
-                full_tools.stop(surface)
-                instance_runtime.unregister_module_runtime(module_id)
+                # Workspace enablement controls new launches, not the lifetime
+                # of an already running module from a different workspace.
+                # Never kill or deregister a sibling solely on profile change.
+                continue
 
     def full_tools_status_with_profile() -> dict:
         status = full_tools.status()
@@ -386,12 +391,18 @@ def create_app(
         }.items():
             if not workspaces.is_module_enabled(module_id):
                 info = tools.setdefault(surface, {})
-                info.update({
-                    "available": False,
-                    "url": None,
-                    "error": "Disabled for the active research workspace.",
-                    "enabled": False,
-                })
+                info["enabled"] = False
+                info["launchable"] = False
+                if info.get("available"):
+                    # Preserve the URL for an already-running module; hiding
+                    # it here makes it appear lost after a workspace switch.
+                    info["error"] = None
+                else:
+                    info.update({
+                        "available": False,
+                        "url": None,
+                        "error": "Disabled for the active research workspace.",
+                    })
             else:
                 tools.setdefault(surface, {})["enabled"] = True
         research = tools.setdefault("research_search", {})
@@ -491,7 +502,12 @@ def create_app(
         ))
 
     def sync_hosted_code_analyzer(engine, event: str) -> None:
-        """Reconcile analysis performed inside the hosted Code Analyzer UI."""
+        """Reconcile analysis only when the source host workspace still matches."""
+        # A hosted analyzer can remain running while PAH selects another
+        # workspace. Its callback must never overwrite or invalidate the
+        # current workspace's Code Analyzer state or artifacts.
+        if not full_tools.analysis_bound_to(workspaces.root):
+            return
         try:
             analyzer.synchronize_from_engine(engine)
         except AnalyzerIntegrationError:

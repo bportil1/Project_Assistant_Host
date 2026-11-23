@@ -579,5 +579,7 @@ def test_pah099_documents_use_document_resource_not_repository_rebinding():
     assert "full_tools.bind_document_root(document_root)" in app
     assert "documents.bind(workspaces.require_root())" not in app
     assert "def bind_document_root" in full_tools
-    assert "manager._document_root" in full_tools
-    assert 'tools["documents"]["bound_workspace"] = str(self._document_root)' in full_tools
+    assert 'tools["documents"]["suggested_document_root"] = str(self._document_root)' in full_tools
+    assert 'tools["documents"]["bound_workspace"] = None' in full_tools
+    assert "WorkspaceDocumentEngine" not in full_tools
+    assert "web_app.engine =" not in full_tools

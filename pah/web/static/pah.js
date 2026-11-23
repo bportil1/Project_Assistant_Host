@@ -874,8 +874,9 @@
       const status = $(toolStatusId(tool));
       if (status) {
         if (info.available) {
-          if (tool === 'analysis' && info.bound_workspace) status.textContent = info.bound_workspace;
-          else if (tool === 'documents' && info.bound_workspace) status.textContent = info.bound_workspace;
+          if (tool === 'analysis' && info.bound_workspace) {
+            status.textContent = info.bound_workspace + (info.selection_differs ? ' · different PAH workspace selected' : '');
+          } else if (tool === 'documents') status.textContent = 'Workbench projects (independent of PAH workspace)';
           else if (tool === 'references' && info.library_root) status.textContent = info.library_root;
           else status.textContent = 'Ready';
           if (isSurfaceDetached(tool)) status.textContent += ' · detached';
