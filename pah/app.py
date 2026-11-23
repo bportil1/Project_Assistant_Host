@@ -304,6 +304,9 @@ def create_app(
                 "installed": installed,
                 "enabled": module_id in enabled_ids,
                 "running": bool(runtime.get("running", False)),
+                "multi_instance_launchable": bool(
+                    installed and module_id in enabled_ids and runtime_registry.can_launch_instance(module_id)
+                ),
                 "runtime": runtime,
             })
             modules.append(payload)
@@ -854,6 +857,24 @@ def create_app(
                 for identity in runtime_registry.instances()
             ],
         })
+
+    @app.post("/api/orchestration/modules/<module_id>/instances")
+    def orchestration_launch_new_instance(module_id: str):
+        # Deliberately no command, environment, port, or filesystem arguments
+        # from HTTP. Only an installed trusted module adapter can supply them.
+        if request.get_json(silent=True) not in (None, {}):
+            return jsonify({"ok": False, "error": "Instance launch accepts no client-supplied parameters"}), 400
+        try:
+            require_enabled_module(module_id)
+            record = runtime_registry.launch_instance(
+                module_id, context=orchestration_context().for_module(module_id)
+            )
+        except RuntimeRegistryError as exc:
+            return error_response(exc, 503)
+        return jsonify({
+            "ok": True,
+            "instance": runtime_registry.route_instance(record["module_instance_id"]),
+        }), 201
 
     @app.get("/api/orchestration/instances/<module_instance_id>")
     def orchestration_module_instance(module_instance_id: str):

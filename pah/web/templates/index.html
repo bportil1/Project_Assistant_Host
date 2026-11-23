@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='uca-layout.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='pah-tools.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='pah-labs.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='module-instances.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='source-evidence.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='job-monitor.css') }}">
 </head>
@@ -93,6 +94,7 @@
       <select id="recentWorkspaces" title="Recent repository roots"><option value="">Recent…</option></select>
     </div>
     <div class="top-actions">
+      <button id="moduleInstancesToggle" type="button" aria-controls="moduleInstancesDialog" title="Manage independently running module instances">Instances</button>
       <button id="jobMonitorToggle" type="button" aria-controls="jobMonitorDrawer" aria-expanded="false" title="Open read-only Job Monitor">Jobs</button>
       <button id="runButton" disabled title="Run active Python file">▶ Run</button>
       <button id="saveButton" disabled title="Save (Ctrl+S)">Save</button>
@@ -826,6 +828,22 @@
 <script src="{{ url_for('static', filename='vendor/ace/ace.js') }}"></script>
 <script src="{{ url_for('static', filename='vendor/xterm/xterm.js') }}"></script>
 <script src="{{ url_for('static', filename='vendor/xterm/addon-fit.js') }}"></script>
+<!-- MI-06: generic module process manager; module internals are not hosted here. -->
+<dialog id="moduleInstancesDialog" class="module-instances-dialog" aria-labelledby="moduleInstancesTitle">
+  <header>
+    <h2 id="moduleInstancesTitle">Module instances</h2>
+    <button id="moduleInstancesClose" type="button" aria-label="Close instance manager">×</button>
+  </header>
+  <p>Start independent module processes when their adapters support it. Legacy hosted modules remain single-instance.</p>
+  <div class="module-instances-actions">
+    <label for="moduleInstancesSelect">Module</label>
+    <select id="moduleInstancesSelect"></select>
+    <button id="moduleInstancesLaunch" type="button" disabled>New instance</button>
+    <button id="moduleInstancesRefresh" type="button">Refresh</button>
+  </div>
+  <p id="moduleInstancesCapability" role="status" aria-live="polite"></p>
+  <div id="moduleInstancesList" class="module-instances-list" aria-live="polite"></div>
+</dialog>
 <!-- JM-2 is a fully removable overlay, available in every PAH mode. -->
 <aside id="jobMonitorDrawer" class="job-monitor" aria-label="Job Monitor" hidden>
   <div id="jobMonitorResize" class="job-monitor-resize" role="separator" aria-orientation="vertical" aria-label="Resize job monitor" tabindex="0"></div>
@@ -856,6 +874,7 @@
   </section>
 </aside>
 <script src="{{ url_for('static', filename='pah.js') }}"></script>
+<script src="{{ url_for('static', filename='module-instances.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='uca-layout.mjs') }}"></script>
 <script type="module" src="{{ url_for('static', filename='uca-pypique-findings.mjs') }}"></script>
 <script type="module" src="{{ url_for('static', filename='uca-analyzer.mjs') }}"></script>

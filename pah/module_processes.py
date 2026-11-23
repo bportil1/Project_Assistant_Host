@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 from threading import RLock
@@ -118,6 +119,7 @@ class ModuleProcessLauncher:
         cwd: str | Path | None = None,
         env: Mapping[str, str] | None = None,
         requested_port: int | None = 0,
+        ui_path: str | None = None,
         workspace_id: str | None = None,
         host_project_id: str | None = None,
     ) -> dict[str, Any]:
@@ -149,6 +151,11 @@ class ModuleProcessLauncher:
             if identity in self._owned or identity in self.runtime.module_instances():
                 raise ModuleProcessError(f"Module instance {identity!r} already exists")
             port = self._select_port(requested_port)
+            if ui_path is not None:
+                if not isinstance(ui_path, str) or not re.fullmatch(r"/[A-Za-z0-9/_\-.]*", ui_path):
+                    raise ModuleProcessError("ui_path must be a local absolute path without URL syntax")
+                if ui_path.startswith("//") or port is None:
+                    raise ModuleProcessError("ui_path requires an allocated port and a local path")
             # UUID-backed path never uses a module name or caller-supplied ID as
             # a path component (including dots, colons, or traversal sequences).
             run_dir = self.runtime.modules_dir / uuid4().hex
@@ -212,6 +219,13 @@ class ModuleProcessLauncher:
                         "working_dir": str(work_dir),
                         "port": port,
                         "host": self.runtime.host,
+                        # Only advertise a URL when the trusted adapter explicitly
+                        # declares a browser entry point. Headless modules get none.
+                        "url": (
+                            f"http://127.0.0.1:{port}{ui_path}"
+                            if ui_path is not None and self.runtime.host in {"127.0.0.1", "localhost"}
+                            else None
+                        ),
                         "workspace_id": workspace_id,
                         "host_project_id": host_project_id,
                         "lifecycle": "spawned",

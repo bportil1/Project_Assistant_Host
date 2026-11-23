@@ -1,0 +1,16 @@
+/* MI-06: host-owned process manager. Uses PAH variables, not module CSS. */
+.module-instances-dialog { width: min(880px, 94vw); max-height: 84vh; overflow: auto; border: 1px solid #bccbd2; border-radius: 10px; padding: 22px; color: var(--pah-text, #233540); background: var(--pah-surface, #fff); }
+.module-instances-dialog::backdrop { background: rgba(15, 30, 42, .55); }
+.module-instances-dialog header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.module-instances-dialog header h2 { margin: 0; font-size: 21px; }
+.module-instances-dialog header button { font-size: 23px; }
+.module-instances-dialog > p { color: var(--pah-muted, #586874); }
+.module-instances-actions { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
+.module-instances-actions select { min-width: 210px; max-width: 100%; }
+.module-instances-list { display: grid; gap: 12px; margin-top: 12px; }
+.module-instances-entry { border: 1px solid #ced8de; border-radius: 8px; padding: 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; }
+.module-instances-entry strong, .module-instances-entry small { display: block; overflow-wrap: anywhere; }
+.module-instances-entry small { color: var(--pah-muted, #586874); margin-top: 4px; }
+.module-instances-entry .actions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.module-instances-entry button[disabled] { opacity: .5; }
+@media (max-width: 640px) { .module-instances-entry { grid-template-columns: 1fr; } }

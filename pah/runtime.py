@@ -129,6 +129,40 @@ class RuntimeRegistry:
             )
         return launch
 
+    def can_launch_instance(self, module_id: str) -> bool:
+        """Does a trusted module adapter declare its own independent process spec?"""
+        adapter = self.get(module_id)
+        if adapter is None:
+            return False
+        method = adapter.get("process_launch_spec") if isinstance(adapter, Mapping) else getattr(adapter, "process_launch_spec", None)
+        return callable(method) and self.process_launcher is not None
+
+    def launch_instance(self, module_id: str, *, context: ModuleContext) -> dict[str, Any]:
+        """Launch via a module-owned recipe; browser callers never provide argv/env.
+
+        The module owns its project/data semantics. The host only creates a new
+        process, assigns runtime resources, and captures the original context.
+        """
+        if not self.can_launch_instance(module_id):
+            raise RuntimeRegistryError(
+                f"{module_id!r} has no independent process launch contract; "
+                "its legacy launch still uses the module-type route"
+            )
+        adapter = self.get(module_id)
+        method = adapter.get("process_launch_spec") if isinstance(adapter, Mapping) else adapter.process_launch_spec
+        spec = method(context=context)
+        if not isinstance(spec, Mapping):
+            raise RuntimeRegistryError("process_launch_spec must return a mapping")
+        allowed = {"command", "cwd", "env", "requested_port", "ui_path"}
+        if set(spec) - allowed or "command" not in spec:
+            raise RuntimeRegistryError("process_launch_spec must contain command and only documented launch keys")
+        options = {key: spec[key] for key in allowed - {"command"} if key in spec}
+        from .module_processes import ModuleProcessError
+        try:
+            return self.launch_process(module_id, spec["command"], context=context, **options)
+        except (ModuleProcessError, TypeError, ValueError) as exc:
+            raise RuntimeRegistryError(f"Could not launch independent {module_id!r} instance: {exc}") from exc
+
     def launch_process(
         self, module_id: str, command, *, context: ModuleContext | None = None, **kwargs
     ) -> dict[str, Any]:
@@ -194,6 +228,7 @@ class RuntimeRegistry:
             "presentation": meta.get("presentation"),
             "host": meta.get("host"),
             "port": meta.get("port"),
+            "url": meta.get("url"),
             "runtime_dir": meta.get("runtime_dir"),
             "log_file": meta.get("log_file"),
             "managed_process": bool(managed),
