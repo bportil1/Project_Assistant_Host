@@ -43,7 +43,10 @@ from .labs.quality_impact import QualityImpactInspector, QualityImpactError, Sce
 from .labs.quality_impact_mi import MIContractError
 from .labs.runtime_artifact_refresh import reconcile_module_artifacts
 from .module_catalog import MODULE_CATEGORIES, WORKSPACE_PRESETS, default_module_registry
-from .runtime import HostSurfaceRuntimeAdapter, RuntimeRegistry, RuntimeRegistryError
+from .runtime import (
+    HostSurfaceRuntimeAdapter, RuntimeRegistry, RuntimeRegistryError,
+    ModuleInstanceNotFound, ModuleInstanceConflict,
+)
 from .integrations import (
     AnalysisDiagramBridgeError,
     AnalyzerIntegration,
@@ -754,6 +757,10 @@ def create_app(
     def check_orchestration_selection():
         # Opt-in optimistic concurrency: updated PAH clients attach the token
         # observed with their module profile. Older clients remain compatible.
+        # Instance-ID operations are bound to their original launched child,
+        # independent of the active workspace and its selection token.
+        if request.path.startswith("/api/orchestration/instances/"):
+            return None
         if request.path.startswith("/api/orchestration/") and request.method in {"POST", "PUT", "DELETE"}:
             selected_token = request.headers.get("X-PAH-Context-Token")
             if selected_token is not None:
@@ -820,6 +827,35 @@ def create_app(
     @app.get("/api/orchestration/runtimes")
     def orchestration_runtimes():
         return jsonify({"ok": True, **runtime_registry.snapshot(orchestration_context())})
+
+    @app.get("/api/orchestration/instances")
+    def orchestration_module_instances():
+        # Safe read-only routing directory. Never expose argv or env variables.
+        return jsonify({
+            "ok": True,
+            "instances": [
+                runtime_registry.route_instance(identity)
+                for identity in runtime_registry.instances()
+            ],
+        })
+
+    @app.get("/api/orchestration/instances/<module_instance_id>")
+    def orchestration_module_instance(module_instance_id: str):
+        try:
+            route = runtime_registry.route_instance(module_instance_id)
+        except ModuleInstanceNotFound as exc:
+            return error_response(exc, 404)
+        return jsonify({"ok": True, "instance": route})
+
+    @app.post("/api/orchestration/instances/<module_instance_id>/shutdown")
+    def orchestration_module_instance_shutdown(module_instance_id: str):
+        try:
+            runtime_registry.stop_process(module_instance_id)
+        except ModuleInstanceNotFound as exc:
+            return error_response(exc, 404)
+        except ModuleInstanceConflict as exc:
+            return error_response(exc, 409)
+        return jsonify({"ok": True, "module_instance_id": module_instance_id, "stopped": True})
 
     @app.get("/api/orchestration/modules/<module_id>/runtime")
     def orchestration_module_runtime(module_id: str):

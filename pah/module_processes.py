@@ -119,6 +119,7 @@ class ModuleProcessLauncher:
         env: Mapping[str, str] | None = None,
         requested_port: int | None = 0,
         workspace_id: str | None = None,
+        host_project_id: str | None = None,
     ) -> dict[str, Any]:
         """Start a fresh process; never reuse/rebind another running instance.
 
@@ -177,8 +178,13 @@ class ModuleProcessLauncher:
                 environment["PAH_MODULE_PORT"] = str(port)
             else:
                 environment.pop("PAH_MODULE_PORT", None)
+            # Do not inherit a stale binding from the parent PAH process.
+            environment.pop("PAH_WORKSPACE_ID", None)
+            environment.pop("PAH_HOST_PROJECT_ID", None)
             if workspace_id is not None:
                 environment["PAH_WORKSPACE_ID"] = str(workspace_id)
+            if host_project_id is not None:
+                environment["PAH_HOST_PROJECT_ID"] = str(host_project_id)
             # Do not log argv or environment: either may contain credentials.
             try:
                 with log_path.open("ab", buffering=0) as output:
@@ -207,6 +213,7 @@ class ModuleProcessLauncher:
                         "port": port,
                         "host": self.runtime.host,
                         "workspace_id": workspace_id,
+                        "host_project_id": host_project_id,
                         "lifecycle": "spawned",
                     },
                 )
@@ -223,6 +230,12 @@ class ModuleProcessLauncher:
                     raise
             self._owned[identity] = _OwnedProcess(module, proc, run_dir, port)
             return record
+
+    def owns(self, module_instance_id: str) -> bool:
+        """Whether this PAH process retains the live child process handle."""
+        with self._lock:
+            owned = self._owned.get(str(module_instance_id))
+            return owned is not None and owned.process.poll() is None
 
     def reap_exited(self) -> list[str]:
         """Remove registrations for exited children, preserving logs on disk."""

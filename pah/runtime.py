@@ -1,6 +1,8 @@
 """Generic module runtime registration and discovery for PAH."""
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
 from importlib import metadata
 from typing import Any, Iterable, Mapping
 
@@ -10,6 +12,14 @@ from pah.module_processes import ModuleProcessLauncher
 
 class RuntimeRegistryError(RuntimeError):
     pass
+
+
+class ModuleInstanceNotFound(RuntimeRegistryError):
+    """The requested opaque instance ID is not registered with this host."""
+
+
+class ModuleInstanceConflict(RuntimeRegistryError):
+    """An instance belongs to a different module or is not PAH-owned."""
 
 
 def _adapter_module_id(adapter: Any) -> str:
@@ -38,6 +48,8 @@ class RuntimeRegistry:
         self._discovery_errors: list[dict[str, str]] = []
         self._instance_runtime = instance_runtime
         self.process_launcher = ModuleProcessLauncher(instance_runtime) if instance_runtime is not None else None
+        # Captured at process launch: never replaced by the mutable host selection.
+        self._bound_process_contexts: dict[str, ModuleContext] = {}
         for adapter in adapters:
             self.register(adapter)
 
@@ -56,8 +68,22 @@ class RuntimeRegistry:
     def module_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._adapters))
 
+    def _require_legacy_scope(self, module_id: str, context: ModuleContext | None) -> None:
+        """Never route an explicitly selected child into a type-level adapter."""
+        if context is None or context.module_instance_id is None or self._instance_runtime is None:
+            return
+        legacy_id = self._instance_runtime._default_module_instance_id(module_id)
+        if context.module_instance_id != legacy_id:
+            raise ModuleInstanceConflict(
+                f"Instance {context.module_instance_id!r} requires instance-ID routing; "
+                "the legacy module-type adapter cannot operate on it"
+            )
+        if context.module_id is not None and context.module_id != module_id:
+            raise ModuleInstanceConflict("Module context and requested module type disagree")
+
     def status(self, module_id: str, context: ModuleContext | None = None) -> RuntimeStatus:
         module_id = str(module_id)
+        self._require_legacy_scope(module_id, context)
         adapter = self.get(module_id)
         if adapter is None:
             return RuntimeStatus(
@@ -72,6 +98,7 @@ class RuntimeRegistry:
 
     def launch(self, module_id: str, context: ModuleContext | None = None, *, detached: bool = False) -> RuntimeLaunch:
         module_id = str(module_id)
+        self._require_legacy_scope(module_id, context)
         adapter = self.get(module_id)
         if adapter is None:
             raise RuntimeRegistryError(f"No runtime adapter is registered for {module_id!r}")
@@ -102,21 +129,100 @@ class RuntimeRegistry:
             )
         return launch
 
-    def launch_process(self, module_id: str, command, **kwargs) -> dict[str, Any]:
-        """Launch an isolated local child from a trusted adapter-provided argv.
+    def launch_process(
+        self, module_id: str, command, *, context: ModuleContext | None = None, **kwargs
+    ) -> dict[str, Any]:
+        """Spawn a trusted argv with a fixed, opaque host-context binding.
 
-        This deliberately bypasses legacy ``launch()`` until instance routing
-        and the module launch contract are migrated in MI-04/MI-05.
+        The adapter owns what a workspace means. PAH only records its identity;
+        it must never substitute the currently selected workspace afterwards.
         """
         if self.process_launcher is None:
             raise RuntimeRegistryError("A host InstanceRuntime is required to launch child processes")
-        return self.process_launcher.launch(module_id, command, **kwargs)
+        module = str(module_id)
+        if context is not None:
+            if context.module_id is not None and context.module_id != module:
+                raise ModuleInstanceConflict("Module context and requested module type disagree")
+            if "workspace_id" in kwargs and kwargs["workspace_id"] != context.workspace_id:
+                raise ModuleInstanceConflict("Explicit workspace differs from the launch context")
+            if "host_project_id" in kwargs and kwargs["host_project_id"] != context.host_project_id:
+                raise ModuleInstanceConflict("Explicit host project differs from the launch context")
+            kwargs.setdefault("workspace_id", context.workspace_id)
+            kwargs.setdefault("host_project_id", context.host_project_id)
+            default_id = self._instance_runtime._default_module_instance_id(module)
+            selected = context.module_instance_id
+            if selected and selected != default_id:
+                if kwargs.get("module_instance_id", selected) != selected:
+                    raise ModuleInstanceConflict("Explicit module instance differs from the launch context")
+                kwargs.setdefault("module_instance_id", selected)
+        record = self.process_launcher.launch(module, command, **kwargs)
+        if context is not None:
+            identity = record["module_instance_id"]
+            bound = replace(deepcopy(context), module_id=module, module_instance_id=identity)
+            self._bound_process_contexts[identity] = bound
+        return record
+
+    def _reap_processes(self) -> None:
+        if self.process_launcher is not None:
+            for identity in self.process_launcher.reap_exited():
+                self._bound_process_contexts.pop(identity, None)
+
+    def route_instance(self, module_instance_id: str, *, module_id: str | None = None) -> dict[str, Any]:
+        """Resolve exactly one local instance; never fall back to module type."""
+        self._reap_processes()
+        if self._instance_runtime is None:
+            raise ModuleInstanceNotFound("This PAH host has no instance runtime")
+        identity = str(module_instance_id or "").strip()
+        record = self._instance_runtime.module_instances().get(identity)
+        if record is None:
+            raise ModuleInstanceNotFound(f"Module instance {identity!r} is not registered with this host")
+        if module_id is not None and record["module_id"] != str(module_id):
+            raise ModuleInstanceConflict(
+                f"Module instance {identity!r} belongs to {record['module_id']!r}, not {module_id!r}"
+            )
+        if record.get("owner_instance_id") != self._instance_runtime.instance_id:
+            raise ModuleInstanceConflict("Module instance belongs to a different PAH host")
+        meta = record.get("metadata") or {}
+        managed = self.process_launcher is not None and self.process_launcher.owns(identity)
+        return {
+            "module_id": record["module_id"],
+            "module_instance_id": identity,
+            "owner_instance_id": record["owner_instance_id"],
+            "pid": record.get("pid"),
+            "workspace_id": meta.get("workspace_id"),
+            "host_project_id": meta.get("host_project_id"),
+            "presentation": meta.get("presentation"),
+            "host": meta.get("host"),
+            "port": meta.get("port"),
+            "runtime_dir": meta.get("runtime_dir"),
+            "log_file": meta.get("log_file"),
+            "managed_process": bool(managed),
+            "lifecycle": "running" if managed else (meta.get("lifecycle") or "legacy"),
+        }
+
+    def instance_context(self, module_instance_id: str) -> ModuleContext:
+        """Return the original immutable launch context, not the current host context.
+
+        Available for processes launched with an explicit ModuleContext. We do
+        not invent a context for older type-level adapters or argv-only launches.
+        """
+        self.route_instance(module_instance_id)
+        identity = str(module_instance_id)
+        if identity not in self._bound_process_contexts:
+            raise ModuleInstanceConflict(f"Module instance {identity!r} has no captured launch context")
+        return deepcopy(self._bound_process_contexts[identity])
 
     def stop_process(self, module_instance_id: str, **kwargs) -> bool:
-        """Stop only the locally owned child with this exact instance ID."""
-        if self.process_launcher is None:
-            raise RuntimeRegistryError("A host InstanceRuntime is required to stop child processes")
-        return self.process_launcher.stop(module_instance_id, **kwargs)
+        """Stop exactly one owned child, never a legacy type-level adapter."""
+        route = self.route_instance(module_instance_id)
+        if not route["managed_process"]:
+            raise ModuleInstanceConflict(
+                "This instance is not a PAH-owned child; use the legacy module-type shutdown route"
+            )
+        assert self.process_launcher is not None
+        stopped = self.process_launcher.stop(module_instance_id, **kwargs)
+        self._bound_process_contexts.pop(str(module_instance_id), None)
+        return stopped
 
     def instances(self, module_id: str | None = None) -> dict[str, dict[str, Any]]:
         """Read-only live registration view; adapters remain keyed by type.
@@ -127,8 +233,7 @@ class RuntimeRegistry:
         """
         if self._instance_runtime is None:
             return {}
-        if self.process_launcher is not None:
-            self.process_launcher.reap_exited()
+        self._reap_processes()
         return self._instance_runtime.module_instances(module_id)
 
     def artifacts(self, module_id: str, context: ModuleContext | None = None) -> tuple[Any, ...] | None:
@@ -139,6 +244,7 @@ class RuntimeRegistry:
         Domain modules return dependency-free mappings; PAH coerces those mappings
         into its artifact contract at the host boundary.
         """
+        self._require_legacy_scope(str(module_id), context)
         adapter = self.get(str(module_id))
         if adapter is None:
             return None
@@ -153,6 +259,7 @@ class RuntimeRegistry:
         return tuple(result or ())
 
     def shutdown(self, module_id: str, context: ModuleContext | None = None) -> None:
+        self._require_legacy_scope(str(module_id), context)
         adapter = self.get(str(module_id))
         if adapter is None:
             return
@@ -173,6 +280,7 @@ class RuntimeRegistry:
             # Generic child instances are not owned by legacy adapter slots.
             if self.process_launcher is not None:
                 self.process_launcher.stop_all()
+            self._bound_process_contexts.clear()
 
     def discover_entry_points(self, *, group: str = "pah.runtimes") -> tuple[Any, ...]:
         discovered: list[Any] = []
