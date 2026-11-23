@@ -20,6 +20,8 @@ class HostWorkflowMonitor:
         self._artifacts: dict[tuple[str, str, str], tuple] = {}
         self._workflow: dict[tuple[str, str], tuple[str, str]] = {}
         self._tracked_processes: set[str] = set()
+        # Only sources attached by this opt-in bridge are eligible for auto-detach.
+        self._instance_readers: set[str] = set()
 
     def _safe(self, callback, *args, **kwargs):
         # Telemetry must never block an actual research run.
@@ -139,6 +141,42 @@ class HostWorkflowMonitor:
                 aggregator.attach(reader)
             except ValueError:
                 pass  # The same owner was already registered. Never replace silently.
+
+        # Optional generic adapter hook. A module can expose independent,
+        # producer-owned job readers by opaque instance ID. PAH validates each
+        # registration through its own runtime registry; it never guesses an
+        # instance from a PID or reads module-private storage.
+        available: set[str] = set()
+        for module_id in runtime_registry.module_ids():
+            adapter = runtime_registry.get(module_id)
+            candidate = adapter.get("instance_job_readers") if isinstance(adapter, Mapping) else getattr(adapter, "instance_job_readers", None)
+            if not callable(candidate):
+                continue
+            readers = self._safe(candidate)
+            if not isinstance(readers, Mapping):
+                continue
+            for identity, reader in readers.items():
+                if not isinstance(identity, str) or getattr(reader, "owner", None) != module_id:
+                    continue
+                try:
+                    runtime_registry.route_instance(identity, module_id=module_id)
+                except Exception:
+                    continue  # Missing, stopped, or wrong-module instances are never attached.
+                if not all(callable(getattr(reader, name, None)) for name in ("snapshot", "job", "outputs")):
+                    continue
+                available.add(identity)
+                if identity in self._instance_readers:
+                    continue
+                try:
+                    aggregator.attach(reader, module_instance_id=identity)
+                except (TypeError, ValueError):
+                    continue
+                self._instance_readers.add(identity)
+        # The bridge only removes readers it previously attached. Legacy and
+        # independently registered sources remain under their own owners.
+        for identity in self._instance_readers - available:
+            aggregator.detach(identity)
+        self._instance_readers.intersection_update(available)
 
 
 class _Trace:

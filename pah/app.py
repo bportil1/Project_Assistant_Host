@@ -959,6 +959,7 @@ def create_app(
                 host_project_id=selection.host_project_id,
                 workspace_id=selection.workspace_id,
                 producer_module=request.args.get("producer_module"),
+                module_instance_id=request.args.get("module_instance_id"),
                 kind=request.args.get("kind"),
                 schema_id=request.args.get("schema_id"),
                 capability=request.args.get("capability"),
@@ -984,6 +985,7 @@ def create_app(
             descriptor, created = publish_reference(
                 lab_artifacts, payload, active_context=selection,
                 known_modules={item.module_id for item in module_registry.all()},
+                module_instances=instance_runtime.module_instances(),
             )
         except (ValueError, TypeError) as exc:
             # Immutable duplicate IDs and scope errors are conflicts, not
@@ -1007,6 +1009,8 @@ def create_app(
                 lab_artifacts, artifact_id, state=payload.get("state"),
                 reason=payload.get("reason", ""), active_context=selection,
                 module_id=module_id,
+                module_instance_id=payload.get("module_instance_id"),
+                module_instances=instance_runtime.module_instances(),
             )
         except KeyError as exc:
             return error_response(exc, 404)
@@ -1307,7 +1311,7 @@ def create_app(
                                      workspaces.resolve_resource("repository"),
                                      context_selection().context_token,
                                      context_selection().revision)
-            expected = {"schema", "project_id", "repository_id", "producer", "source_sha256", "job_id", "artifact_id"}
+            expected = {"schema", "project_id", "repository_id", "producer", "source_sha256", "job_id", "artifact_id", "module_instance_id"}
             if set(payload) - expected or payload.get("schema") != "pah.uca-analysis-handoff@1":
                 raise HandoffError("Unsupported handoff schema or fields")
             handoff = AnalysisHandoff(project_id=payload.get("project_id"),
@@ -1315,7 +1319,8 @@ def create_app(
                                       producer=payload.get("producer"),
                                       source_sha256=payload.get("source_sha256"),
                                       job_id=payload.get("job_id"),
-                                      artifact_id=payload.get("artifact_id"))
+                                      artifact_id=payload.get("artifact_id"),
+                                      module_instance_id=payload.get("module_instance_id"))
             # Artifact identity must be issued by the producer and present in PAH's
             # existing registry. Never register or synthesize it here.
             artifact = lab_artifacts.get(handoff.artifact_id) if handoff.artifact_id else None

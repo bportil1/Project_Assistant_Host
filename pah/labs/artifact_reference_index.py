@@ -14,7 +14,7 @@ import sqlite3
 from .artifacts import ArtifactRegistry
 
 
-_INDEX_VERSION = 1
+_INDEX_VERSION = 2
 _MAX_LIMIT = 100
 
 
@@ -32,6 +32,7 @@ class ArtifactReferenceIndex:
                     workspace_id TEXT,
                     kind TEXT NOT NULL,
                     producer_module TEXT NOT NULL,
+                    module_instance_id TEXT,
                     schema_id TEXT,
                     schema_version TEXT,
                     validation_state TEXT NOT NULL,
@@ -58,6 +59,11 @@ class ArtifactReferenceIndex:
                     name TEXT PRIMARY KEY, value TEXT NOT NULL
                 );
             """)
+            # Existing v1 indexes are disposable; adding a nullable column is
+            # safe without touching the authoritative JSON descriptors.
+            names = {row[1] for row in db.execute("PRAGMA table_info(artifact_refs)")}
+            if "module_instance_id" not in names:
+                db.execute("ALTER TABLE artifact_refs ADD COLUMN module_instance_id TEXT")
 
     @contextmanager
     def _connect(self):
@@ -100,13 +106,13 @@ class ArtifactReferenceIndex:
                     reference_status = status.get("state")
                     reference_status = reference_status if reference_status in {"active", "stale", "missing", "withdrawn"} else "unverified"
                     db.execute("""INSERT INTO artifact_refs (
-                        artifact_id, project_id, workspace_id, kind, producer_module,
+                        artifact_id, project_id, workspace_id, kind, producer_module, module_instance_id,
                         schema_id, schema_version, validation_state, created_at,
                         is_alias, is_history, publication_revision, source_fingerprint,
                         reference_status, search_text
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                         artifact.artifact_id, artifact.project_id, workspace_id,
-                        artifact.kind, artifact.producer_module, artifact.schema_id,
+                        artifact.kind, artifact.producer_module, publication.get("module_instance_id"), artifact.schema_id,
                         artifact.schema_version, artifact.validation_state, artifact.created_at,
                         int(bool(artifact.metadata.get("registry_alias"))),
                         int(bool(artifact.metadata.get("history_snapshot"))),
@@ -129,6 +135,7 @@ class ArtifactReferenceIndex:
         host_project_id: str | None,
         workspace_id: str | None,
         producer_module: str | None = None,
+        module_instance_id: str | None = None,
         kind: str | None = None,
         schema_id: str | None = None,
         capability: str | None = None,
@@ -158,6 +165,9 @@ class ArtifactReferenceIndex:
                 if value is not None:
                     sql.append(f"{field} = ?")
                     params.append(str(value))
+            if module_instance_id is not None:
+                sql.append("module_instance_id = ?")
+                params.append(str(module_instance_id))
             if not include_aliases:
                 sql.append("is_alias = 0")
             if not include_history:
@@ -189,6 +199,7 @@ class ArtifactReferenceIndex:
                     "artifact_id": record.artifact_id,
                     "kind": record.kind,
                     "producer_module": record.producer_module,
+                    "module_instance_id": row["module_instance_id"],
                     "schema_id": record.schema_id,
                     "schema_version": record.schema_version,
                     "project_id": record.project_id,

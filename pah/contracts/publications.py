@@ -70,7 +70,7 @@ class ArtifactPublication:
             **fields,
         )
 
-    def validate_scope(self, active: Any) -> None:
+    def validate_scope(self, active: Any, *, module_instances: Mapping[str, Mapping[str, Any]] | None = None) -> None:
         """Use the P5-01 selected context, never the request's claimed project."""
         expected = {
             "instance_id": active.instance_id,
@@ -81,8 +81,10 @@ class ArtifactPublication:
         for key, value in expected.items():
             if getattr(self, key) != value or value is None:
                 raise ValueError("Artifact publication context is stale or belongs to another workspace/project")
-        if self.module_instance_id != f"{active.instance_id}:{self.module_id}":
-            raise ValueError("Artifact publication module instance does not match this host")
+        validate_producer_instance_scope(
+            self.module_instance_id, module_id=self.module_id, active=active,
+            module_instances=module_instances,
+        )
 
     def to_registry_artifact(self) -> ArtifactRef:
         from dataclasses import replace
@@ -101,3 +103,32 @@ class ArtifactPublication:
             "fingerprint_verified": False,
         }
         return replace(self.artifact, metadata=metadata)
+
+
+def validate_producer_instance_scope(
+    module_instance_id: str, *, module_id: str, active: Any,
+    module_instances: Mapping[str, Mapping[str, Any]] | None = None,
+) -> None:
+    """Check the PAH-owned launch record, not producer-private project state.
+
+    Preserve the legacy host:module slot. New independently launched modules
+    must be registered and pinned to this exact workspace/project/host. The
+    selected context remains mandatory: cross-workspace asynchronous producer
+    publishing requires a separate capability protocol (not added here).
+    """
+    if module_instance_id == f"{active.instance_id}:{module_id}":
+        return
+    record = (module_instances or {}).get(module_instance_id)
+    if not isinstance(record, Mapping):
+        raise ValueError("Artifact publication module instance is not registered with this host")
+    metadata = record.get("metadata")
+    if not isinstance(metadata, Mapping) or any((
+        record.get("module_id") != module_id,
+        record.get("module_instance_id") != module_instance_id,
+        record.get("owner_instance_id") != active.instance_id,
+        metadata.get("workspace_id") != active.workspace_id,
+        metadata.get("host_project_id") != active.host_project_id,
+        not active.workspace_id,
+        not active.host_project_id,
+    )):
+        raise ValueError("Artifact publication module instance does not match the active producer/project")

@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from pah.contracts import ArtifactPublication
+from pah.contracts.publications import validate_producer_instance_scope
 from .artifacts import ArtifactRegistry
 
 
@@ -15,6 +16,7 @@ def publish_reference(
     *,
     active_context: Any,
     known_modules: set[str] | frozenset[str],
+    module_instances: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Publish one immutable versioned descriptor; return (descriptor, created).
 
@@ -22,7 +24,7 @@ def publish_reference(
     file and cannot authorize artifact downloads or module DB access.
     """
     publication = ArtifactPublication.from_dict(payload)
-    publication.validate_scope(active_context)
+    publication.validate_scope(active_context, module_instances=module_instances)
     if publication.module_id not in known_modules:
         raise ValueError("Artifact producer is not a registered PAH module")
     artifact = publication.to_registry_artifact()
@@ -56,6 +58,8 @@ def observe_reference_status(
     reason: str,
     active_context: Any,
     module_id: str,
+    module_instance_id: str | None = None,
+    module_instances: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Record producer-observed availability without altering artifact identity.
 
@@ -72,15 +76,18 @@ def observe_reference_status(
     publication = artifact.metadata.get("pah_publication")
     if not isinstance(publication, dict):
         raise ValueError("Legacy artifacts do not support the publication status API")
+    identity = module_instance_id if module_instance_id is not None else f"{active_context.instance_id}:{module_id}"
+    validate_producer_instance_scope(identity, module_id=module_id, active=active_context,
+                                     module_instances=module_instances)
     expected = {
         "workspace_id": active_context.workspace_id,
         "host_project_id": active_context.host_project_id,
         "instance_id": active_context.instance_id,
-        "module_instance_id": f"{active_context.instance_id}:{module_id}",
+        "module_instance_id": identity,
         "module_id": module_id,
     }
     if artifact.producer_module != module_id or any(publication.get(k) != v or v is None for k, v in expected.items()):
-        raise ValueError("Reference status update does not match the active producer/project")
+        raise ValueError("Reference status update module instance does not match the active producer/project")
     metadata = dict(artifact.metadata)
     metadata["pah_reference_status"] = {
         "state": state, "reason": reason,

@@ -35,6 +35,7 @@ class AnalysisHandoff:
     source_sha256: str
     job_id: str | None = None
     artifact_id: str | None = None
+    module_instance_id: str | None = None
 
     def __post_init__(self):
         _required(self.project_id, "project_id")
@@ -49,6 +50,8 @@ class AnalysisHandoff:
             _required(self.job_id, "job_id")
         if self.artifact_id is not None:
             _required(self.artifact_id, "artifact_id")
+        if self.module_instance_id is not None:
+            _required(self.module_instance_id, "module_instance_id")
 
 
 def inspect_handoff(handoff: AnalysisHandoff, *, project_id: str, repository_id: str,
@@ -63,15 +66,19 @@ def inspect_handoff(handoff: AnalysisHandoff, *, project_id: str, repository_id:
     result = {"schema": SCHEMA, "project_id": project_id,
               "repository_id": repository_id, "producer": handoff.producer,
               "source_sha256": handoff.source_sha256,
+              "module_instance_id": handoff.module_instance_id,
               "job": {"id": handoff.job_id, "verification": "not_supplied"},
               "artifact": {"id": handoff.artifact_id, "verification": "not_supplied"}}
     if handoff.job_id is not None:
-        reader = readers.get(handoff.producer)
-        if reader is None or getattr(reader, "owner", None) != handoff.producer:
+        source_id = handoff.module_instance_id or handoff.producer
+        reader = readers.get(source_id)
+        if reader is None or getattr(reader, "owner", None) != source_id or (
+            handoff.module_instance_id is not None and getattr(reader, "module_id", None) != handoff.producer
+        ):
             result["job"]["verification"] = "unavailable"
         else:
             observed = reader.job(handoff.job_id)
-            if not isinstance(observed, Mapping) or observed.get("owner") != handoff.producer:
+            if not isinstance(observed, Mapping) or observed.get("owner") != source_id:
                 result["job"]["verification"] = "unavailable"
             else:
                 result["job"].update(verification="observed", state=observed.get("state", "unknown"))
@@ -86,6 +93,15 @@ def inspect_handoff(handoff: AnalysisHandoff, *, project_id: str, repository_id:
                     reference.producer_module != handoff.producer or
                     reference.project_id != handoff.project_id):
                 raise HandoffError("Producer artifact identity mismatch")
+            publication = reference.metadata.get("pah_publication")
+            publication = publication if isinstance(publication, Mapping) else {}
+            if handoff.module_instance_id is not None:
+                if publication.get("module_instance_id") != handoff.module_instance_id:
+                    raise HandoffError("Artifact does not belong to the requested module instance")
+            elif publication.get("module_instance_id") and publication["module_instance_id"] != (
+                f"{publication.get('instance_id')}:{handoff.producer}"
+            ):
+                raise HandoffError("Explicit module_instance_id required for this artifact")
             # A producer may certify source identity in provenance; absence
             # is *not* evidence that an artifact belongs to this source.
             sha = reference.provenance.get("source_sha256")

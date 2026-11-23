@@ -132,7 +132,7 @@
     const details = $('jobMonitorDetails');
     details.replaceChildren();
     const fields = [
-      ['Module', owner], ['Type', job.kind], ['Started', stamp(job.started_at)],
+      ['Module', source?.module_id || owner], ['Instance', source?.module_instance_id || 'Legacy module source'], ['Type', job.kind], ['Started', stamp(job.started_at)],
       ['Elapsed', duration(job.started_at)], ['Last activity', stamp(job.updated_at)],
       ['Last output', stamp(job.last_output_at)], ['Progress', job.progress == null ? '—' : `${Math.round(job.progress * 100)}%`],
       ['PID', short(job.pid)], ['Liveness', short(job.liveness)],
