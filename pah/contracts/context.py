@@ -72,11 +72,19 @@ class ModuleContext:
     def resource(self, role: str, default: Path | None = None) -> Path | None:
         return self.resources.get(str(role), default)
 
-    def for_module(self, module_id: str, *, local_project_id: str | None = None) -> "ModuleContext":
-        """Bind a module slot without inventing the module's own project id.
+    def for_module(
+        self,
+        module_id: str,
+        *,
+        local_project_id: str | None = None,
+        module_instance_id: str | None = None,
+    ) -> "ModuleContext":
+        """Bind a module type and, optionally, an explicit running instance.
 
-        ``module_instance_id`` identifies a module slot in this PAH instance,
-        not a scientific training run or a particular child PID.
+        Older callers retain the host-local ``host:module`` slot. A caller
+        managing independently launched processes can supply the opaque
+        instance identity without exposing module-specific project semantics.
+        This function only builds context; it does not launch an instance.
         """
         from dataclasses import replace
 
@@ -84,10 +92,13 @@ class ModuleContext:
         if not module:
             raise ValueError("module_id must not be empty")
         instance = str(self.runtime.get("instance_id") or "").strip()
+        explicit = str(module_instance_id or "").strip() or None
+        if module_instance_id is not None and explicit is None:
+            raise ValueError("module_instance_id must not be empty when supplied")
         return replace(
             self,
             module_id=module,
-            module_instance_id=f"{instance}:{module}" if instance else None,
+            module_instance_id=explicit if explicit is not None else (f"{instance}:{module}" if instance else None),
             module_local_project_id=local_project_id,
         )
 

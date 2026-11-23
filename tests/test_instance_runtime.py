@@ -148,3 +148,73 @@ def test_two_flask_instances_share_catalog_but_not_runtime_or_active_workspace(t
 
     first_runtime.stop()
     second_runtime.stop()
+
+
+def test_multiple_module_instances_do_not_overwrite_each_other(tmp_path: Path):
+    runtime = InstanceRuntime(state_dir=tmp_path / "state", instance_id="host-a")
+    try:
+        first = runtime.register_module_runtime(
+            "ml_lab", module_instance_id="host-a:ml_lab:dataset-1", pid=10001,
+            metadata={"workspace_id": "alpha"},
+        )
+        second = runtime.register_module_runtime(
+            "ml_lab", module_instance_id="host-a:ml_lab:dataset-2", pid=10002,
+            metadata={"workspace_id": "beta"},
+        )
+        assert first["module_instance_id"] != second["module_instance_id"]
+        assert len(runtime.module_instances("ml_lab")) == 2
+        assert {record["pid"] for record in runtime.module_instances("ml_lab").values()} == {10001, 10002}
+
+        # Persisted state and the externally visible snapshot keep both IDs.
+        payload = json.loads(runtime.process_file.read_text(encoding="utf-8"))
+        assert payload["schema_version"] == 2
+        assert set(payload["processes"]) == {first["module_instance_id"], second["module_instance_id"]}
+        assert set(runtime.snapshot()["module_instances"]) == set(payload["processes"])
+
+        runtime.unregister_module_runtime("ml_lab", module_instance_id=first["module_instance_id"])
+        assert set(runtime.module_instances("ml_lab")) == {second["module_instance_id"]}
+    finally:
+        runtime.stop()
+
+
+def test_module_legacy_slot_is_idempotent_and_not_confused_with_parallel_instances(tmp_path: Path):
+    from pah.instance_runtime import InstanceRuntimeError
+
+    runtime = InstanceRuntime(state_dir=tmp_path / "state", instance_id="host-a")
+    try:
+        runtime.register_module_runtime("ml_lab", pid=11)
+        runtime.register_module_runtime("ml_lab", pid=12)
+        runtime.register_module_runtime("ml_lab", module_instance_id="host-a:ml_lab:second", pid=13)
+        assert len(runtime.module_instances("ml_lab")) == 2
+        assert runtime.module_processes()["ml_lab"]["pid"] == 12  # legacy interface
+        assert runtime.module_processes()["ml_lab"]["module_instance_id"] == "host-a:ml_lab"
+        with pytest.raises(InstanceRuntimeError, match="already registered"):
+            runtime.register_module_runtime("ml_lab", module_instance_id="host-a:ml_lab:second", pid=99)
+        with pytest.raises(InstanceRuntimeError, match="does not belong"):
+            runtime.unregister_module_runtime("pypique", module_instance_id="host-a:ml_lab:second")
+        with pytest.raises(InstanceRuntimeError, match="safe identifier"):
+            runtime.register_module_runtime("ml_lab", module_instance_id="../unsafe", pid=22)
+
+        # Accessors return copies, not direct references to shared records.
+        copied = runtime.module_instances("ml_lab")
+        copied["host-a:ml_lab:second"]["metadata"]["bad"] = "mutation"
+        assert "bad" not in runtime.module_instances("ml_lab")["host-a:ml_lab:second"]["metadata"]
+
+        runtime.unregister_module_runtime("ml_lab")  # only the old slot
+        assert set(runtime.module_instances("ml_lab")) == {"host-a:ml_lab:second"}
+        assert runtime.module_instances("pypique") == {}
+    finally:
+        runtime.stop()
+
+
+def test_registry_exposes_individual_instances_without_duplicating_adapter_types(tmp_path: Path):
+    runtime = InstanceRuntime(state_dir=tmp_path / "state", instance_id="host-a")
+    try:
+        registry = RuntimeRegistry(instance_runtime=runtime)
+        runtime.register_module_runtime("demo", module_instance_id="host-a:demo:1", pid=1001)
+        runtime.register_module_runtime("demo", module_instance_id="host-a:demo:2", pid=1002)
+        assert registry.module_ids() == ()  # discovery is separate from running instances
+        assert set(registry.instances("demo")) == {"host-a:demo:1", "host-a:demo:2"}
+        assert set(registry.instances()) == set(runtime.module_instances())
+    finally:
+        runtime.stop()

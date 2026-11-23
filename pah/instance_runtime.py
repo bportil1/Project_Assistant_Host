@@ -8,6 +8,7 @@ without sharing temp files, hosted-tool ports, or child-process bookkeeping.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timezone
 import json
 import os
@@ -79,6 +80,17 @@ def _valid_instance_id(value: str) -> str:
         raise InstanceRuntimeError("instance_id must not be empty")
     if any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_." for ch in raw):
         raise InstanceRuntimeError("instance_id contains unsupported characters")
+    return raw
+
+
+def _valid_module_instance_id(value: str) -> str:
+    """Opaque registration identity, never a path or a scientific project ID."""
+    raw = str(value or "").strip()
+    if not raw or len(raw) > 256 or any(
+        char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:"
+        for char in raw
+    ):
+        raise InstanceRuntimeError("module_instance_id must be a nonempty safe identifier (max 256 characters)")
     return raw
 
 
@@ -203,42 +215,100 @@ class InstanceRuntime:
             self.health = "running"
             self._persist()
 
+    def _default_module_instance_id(self, module_id: str) -> str:
+        """Stable legacy slot; explicit IDs distinguish parallel child instances."""
+        return _valid_module_instance_id(f"{self.instance_id}:{module_id}")
+
     def register_module_runtime(
         self,
         module_id: str,
         *,
+        module_instance_id: str | None = None,
         pid: int | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Record an already-launched module instance; do not launch it.
+
+        Existing callers may omit ``module_instance_id`` and continue to update
+        one stable, host-local legacy slot per module type. A future multi-launch
+        caller supplies a distinct opaque ID; explicit IDs must never overwrite
+        an existing instance (even if the module type matches).
+        """
         module_id = str(module_id or "").strip()
         if not module_id:
             raise InstanceRuntimeError("module_id must not be empty")
+        legacy = module_instance_id is None
+        identity = (
+            self._default_module_instance_id(module_id)
+            if legacy else _valid_module_instance_id(module_instance_id)
+        )
         with self._lock:
+            if identity in self._module_processes and not legacy:
+                raise InstanceRuntimeError(f"Module instance {identity!r} is already registered")
+            if identity in self._module_processes and self._module_processes[identity]["module_id"] != module_id:
+                raise InstanceRuntimeError(f"Module instance {identity!r} belongs to a different module")
             record = {
                 "module_id": module_id,
+                "module_instance_id": identity,
                 "owner_instance_id": self.instance_id,
                 "owner_pid": self.pid,
                 "pid": int(pid) if pid is not None else None,
                 "registered_at": _utc_now(),
                 "metadata": _json_safe(dict(metadata or {})),
             }
-            self._module_processes[module_id] = record
+            self._module_processes[identity] = record
             self._persist_processes()
             self._persist()
-            return dict(record)
+            return deepcopy(record)
 
-    def unregister_module_runtime(self, module_id: str) -> None:
+    def unregister_module_runtime(self, module_id: str, *, module_instance_id: str | None = None) -> None:
+        """Remove one registration, never unrelated sibling module instances.
+
+        For compatibility, omitting an instance ID removes the legacy slot only.
+        No child process is killed here; process lifecycle belongs to the
+        launcher and is handled separately in MI-03.
+        """
+        module_id = str(module_id or "").strip()
+        identity = (
+            self._default_module_instance_id(module_id)
+            if module_instance_id is None else _valid_module_instance_id(module_instance_id)
+        )
         with self._lock:
-            self._module_processes.pop(str(module_id), None)
+            record = self._module_processes.get(identity)
+            if record is not None and record["module_id"] != module_id:
+                raise InstanceRuntimeError(f"Module instance {identity!r} does not belong to {module_id!r}")
+            self._module_processes.pop(identity, None)
             self._persist_processes()
             self._persist()
+
+    def module_instances(self, module_id: str | None = None) -> dict[str, dict[str, Any]]:
+        """Authoritative module-instance registry, keyed by unique instance ID."""
+        with self._lock:
+            return {
+                identity: deepcopy(record)
+                for identity, record in self._module_processes.items()
+                if module_id is None or record["module_id"] == str(module_id)
+            }
 
     def module_processes(self) -> dict[str, dict[str, Any]]:
+        """Legacy one-record-per-module view for existing host consumers.
+
+        Parallel registrations remain available via ``module_instances`` and
+        the snapshot's ``module_instances`` field. Prefer the stable legacy
+        registration if present; the legacy map is intentionally not used for
+        multi-instance routing.
+        """
         with self._lock:
-            return {key: dict(value) for key, value in self._module_processes.items()}
+            by_module: dict[str, dict[str, Any]] = {}
+            for record in self._module_processes.values():
+                module_id = record["module_id"]
+                if module_id not in by_module or record["module_instance_id"] == self._default_module_instance_id(module_id):
+                    by_module[module_id] = deepcopy(record)
+            return by_module
 
     def _persist_processes(self) -> None:
         payload = {
+            "schema_version": 2,
             "instance_id": self.instance_id,
             "processes": self._module_processes,
         }
@@ -269,6 +339,7 @@ class InstanceRuntime:
             "started_at": self.started_at,
             "health": self.health,
             "child_processes": self.module_processes() if hasattr(self, "_module_processes") else {},
+            "module_instances": self.module_instances() if hasattr(self, "_module_processes") else {},
         }
 
     def stop(self) -> None:

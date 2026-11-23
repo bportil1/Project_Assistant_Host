@@ -156,3 +156,20 @@ def test_frontend_attaches_context_to_mutating_orchestration_calls():
     assert "X-PAH-Context-Token" in js
     assert "data.context_token || null" in js
     assert "url.startsWith('/api/orchestration/')" in js
+
+
+def test_explicit_module_instance_binding_preserves_module_owned_project_identity(tmp_path: Path):
+    context = ModuleContext(
+        project_root=tmp_path, workspace_id="w",
+        runtime={"instance_id": "host-a"},
+    )
+    first = context.for_module("ml_lab", module_instance_id="host-a:ml_lab:first")
+    second = context.for_module("ml_lab", module_instance_id="host-a:ml_lab:second")
+    assert first.module_instance_id != second.module_instance_id
+    assert first.workspace_id == second.workspace_id == "w"
+    assert first.module_local_project_id is None
+    assert second.module_local_project_id is None
+    assert context.module_instance_id is None  # cannot rebind another context
+    assert context.for_module("ml_lab").module_instance_id == "host-a:ml_lab"
+    with pytest.raises(ValueError, match="must not be empty"):
+        context.for_module("ml_lab", module_instance_id=" ")

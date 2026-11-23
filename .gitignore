@@ -1,14 +1,44 @@
+# Python environments, packages, and test tooling
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
 .coverage
+.coverage.*
 htmlcov/
+*.egg-info/
+/build/
+/dist/
 .DS_Store
+
+# Runtime logs (including module-side logs)
 *.log
+*.log.*
+
+# Host-generated state and scratch data. Anchor paths to the repository root
+# so source packages containing an analysis/ directory remain versionable.
+/.pah/
+/analysis/
+/ml_lab_results/
+/runtime/
+/tmp/
+/temp/
+/cache/
+/logs/
+/exports/
+/scratch/
+
+# Temporary editor/SQLite sidecars, not intentional versioned fixtures
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-wal
+*.db-shm
+*.pah-tmp
+*.pah-*.tmp
+
+# Vendored assets are supplied by the optional local installer
 pah/web/static/vendor/ace/
 pah/web/static/vendor/xterm/
-
-*.egg-info/
-
-/ml_lab_results/

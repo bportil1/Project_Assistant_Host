@@ -100,6 +100,17 @@ class RuntimeRegistry:
             )
         return launch
 
+    def instances(self, module_id: str | None = None) -> dict[str, dict[str, Any]]:
+        """Read-only live registration view; adapters remain keyed by type.
+
+        This reports instance identities already registered with the host. It
+        does not imply that a given adapter supports multiple child processes;
+        that capability is introduced by the process launcher in MI-03.
+        """
+        if self._instance_runtime is None:
+            return {}
+        return self._instance_runtime.module_instances(module_id)
+
     def artifacts(self, module_id: str, context: ModuleContext | None = None) -> tuple[Any, ...] | None:
         """Return artifacts advertised by a runtime adapter, if it supports discovery.
 
