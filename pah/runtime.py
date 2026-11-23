@@ -5,6 +5,7 @@ from importlib import metadata
 from typing import Any, Iterable, Mapping
 
 from pah.contracts import ModuleContext, RuntimeLaunch, RuntimeStatus, coerce_runtime_launch, coerce_runtime_status
+from pah.module_processes import ModuleProcessLauncher
 
 
 class RuntimeRegistryError(RuntimeError):
@@ -36,6 +37,7 @@ class RuntimeRegistry:
         self._adapters: dict[str, Any] = {}
         self._discovery_errors: list[dict[str, str]] = []
         self._instance_runtime = instance_runtime
+        self.process_launcher = ModuleProcessLauncher(instance_runtime) if instance_runtime is not None else None
         for adapter in adapters:
             self.register(adapter)
 
@@ -100,6 +102,22 @@ class RuntimeRegistry:
             )
         return launch
 
+    def launch_process(self, module_id: str, command, **kwargs) -> dict[str, Any]:
+        """Launch an isolated local child from a trusted adapter-provided argv.
+
+        This deliberately bypasses legacy ``launch()`` until instance routing
+        and the module launch contract are migrated in MI-04/MI-05.
+        """
+        if self.process_launcher is None:
+            raise RuntimeRegistryError("A host InstanceRuntime is required to launch child processes")
+        return self.process_launcher.launch(module_id, command, **kwargs)
+
+    def stop_process(self, module_instance_id: str, **kwargs) -> bool:
+        """Stop only the locally owned child with this exact instance ID."""
+        if self.process_launcher is None:
+            raise RuntimeRegistryError("A host InstanceRuntime is required to stop child processes")
+        return self.process_launcher.stop(module_instance_id, **kwargs)
+
     def instances(self, module_id: str | None = None) -> dict[str, dict[str, Any]]:
         """Read-only live registration view; adapters remain keyed by type.
 
@@ -109,6 +127,8 @@ class RuntimeRegistry:
         """
         if self._instance_runtime is None:
             return {}
+        if self.process_launcher is not None:
+            self.process_launcher.reap_exited()
         return self._instance_runtime.module_instances(module_id)
 
     def artifacts(self, module_id: str, context: ModuleContext | None = None) -> tuple[Any, ...] | None:
@@ -143,11 +163,16 @@ class RuntimeRegistry:
             self._instance_runtime.unregister_module_runtime(str(module_id))
 
     def shutdown_all(self, context: ModuleContext | None = None) -> None:
-        for module_id in reversed(self.module_ids()):
-            try:
-                self.shutdown(module_id, context=context)
-            except Exception:
-                pass
+        try:
+            for module_id in reversed(self.module_ids()):
+                try:
+                    self.shutdown(module_id, context=context)
+                except Exception:
+                    pass
+        finally:
+            # Generic child instances are not owned by legacy adapter slots.
+            if self.process_launcher is not None:
+                self.process_launcher.stop_all()
 
     def discover_entry_points(self, *, group: str = "pah.runtimes") -> tuple[Any, ...]:
         discovered: list[Any] = []
