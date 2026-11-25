@@ -82,17 +82,21 @@ def test_doctor_api_check_rejects_importable_incompatible_package(tmp_path: Path
     (package / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
     ok, detail = _code_analyzer_api_status(Path(sys.executable), root=tmp_path)
     assert ok is False
-    assert "CodeAnalyzer is unavailable" in (detail or "")
+    assert "resolves to PAH root" in (detail or "")
     assert "import origin" in (detail or "")
 
 
-def test_doctor_api_check_accepts_real_public_facade_and_web(tmp_path: Path):
-    package = tmp_path / "code_analyzer"
+def test_doctor_api_check_accepts_real_public_facade_and_web(tmp_path: Path, monkeypatch):
+    # Test the standalone source, not a package shadowing the host root.
+    source = tmp_path / "standalone"
+    source.mkdir()
+    package = source / "code_analyzer"
     web = package / "web"
     web.mkdir(parents=True)
     (package / "__init__.py").write_text("class CodeAnalyzer: pass\n", encoding="utf-8")
     (web / "__init__.py").write_text("", encoding="utf-8")
     (web / "app.py").write_text("def create_app(): pass\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(source))
     ok, detail = _code_analyzer_api_status(Path(sys.executable), root=tmp_path)
     assert ok is True
     assert detail is None

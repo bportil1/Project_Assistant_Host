@@ -31,11 +31,15 @@ def declared_constraints(root: Path) -> tuple[str, ...]:
     Code Analyzer's standalone requirements.txt is also a supported input.
     """
     constraints: list[str] = []
-    projects = ("pypique", "code_analyzer", "ml_lab", "hsqa_dbn",
-                "tech_documents", "reference_manager")
+    # The standalone repositories own constraints. Never take requirements
+    # from pinned or dirty PAH module snapshots.
+    sibling_projects = (
+        "pyPIQUE", "Code_Repository_Cataloguer", "ML_Lab", "HSQA_DBN",
+        "Research_Document_Workbench", "Research_Paper_Repository_Manager",
+    )
     paths = [root / "pyproject.toml"]
-    paths += [root / "modules" / name / "pyproject.toml" for name in projects]
-    paths.append(root / "modules" / "code_analyzer" / "requirements.txt")
+    paths += [root.parent / name / "pyproject.toml" for name in sibling_projects]
+    paths.append(root.parent / "Code_Repository_Cataloguer" / "requirements.txt")
     for path in paths:
         if not path.is_file():
             continue
@@ -111,15 +115,9 @@ def _sources(root: Path) -> tuple[Path, ...]:
     override = os.environ.get("PAH_SHARED_SOURCE")
     if override:
         return (Path(override).expanduser().resolve(),)
-    return (
-        # PAH_Shared is a standalone sibling, not a pinned PAH Git submodule.
-        # Prefer that tracked checkout over an older modules/ copy.
-        root.parent / "PAH_Shared",
-        root / "modules" / "pah_shared",
-        root / "modules" / "PAH_Shared",
-        root / "PAH_Shared",
-        root / "vendor" / "PAH_Shared",
-    )
+    # Fail closed when the authoritative standalone checkout is absent.
+    # Never silently install stale PAH-owned snapshots or vendored source.
+    return (root.parent / "PAH_Shared",)
 
 
 def _installed_version(python: Path, root: Path) -> str | None:
@@ -243,18 +241,8 @@ def bootstrap_pah_shared(
             f"expected {', '.join(constraints)}, checked {', '.join(candidates) or 'none'}."
         )
 
-    # An installed wheel is a valid offline fallback ONLY when no compatible
-    # checked-out source exists and its required browser assets are present.
-    if installed is not None and satisfies_all(installed, constraints):
-        missing = _installed_missing_graph_assets(python, root) if _graph_assets_required(installed) else ()
-        if missing:
-            raise SharedBootstrapError(
-                f"Installed PAH_Shared {installed} lacks {', '.join(missing)} and no compatible "
-                "local checkout exists. Pull/update PAH_Shared or set PAH_SHARED_SOURCE."
-            )
-        print(f"✓ PAH_Shared {installed} installed (no compatible local source found)")
-        return installed
-
+    # An installed wheel alone is not evidence of an up-to-date source checkout.
+    # Refuse it rather than silently reusing potentially stale browser assets.
     available = ", ".join(candidates) if candidates else "no installable local source found"
     raise SharedBootstrapError(
         "PAH_Shared has no compatible local source satisfying PAH/pyPIQUE requirements. "

@@ -1,8 +1,8 @@
-"""Shared PAH component registry used by setup, update, and diagnostics.
+"""Standalone source-owner registry used by setup, update, and diagnostics.
 
 The registry describes integration requirements without taking ownership away from
 standalone modules. Each module still owns its own pyproject and vendor scripts;
-PAH only coordinates those existing entry points.
+PAH installs from sibling source repositories; its embedded Git submodules are legacy snapshots only.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ class PythonComponent:
 
 @dataclass(frozen=True)
 class GitComponent:
-    """A managed development repository inside the PAH checkout."""
+    """A standalone source repository adjacent to the PAH host."""
 
     key: str
     label: str
@@ -67,15 +67,15 @@ PYTHON_COMPONENTS = (
     PythonComponent(
         key="code_analyzer",
         label="Code Analyzer",
-        path="modules/code_analyzer",
-        install_spec="modules/code_analyzer[web]",
+        path="../Code_Repository_Cataloguer",
+        install_spec="../Code_Repository_Cataloguer[web]",
         imports=("code_analyzer", "numpy", "flask"),
     ),
     PythonComponent(
         key="pypique",
         label="pyPIQUE",
-        path="modules/pypique",
-        install_spec="modules/pypique[full]",
+        path="../pyPIQUE",
+        install_spec="../pyPIQUE[full]",
         imports=("pique_py", "flask", "bandit"),
         compatibility_tests=("tests/test_pah_integration.py",),
         pah_entry_points=(("pah.modules", "pypique"), ("pah.runtimes", "pypique")),
@@ -83,8 +83,8 @@ PYTHON_COMPONENTS = (
     PythonComponent(
         key="hsqa_dbn",
         label="HSQA_DBN",
-        path="modules/hsqa_dbn",
-        install_spec="modules/hsqa_dbn[visual]",
+        path="../HSQA_DBN",
+        install_spec="../HSQA_DBN[visual]",
         imports=("hsqa_dbn", "dash", "plotly", "torch", "geomloss"),
         compatibility_tests=("tests/test_pah_module_adapter.py",),
         pah_entry_points=(("pah.modules", "hsqa_dbn"), ("pah.runtimes", "hsqa_dbn")),
@@ -92,8 +92,8 @@ PYTHON_COMPONENTS = (
     PythonComponent(
         key="ml_lab",
         label="ML Lab",
-        path="modules/ml_lab",
-        install_spec="modules/ml_lab[ui]",
+        path="../ML_Lab",
+        install_spec="../ML_Lab[ui]",
         imports=("ml_lab", "flask"),
         compatibility_tests=("tests/test_pah_integration.py",),
         pah_entry_points=(("pah.modules", "ml_lab"), ("pah.runtimes", "ml_lab")),
@@ -101,8 +101,8 @@ PYTHON_COMPONENTS = (
     PythonComponent(
         key="tech_documents",
         label="Document Workbench",
-        path="modules/tech_documents",
-        install_spec="modules/tech_documents[web]",
+        path="../Research_Document_Workbench",
+        install_spec="../Research_Document_Workbench[web]",
         imports=(
             "tech_documents",
             "flask",
@@ -115,61 +115,60 @@ PYTHON_COMPONENTS = (
     PythonComponent(
         key="reference_manager",
         label="Reference Manager",
-        path="modules/reference_manager",
-        install_spec="modules/reference_manager[web]",
+        path="../Research_Paper_Repository_Manager",
+        install_spec="../Research_Paper_Repository_Manager[web]",
         imports=("reference_manager", "fitz", "flask"),
     ),
     PythonComponent(
         key="paper_searcher",
         label="Research Search",
-        path="modules/reference_manager/modules/paper_searcher",
-        install_spec="modules/reference_manager/modules/paper_searcher",
+        path="../Research_Paper_Repository_Manager/modules/paper_searcher",
+        install_spec="../Research_Paper_Repository_Manager/modules/paper_searcher",
         imports=("paper_searcher", "flask"),
     ),
 )
 
 
-# Shallow-to-deep order is intentional. Parent repositories are advanced while
-# their nested submodules still match the recorded commit; nested repositories
-# are advanced last so the resulting parent pointer changes are easy to review.
+# Explicit --latest-modules operations target standalone source repositories only.
+# Default setup/update never advances these repositories.
 GIT_COMPONENTS = (
     GitComponent(
         key="code_analyzer",
         label="Code Analyzer",
-        path="modules/code_analyzer",
+        path="../Code_Repository_Cataloguer",
     ),
     GitComponent(
         key="pypique",
         label="pyPIQUE",
-        path="modules/pypique",
+        path="../pyPIQUE",
         repository_url="git@github.com:bportil1/pyPIQUE.git",
     ),
     GitComponent(
         key="hsqa_dbn",
         label="HSQA_DBN",
-        path="modules/hsqa_dbn",
+        path="../HSQA_DBN",
         repository_url="git@github.com:bportil1/HSQA_DBN.git",
         default_branch="refactor",
     ),
     GitComponent(
         key="ml_lab",
         label="ML Lab",
-        path="modules/ml_lab",
+        path="../ML_Lab",
     ),
     GitComponent(
         key="tech_documents",
         label="Document Workbench",
-        path="modules/tech_documents",
+        path="../Research_Document_Workbench",
     ),
     GitComponent(
         key="reference_manager",
         label="Reference Manager",
-        path="modules/reference_manager",
+        path="../Research_Paper_Repository_Manager",
     ),
     GitComponent(
         key="paper_searcher",
         label="Research Search",
-        path="modules/reference_manager/modules/paper_searcher",
+        path="../Research_Paper_Repository_Manager/modules/paper_searcher",
     ),
 )
 
@@ -197,16 +196,16 @@ BROWSER_ASSETS = (
         key="workbench_ace",
         label="Ace notebook editor",
         owner="Document Workbench",
-        script="modules/tech_documents/scripts/vendor_ace.py",
-        markers=("modules/tech_documents/tech_documents/web/static/vendor/ace/ace.js",),
+        script="../Research_Document_Workbench/scripts/vendor_ace.py",
+        markers=("../Research_Document_Workbench/tech_documents/web/static/vendor/ace/ace.js",),
     ),
     BrowserAsset(
         key="workbench_reveal",
         label="Reveal.js",
         owner="Document Workbench",
-        script="modules/tech_documents/scripts/vendor_reveal.py",
+        script="../Research_Document_Workbench/scripts/vendor_reveal.py",
         markers=(
-            "modules/tech_documents/tech_documents/web/static/vendor/reveal/dist/reveal.js",
+            "../Research_Document_Workbench/tech_documents/web/static/vendor/reveal/dist/reveal.js",
         ),
     ),
 )

@@ -20,31 +20,31 @@ from pah.lifecycle import (
 def test_component_registry_covers_nested_modules_and_browser_assets():
     components = {component.key: component for component in PYTHON_COMPONENTS}
     assert components["code_analyzer"].install_spec.endswith("[web]")
-    assert components["pypique"].install_spec == "modules/pypique[full]"
+    assert components["pypique"].install_spec == "../pyPIQUE[full]"
     assert components["pypique"].pah_entry_points == (("pah.modules", "pypique"), ("pah.runtimes", "pypique"))
     assert components["pypique"].compatibility_tests == ("tests/test_pah_integration.py",)
-    assert components["hsqa_dbn"].install_spec == "modules/hsqa_dbn[visual]"
+    assert components["hsqa_dbn"].install_spec == "../HSQA_DBN[visual]"
     assert components["hsqa_dbn"].pah_entry_points == (("pah.modules", "hsqa_dbn"), ("pah.runtimes", "hsqa_dbn"))
     assert components["hsqa_dbn"].compatibility_tests == ("tests/test_pah_module_adapter.py",)
-    assert components["ml_lab"].install_spec == "modules/ml_lab[ui]"
+    assert components["ml_lab"].install_spec == "../ML_Lab[ui]"
     assert components["ml_lab"].pah_entry_points == (("pah.modules", "ml_lab"), ("pah.runtimes", "ml_lab"))
     assert components["tech_documents"].install_spec.endswith("[web]")
     assert components["reference_manager"].install_spec.endswith("[web]")
-    assert components["paper_searcher"].path == "modules/reference_manager/modules/paper_searcher"
+    assert components["paper_searcher"].path == "../Research_Paper_Repository_Manager/modules/paper_searcher"
 
     git_components = {component.key: component for component in GIT_COMPONENTS}
     assert git_components["code_analyzer"].default_branch == "main"
-    assert git_components["pypique"].path == "modules/pypique"
+    assert git_components["pypique"].path == "../pyPIQUE"
     assert git_components["pypique"].repository_url == "git@github.com:bportil1/pyPIQUE.git"
-    assert git_components["hsqa_dbn"].path == "modules/hsqa_dbn"
+    assert git_components["hsqa_dbn"].path == "../HSQA_DBN"
     assert git_components["hsqa_dbn"].repository_url == "git@github.com:bportil1/HSQA_DBN.git"
-    assert git_components["paper_searcher"].path == "modules/reference_manager/modules/paper_searcher"
+    assert git_components["paper_searcher"].path == "../Research_Paper_Repository_Manager/modules/paper_searcher"
 
     assets = {asset.key: asset for asset in BROWSER_ASSETS}
     assert assets["pah_ace"].script == "scripts/vendor_ace.py"
     assert assets["pah_xterm"].script == "scripts/vendor_xterm.py"
-    assert assets["workbench_ace"].script.endswith("modules/tech_documents/scripts/vendor_ace.py")
-    assert assets["workbench_reveal"].script.endswith("modules/tech_documents/scripts/vendor_reveal.py")
+    assert assets["workbench_ace"].script.endswith("Research_Document_Workbench/scripts/vendor_ace.py")
+    assert assets["workbench_reveal"].script.endswith("Research_Document_Workbench/scripts/vendor_reveal.py")
 
 
 def test_component_and_asset_readiness_are_path_based(tmp_path: Path):
@@ -109,7 +109,7 @@ def test_setup_submodule_step_accepts_source_archives(tmp_path: Path, capsys):
     (tmp_path / ".gitmodules").write_text("[submodule \"x\"]\n\tpath = modules/x\n", encoding="utf-8")
     ensure_submodules(tmp_path)
     output = capsys.readouterr().out
-    assert "Source archive detected" in output
+    assert "standalone repositories own source" in output
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -418,14 +418,15 @@ def test_fresh_clone_recursive_submodule_bootstrap_includes_nested_research_sear
 
     ensure_submodules(checkout)
 
-    assert (checkout / "modules/code_analyzer/pyproject.toml").is_file()
-    assert (checkout / "modules/pypique/pyproject.toml").is_file()
-    assert (checkout / "modules/hsqa_dbn/pyproject.toml").is_file()
-    assert (checkout / "modules/tech_documents/pyproject.toml").is_file()
-    assert (checkout / "modules/reference_manager/pyproject.toml").is_file()
-    assert (checkout / "modules/reference_manager/modules/paper_searcher/run.py").is_file()
+    # Old tracked gitlinks are preserved as metadata only. The lifecycle is
+    # forbidden from initializing or updating submodule worktrees, including
+    # nested submodules owned by another project.
+    assert not (checkout / "modules/code_analyzer/pyproject.toml").exists()
+    assert not (checkout / "modules/pypique/pyproject.toml").exists()
+    assert not (checkout / "modules/reference_manager/pyproject.toml").exists()
     status = _git(checkout, "submodule", "status", "--recursive")
-    assert "modules/reference_manager/modules/paper_searcher" in status
+    assert "modules/code_analyzer" in status
+    assert "modules/pypique" in status
 
 
 def test_host_update_cleanliness_ignores_untracked_patch_files_but_blocks_tracked_edits(tmp_path: Path):
@@ -460,7 +461,7 @@ def test_setup_orchestrates_full_chain_and_optional_tool_failure_is_nonfatal(mon
     monkeypatch.setattr(lifecycle, "print_doctor", lambda report: None)
 
     assert lifecycle.setup(tmp_path) == 0
-    assert calls == ["submodules", "venv", "python", "assets", "system-tools", "doctor"]
+    assert calls == ["venv", "python", "assets", "system-tools", "doctor"]
 
 
 def test_latest_shared_disallows_implicit_fetch_or_dirty_checkout(monkeypatch, tmp_path):

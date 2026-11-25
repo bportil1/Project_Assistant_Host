@@ -17,7 +17,7 @@ import urllib.request
 
 from .shared_bootstrap import (
     SharedBootstrapError, _source_version, _installed_version,
-    _installed_missing_graph_assets, _graph_assets_required,
+    _installed_missing_graph_assets, _graph_assets_required, _sources,
     bootstrap_pah_shared, declared_constraints, satisfies_all,
 )
 
@@ -107,17 +107,36 @@ def _submodule_state(root: Path) -> dict[str, str]:
 
 
 def ensure_submodules(root: Path) -> None:
-    if not (root / ".gitmodules").is_file():
-        return
-    if not (root / ".git").exists():
-        print("\n== Modules / submodules ==")
-        print("Source archive detected; using bundled module directories instead of Git submodule commands.")
-        return
-    if shutil.which("git") is None:
-        raise LifecycleError("Git is required to initialize PAH modules and submodules.")
-    print("\n== Modules / submodules ==")
-    _run(["git", "submodule", "sync", "--recursive"], cwd=root)
-    _run(["git", "submodule", "update", "--init", "--recursive"], cwd=root)
+    """Legacy API: intentionally does not mutate embedded module checkouts.
+
+    The authoritative module sources are sibling repositories. This guard
+    prevents older setup call paths from resetting dirty module worktrees.
+    """
+    print("\n== Module sources ==")
+    print("PAH embedded submodules are not synchronized; standalone repositories own source.")
+
+
+def preflight_standalone_sources(root: Path) -> None:
+    """Fail before pip changes the venv when a required source is missing."""
+    missing = []
+    for component in PYTHON_COMPONENTS:
+        source = (root / component.path).resolve()
+        if component.key != "pah" and (source == root.resolve() or root.resolve() in source.parents):
+            missing.append(f"{component.label}: source must not resolve inside PAH: {source}")
+        elif component.required and not _component_present(root, component):
+            missing.append(f"{component.label}: {source}")
+    # A previously installed PAH_Shared wheel is not authoritative source.
+    if declared_constraints(root) and not any(
+        _source_version(source) and not (source.resolve() == root.resolve()
+          or root.resolve() in source.resolve().parents)
+        for source in _sources(root)
+    ):
+        missing.append(f"PAH_Shared: {root.parent / 'PAH_Shared'}")
+    if missing:
+        raise LifecycleError(
+            "Missing standalone source checkout(s); refusing stale embedded modules:\n  - "
+            + "\n  - ".join(missing)
+        )
 
 
 def ensure_venv(root: Path, *, python_executable: str = sys.executable) -> Path:
@@ -135,6 +154,7 @@ def ensure_venv(root: Path, *, python_executable: str = sys.executable) -> Path:
 
 def install_python_components(root: Path, python: Path) -> None:
     print("\n== Python components ==")
+    preflight_standalone_sources(root)
     _run([python, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], cwd=root)
     # Install local, version-compatible PAH_Shared before PAH or pyPIQUE extras.
     # The 0.4 graph-view contract requires source assets; the old 0.3 vendor
@@ -148,10 +168,10 @@ def install_python_components(root: Path, python: Path) -> None:
             if component.required:
                 raise LifecycleError(
                     f"{component.label} is missing or not installable at {component.path}. "
-                    "Run git submodule update --init --recursive."
+                    "Use the standalone repository checkout adjacent to PAH."
                 )
             continue
-        print(f"Installing {component.label}: {component.install_spec}")
+        print(f"Installing {component.label} from standalone source: {(root / component.path).resolve()}")
         _run([python, "-m", "pip", "install", "-e", component.install_spec], cwd=root)
         if component.key == "code_analyzer":
             api_ok, api_error = _code_analyzer_api_status(python, root=root)
@@ -378,9 +398,13 @@ def _code_analyzer_api_status(python: Path, *, root: Path) -> tuple[bool, str | 
     CodeAnalyzer, which would otherwise fail only when Analyze is clicked.
     """
     code = (
-        "import importlib,json,sys\n"
+        "import importlib,json,sys,pathlib\n"
+        f"host_root=pathlib.Path({str(root.resolve())!r})\n"
         "try:\n"
         "    package=importlib.import_module('code_analyzer')\n"
+        "    origin=getattr(package,'__file__',None)\n"
+        "    if not origin or pathlib.Path(origin).resolve().parent == host_root/'code_analyzer':\n"
+        "        raise ImportError('code_analyzer resolves to PAH root or an incomplete namespace package')\n"
         "    facade=getattr(package,'CodeAnalyzer',None)\n"
         "    if not callable(facade):\n"
         "        raise AttributeError('code_analyzer.CodeAnalyzer is unavailable')\n"
@@ -904,7 +928,10 @@ def _host_dirty(root: Path) -> list[str]:
     # Untracked files (for example a downloaded .patch next to the checkout) do
     # not affect submodule gitlinks and are left untouched. Tracked host edits or
     # already-modified submodule pointers still block the developer update.
-    output = _git_output(root, ["status", "--porcelain=v1", "--untracked-files=no"], check=False)
+    # Embedded gitlink worktrees are not source owners. Their dirty state must
+    # not block an explicit operation on independent standalone repositories.
+    output = _git_output(root, ["status", "--porcelain=v1", "--untracked-files=no",
+                                "--ignore-submodules=all"], check=False)
     return output.splitlines() if output else []
 
 
@@ -932,8 +959,8 @@ def setup(
             f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer is required; found {sys.version.split()[0]}."
         )
     print(f"PAH setup: {root}")
-    if not skip_submodules:
-        ensure_submodules(root)
+    # --skip-submodules remains accepted for compatibility, but neither mode
+    # touches PAH-owned Git submodule worktrees.
     python = ensure_venv(root)
     install_python_components(root, python)
     if not skip_assets:
@@ -966,8 +993,7 @@ def advance_shared_checkout(root: Path) -> None:
             "--latest-shared does not pull PAH_SHARED_SOURCE overrides; "
             "update that explicitly selected checkout yourself."
         )
-    sources = (root.parent / "PAH_Shared", root / "modules" / "pah_shared",
-               root / "modules" / "PAH_Shared", root / "PAH_Shared")
+    sources = (root.parent / "PAH_Shared",)
     checkout = next((p for p in sources if _source_version(p) is not None), None)
     if checkout is None or not _is_git_repo(checkout):
         raise LifecycleError(
@@ -1052,7 +1078,8 @@ def update(
                 preview = ", ".join(untracked[:6])
                 print(f"Untracked host files will be left untouched: {preview}")
         print("\n== Host repository ==")
-        _run(["git", "pull", "--ff-only"], cwd=root)
+        # Host Git pull must not recurse into PAH's legacy embedded submodules.
+        _run(["git", "-c", "submodule.recurse=false", "pull", "--ff-only"], cwd=root)
         if latest_shared:
             advance_shared_checkout(root)
         # Re-enter after pulling so newly updated lifecycle code is used.
@@ -1065,7 +1092,7 @@ def update(
             skip_system_tools=skip_system_tools,
         )
 
-    ensure_submodules(root)
+    # Embedded module snapshots are deployment history only, never updated here.
     if latest_modules:
         advance_latest_modules(root)
 
@@ -1090,9 +1117,9 @@ def update(
         python = _venv_python(root)
         test_report = run_component_tests(root, python)
         if not test_report["ok"]:
-            print("\n✗ One or more compatibility test suites failed. Review before committing submodule pointers.")
+            print("\n✗ One or more compatibility test suites failed. Review standalone sources before continuing.")
             return 1
-        print("\n✓ Compatibility tests passed. Review and commit the new submodule pointers when ready.")
+        print("\n✓ Compatibility tests passed. Standalone source history remains independently owned.")
     return 0
 
 
@@ -1101,7 +1128,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--root", type=Path, default=ROOT, help="PAH repository root")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    setup_parser = sub.add_parser("setup", help="Initialize modules, Python dependencies, assets, and readiness")
+    setup_parser = sub.add_parser("setup", help="Install sibling source repositories, assets, and readiness")
     setup_parser.add_argument("--skip-submodules", action="store_true")
     setup_parser.add_argument("--skip-assets", action="store_true")
     setup_parser.add_argument("--force-assets", action="store_true")
@@ -1111,13 +1138,13 @@ def _parser() -> argparse.ArgumentParser:
         help="Do not attempt automatic installation of recommended Graphviz/Quarto tools",
     )
 
-    update_parser = sub.add_parser("update", help="Fast-forward PAH, restore pinned modules, or explicitly advance development branches")
+    update_parser = sub.add_parser("update", help="Update PAH and install sibling sources without touching embedded modules")
     update_parser.add_argument("--no-pull", action="store_true", help="Do not contact the PAH remote; reconcile the current checkout only")
     update_parser.add_argument("--skip-assets", action="store_true")
     update_parser.add_argument(
         "--latest-modules",
         action="store_true",
-        help="Explicit developer mode: advance managed module main branches and leave pointer changes for review",
+        help="Explicit developer mode: advance clean standalone repository branches only",
     )
     update_parser.add_argument(
         "--latest-shared", action="store_true",

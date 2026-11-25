@@ -67,7 +67,7 @@ class AnalyzerIntegration:
                     f"Incompatible code_analyzer package at {origin}: "
                     "neither the package root nor its API provides CodeAnalyzer "
                     f"({type(exc).__name__}: {exc}). "
-                    "Reinstall the local modules/code_analyzer checkout in PAH's .venv."
+                    "Reinstall the standalone Code_Repository_Cataloguer checkout in PAH's .venv."
                 )
                 return None
         self._analyzer_class = analyzer_class
@@ -124,7 +124,7 @@ class AnalyzerIntegration:
             )
             raise AnalyzerIntegrationError(
                 explanation
-                + "Verify the local modules/code_analyzer checkout and reinstall it "
+                + "Verify the standalone Code_Repository_Cataloguer checkout and reinstall it "
                 "in the active PAH virtual environment."
                 + (f" Import error: {self._import_error}" if self._import_error else "")
             )
