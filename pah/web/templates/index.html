@@ -791,7 +791,6 @@
           <tr>
             <th class="component-select-col"></th>
             <th>Component</th>
-            <th>PAH pinned</th>
             <th>Checked out</th>
             <th>Remote</th>
             <th>Status</th>
@@ -805,21 +804,13 @@
       <label class="component-test-toggle"><input id="componentVersionsRunTests" type="checkbox" checked> Run compatibility checks after update</label>
       <div class="dialog-actions compact">
         <button id="componentVersionsUpdateSelected" type="button">Update Selected</button>
-        <button id="componentVersionsUpdateAll" type="button">Update All Modules</button>
-        <button id="componentVersionsRestore" type="button">Restore Pinned</button>
+        <button id="componentVersionsUpdateAll" type="button">Update All Repositories</button>
         <button id="componentVersionsTest" type="button">Run Compatibility Checks</button>
       </div>
     </div>
 
-    <div class="component-record-row">
-      <label>Version commit message
-        <input id="componentVersionsCommitMessage" type="text" value="Record PAH component versions" spellcheck="false">
-      </label>
-      <button id="componentVersionsRecord" type="button">Record Component Versions</button>
-    </div>
-
     <div id="componentVersionsResult" class="component-versions-result" aria-live="polite">
-      Local refresh does not contact any remote. Fetch and Update are explicit network actions. Recording versions creates local parent Git commits only; it never pushes.
+      Standalone repositories manage their own commits. Local refresh reads cached Git references; Fetch and Update are explicit remote actions. PAH never records parent gitlinks or commits module revisions.
     </div>
   </div>
 </dialog>

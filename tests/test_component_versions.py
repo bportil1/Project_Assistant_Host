@@ -143,9 +143,9 @@ def test_component_version_panel_and_routes_are_exposed():
     assert "/api/components/status" in script
     assert "/api/components/fetch" in script
     assert "/api/components/update" in script
-    assert "/api/components/restore-pinned" in script
+    assert "/api/components/restore-pinned" not in script
     assert "/api/components/test" in script
-    assert "/api/components/record" in script
+    assert "/api/components/record" not in script
     assert '@app.get("/api/components/status")' in app_source
     assert '@app.post("/api/components/update")' in app_source
 

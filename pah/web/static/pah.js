@@ -3564,7 +3564,7 @@
     const ids = [
       'componentVersionsRefresh', 'componentVersionsFetch', 'componentVersionsSelectAll',
       'componentVersionsClear', 'componentVersionsUpdateSelected', 'componentVersionsUpdateAll',
-      'componentVersionsRestore', 'componentVersionsTest', 'componentVersionsRecord',
+      'componentVersionsTest',
     ];
     for (const id of ids) {
       const button = $(id);
@@ -3638,7 +3638,7 @@
       nameCell.appendChild(name);
       row.appendChild(nameCell);
 
-      for (const value of [item.pinned_short, item.checked_out_short, item.remote_head_short]) {
+      for (const value of [item.checked_out_short, item.remote_head_short]) {
         const cell = document.createElement('td');
         const sha = document.createElement('span');
         sha.className = `component-sha${value ? '' : ' muted'}`;
@@ -3678,7 +3678,7 @@
     componentVersionResult('Refreshing local component state…');
     try {
       await refreshComponentVersions({preserveSelection: false});
-      componentVersionResult('Local refresh does not contact any remote. Fetch and Update are explicit network actions. Recording versions creates local parent Git commits only; it never pushes.');
+      componentVersionResult('Standalone repositories manage their own commits. Local refresh uses cached Git refs; Fetch and Update explicitly contact the configured remotes. No parent gitlinks are recorded.');
     } catch (error) {
       componentVersionResult(error.message, 'error');
     }
@@ -3701,11 +3701,6 @@
       renderComponentVersions(data);
       const parts = [successMessage];
       if (data.compatibility_run) parts.push(describeCompatibility(data.compatibility_run));
-      if (data.commits?.length) {
-        parts.push('Local version commits:');
-        for (const commit of data.commits) parts.push(`  ${commit.commit.slice(0, 10)}  ${commit.repo}`);
-        parts.push('No push was performed.');
-      }
       componentVersionResult(parts.filter(Boolean).join('\n\n'), data.compatibility_run?.ok === false ? 'error' : 'success');
       return data;
     } catch (error) {
@@ -3729,37 +3724,17 @@
     const keys = all ? (snapshot?.components || []).map(item => item.key) : selectedComponentVersionKeys();
     if (!keys.length) throw new Error('Select at least one component to update.');
     const label = all ? 'all managed components' : `${keys.length} selected component${keys.length === 1 ? '' : 's'}`;
-    if (!window.confirm(`Fast-forward ${label} to their configured remote branches? Local module working trees must be clean.`)) return;
+    if (!window.confirm(`Fast-forward ${label} in their standalone repositories? Every selected working tree must be clean. PAH will not modify embedded modules or create parent Git pins.`)) return;
     await componentVersionAction('/api/components/update', {
       keys,
       run_tests: Boolean($('componentVersionsRunTests')?.checked),
-    }, {successMessage: `Updated ${label}. Review the pinned/checked-out columns, then record the compatible versions when ready.`});
-  }
-
-  async function restorePinnedComponents() {
-    const keys = selectedComponentVersionKeys();
-    if (!keys.length) throw new Error('Select at least one component to restore.');
-    if (!window.confirm(`Restore ${keys.length} selected component${keys.length === 1 ? '' : 's'} to the revisions recorded by their parent repositories?`)) return;
-    await componentVersionAction('/api/components/restore-pinned', {keys}, {
-      successMessage: 'Selected component checkouts restored to their pinned revisions.',
-    });
+    }, {successMessage: `Updated ${label}. The standalone repositories retain their own Git history; no parent pin is recorded.`});
   }
 
   async function testSelectedComponents() {
     const keys = selectedComponentVersionKeys();
     await componentVersionAction('/api/components/test', {keys: keys.length ? keys : null}, {
       successMessage: keys.length ? 'Compatibility checks completed for the selected modules plus PAH.' : 'Compatibility checks completed for all managed modules plus PAH.',
-    });
-  }
-
-  async function recordSelectedComponentVersions() {
-    const keys = selectedComponentVersionKeys();
-    if (!keys.length) throw new Error('Select at least one changed component to record.');
-    const message = String($('componentVersionsCommitMessage')?.value || '').trim();
-    if (!message) throw new Error('Enter a version commit message.');
-    if (!window.confirm('Create local Git commit(s) recording the selected submodule revisions? This does not push anything.')) return;
-    await componentVersionAction('/api/components/record', {keys, message}, {
-      successMessage: 'Selected component revisions recorded in their parent repository commits.',
     });
   }
 
@@ -5736,9 +5711,7 @@
   $('componentVersionsClear').onclick = () => document.querySelectorAll('#componentVersionsRows input[data-component-key]').forEach(input => { input.checked = false; });
   $('componentVersionsUpdateSelected').onclick = () => updateSelectedComponents(false).catch(error => { if (!state.componentVersions.busy) toast(error.message, true); });
   $('componentVersionsUpdateAll').onclick = () => updateSelectedComponents(true).catch(error => { if (!state.componentVersions.busy) toast(error.message, true); });
-  $('componentVersionsRestore').onclick = () => restorePinnedComponents().catch(error => { if (!state.componentVersions.busy) toast(error.message, true); });
   $('componentVersionsTest').onclick = () => testSelectedComponents().catch(() => {});
-  $('componentVersionsRecord').onclick = () => recordSelectedComponentVersions().catch(error => { if (!state.componentVersions.busy) toast(error.message, true); });
   $('toolsTerminalWindow').onclick = () => {
     closeServiceMenus();
     detachSurface('terminal').catch(error => toast(error.message, true));

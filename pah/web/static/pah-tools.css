@@ -533,7 +533,7 @@ button.result-row:hover,
 .component-versions-dialog::backdrop { background: rgb(7 20 30 / .58); }
 .component-versions-card {
   display: grid;
-  grid-template-rows: auto auto minmax(220px, 1fr) auto auto auto;
+  grid-template-rows: auto auto minmax(220px, 1fr) auto auto;
   width: min(1120px, 94vw);
   max-height: min(820px, 90vh);
   min-height: 520px;
@@ -550,8 +550,7 @@ button.result-row:hover,
 }
 .component-versions-card > .dialog-heading h3 { margin: 0; }
 .component-versions-toolbar,
-.component-versions-actions,
-.component-record-row {
+.component-versions-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -628,7 +627,6 @@ button.result-row:hover,
 .component-status-pill.diverged,
 .component-status-pill.missing { color: #8a3030; background: #fff1f1; border-color: #d6a2a2; }
 .component-status-pill.remote_unknown,
-.component-status-pill.unmanaged,
 .component-status-pill.not_initialized { color: #626d73; background: #f2f4f5; border-color: #c8d0d4; }
 .component-version-detail {
   display: block;
@@ -644,18 +642,6 @@ button.result-row:hover,
   color: var(--pah-muted, #5e707b);
   font-size: 11px;
 }
-.component-record-row {
-  border-bottom: 1px solid var(--pah-border, #bfd0d9);
-}
-.component-record-row label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1 1 420px;
-  color: var(--pah-muted, #5e707b);
-  font-size: 11px;
-}
-.component-record-row input { flex: 1; min-width: 220px; }
 .component-versions-result {
   margin: 0;
   padding: 9px 12px 11px;
@@ -672,7 +658,7 @@ button.result-row:hover,
 @media (max-width: 760px) {
   .component-versions-table th:nth-child(3),
   .component-versions-table td:nth-child(3),
-  .component-versions-table th:nth-child(5),
-  .component-versions-table td:nth-child(5) { display: none; }
+  .component-versions-table th:nth-child(4),
+  .component-versions-table td:nth-child(4) { display: none; }
   .component-versions-summary { width: 100%; margin-left: 0; }
 }

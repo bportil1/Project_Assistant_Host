@@ -17,6 +17,7 @@ from .components import GIT_COMPONENTS, PYTHON_COMPONENTS, GitComponent, PythonC
 from .lifecycle import (
     LifecycleError,
     _component_present,
+    _editable_install_command,
     _git_output,
     _is_git_repo,
     _run,
@@ -42,7 +43,6 @@ _STATUS_LABELS = {
     "conflict": "Conflict",
     "diverged": "Diverged",
     "remote_unknown": "Remote status unknown",
-    "unmanaged": "Not pinned by parent",
 }
 
 
@@ -156,7 +156,18 @@ def _status_for(
         return "missing"
     head = snapshot.get("head")
     if not pinned:
-        return "unmanaged" if remote_head else "remote_unknown"
+        # Standalone components have no parent gitlink by design.  Their
+        # status is relative to the configured remote-tracking branch, not
+        # whether a parent repository records their SHA.
+        if remote_head is None:
+            return "remote_unknown"
+        if ahead > 0 and behind > 0:
+            return "diverged"
+        if behind > 0:
+            return "update_available"
+        if ahead > 0:
+            return "ahead_local"
+        return "current"
     if head != pinned:
         if remote_head and head == remote_head:
             return "pinned_mismatch"
@@ -287,7 +298,7 @@ def _install_selected(root: Path, components: Sequence[GitComponent]) -> list[di
             results.append({"key": component.key, "status": "skipped", "reason": "source unavailable"})
             continue
         result = _run(
-            [python, "-m", "pip", "install", "-e", component.install_spec],
+            _editable_install_command(python, component.install_spec),
             cwd=root,
             check=False,
             capture=True,
@@ -565,6 +576,14 @@ class ComponentVersionManager:
     def restore_pinned(self, keys: Iterable[str]) -> dict:
         with self._lock:
             selected = self._select(keys)
+            # Backward-compatible API guard: standalone source owners have no
+            # parent gitlinks. Fail before any repository or install operation.
+            for component in selected:
+                item = component_version_snapshot(self.root, component)
+                if item.get("ok") and not item.get("pinned"):
+                    raise ComponentVersionError(
+                        f"{component.label} is a standalone repository; no parent-pinned revision exists to restore."
+                    )
             _ensure_safe_component_trees(self.root, selected, allow_selected_nested_pointers=True)
             restored: list[dict] = []
             available: list[GitComponent] = []
@@ -613,6 +632,12 @@ class ComponentVersionManager:
         """
         with self._lock:
             selected = self._select(keys)
+            for component in selected:
+                item = component_version_snapshot(self.root, component)
+                if item.get("ok") and not item.get("pinned"):
+                    raise ComponentVersionError(
+                        f"{component.label} is a standalone repository; its revision belongs to its own Git history, not a PAH parent gitlink."
+                    )
             _ensure_safe_component_trees(self.root, selected, allow_selected_nested_pointers=True)
             message = (message or "Record PAH component versions").strip()
             if not message:
