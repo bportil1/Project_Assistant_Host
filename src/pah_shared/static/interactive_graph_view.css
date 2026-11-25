@@ -1,0 +1,14 @@
+/* SU-02: opt-in interactive graph, scoped; neutral, owner-controlled semantic colors. */
+.pah-interactive-graph { display:block; width:100%; min-height:240px; background:var(--pah-ig-bg,#f5f8fc); touch-action:none; border:1px solid var(--pah-ig-border,#aabbd0); border-radius:8px; }
+.pah-interactive-graph .pah-ig-node-bg { fill:var(--pah-ig-node-bg,#fff); stroke:var(--pah-ig-border,#91a7bf); stroke-width:1.6; }
+.pah-interactive-graph .pah-ig-node-label { fill:var(--pah-ig-text,#193657); font:12px system-ui,sans-serif; }
+.pah-interactive-graph .pah-ig-edge-line { stroke:var(--pah-ig-link,#748da8); stroke-width:2; }
+.pah-interactive-graph .pah-ig-arrow-head { fill:var(--pah-ig-link,#748da8); }
+.pah-interactive-graph .pah-ig-node,.pah-interactive-graph .pah-ig-edge { cursor:pointer; outline:none; }
+.pah-interactive-graph .is-selected .pah-ig-node-bg { stroke:var(--pah-ig-selection,#168ccb); stroke-width:3.3; }
+.pah-interactive-graph .is-selected .pah-ig-edge-line { stroke:var(--pah-ig-selection,#168ccb); stroke-width:4; }
+.pah-interactive-graph .is-dimmed { opacity:.2; }
+.pah-interactive-graph [role="button"]:focus-visible .pah-ig-node-bg,
+.pah-interactive-graph [role="button"]:focus-visible .pah-ig-edge-line { stroke:var(--pah-ig-selection,#168ccb); stroke-width:4; }
+.pah-interactive-graph [data-overlay-status="measured"] .pah-ig-node-bg { stroke-dasharray:0; }
+.pah-interactive-graph [data-overlay-status="insufficient_support"] .pah-ig-node-bg { stroke-dasharray:5 4; }
