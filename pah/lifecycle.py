@@ -154,10 +154,27 @@ def ensure_venv(root: Path, *, python_executable: str = sys.executable) -> Path:
     return python
 
 
+def _editable_install_command(python: Path, spec: str) -> list[str | Path]:
+    """Install local checked-out sources using build tools in PAH's venv.
+
+    PEP 517/660 build isolation creates a temporary environment and asks pip
+    to obtain the build-system requirements again.  That fails with
+    PIP_NO_INDEX=1 even if PAH's own venv already has the required setuptools,
+    wheel and other build backends.  All editable installs managed by PAH
+    intentionally reuse its prepared venv, whether online or offline.
+
+    This does NOT skip Python package dependencies, relax version constraints,
+    or install sources from PAH's embedded modules directory.
+    """
+    return [python, "-m", "pip", "install", "--no-build-isolation", "-e", spec]
+
+
 def install_python_components(root: Path, python: Path) -> None:
     print("\n== Python components ==")
     preflight_standalone_sources(root)
-    _run([python, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], cwd=root)
+    # Build backends must be usable inside this same venv.  PIP_NO_INDEX=1
+    # will only select locally installed/cached distributions here.
+    _run([python, "-m", "pip", "install", "--upgrade", "pip", "setuptools>=68", "wheel"], cwd=root)
     # Install local, version-compatible PAH_Shared before PAH or pyPIQUE extras.
     # The 0.4 graph-view contract requires source assets; the old 0.3 vendor
     # snapshot is not a compatible fallback. A local checkout is reinstalled.
@@ -174,7 +191,7 @@ def install_python_components(root: Path, python: Path) -> None:
                 )
             continue
         print(f"Installing {component.label} from standalone source: {(root / component.path).resolve()}")
-        _run([python, "-m", "pip", "install", "-e", component.install_spec], cwd=root)
+        _run(_editable_install_command(python, component.install_spec), cwd=root)
         if component.key == "code_analyzer":
             api_ok, api_error = _code_analyzer_api_status(python, root=root)
             if not api_ok:
@@ -874,11 +891,12 @@ def ensure_compatibility_test_dependencies(root: Path, python: Path) -> None:
         return
     print("\n== Compatibility test dependencies ==")
     print("pytest is not installed in the PAH environment; installing the host dev extra.")
-    result = _run([python, "-m", "pip", "install", "-e", ".[dev]"], cwd=root, check=False)
+    result = _run(_editable_install_command(python, ".[dev]"), cwd=root, check=False)
     if result.returncode != 0:
         raise LifecycleError(
             "Unable to install compatibility-test dependencies. "
-            "Run .venv/bin/python -m pip install -e '.[dev]' and retry."
+            "Check local build tools and the dev dependency; retry with "
+            "'.venv/bin/python -m pip install --no-build-isolation -e .[dev]'."
         )
     verify = _run([python, "-c", "import pytest"], cwd=root, check=False, capture=True)
     if verify.returncode != 0:

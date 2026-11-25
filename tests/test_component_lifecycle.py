@@ -204,14 +204,14 @@ def test_compatibility_tests_install_host_dev_extra_when_pytest_is_missing(monke
         calls.append(command)
         if command[-2:] == ["-c", "import pytest"]:
             return subprocess.CompletedProcess(command, next(probes), stdout="", stderr="")
-        if command[-5:] == ["-m", "pip", "install", "-e", ".[dev]"]:
+        if command[-6:] == ["-m", "pip", "install", "--no-build-isolation", "-e", ".[dev]"]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         raise AssertionError(f"Unexpected command: {command}")
 
     monkeypatch.setattr(lifecycle, "_run", fake_run)
     lifecycle.ensure_compatibility_test_dependencies(tmp_path, python)
 
-    assert [str(python), "-m", "pip", "install", "-e", ".[dev]"] in calls
+    assert [str(python), "-m", "pip", "install", "--no-build-isolation", "-e", ".[dev]"] in calls
 
 def test_component_compatibility_runner_uses_declared_targets(monkeypatch, tmp_path: Path):
     import pah.lifecycle as lifecycle
