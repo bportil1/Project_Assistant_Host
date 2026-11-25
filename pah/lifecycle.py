@@ -15,7 +15,11 @@ from typing import Iterable, Sequence
 import urllib.error
 import urllib.request
 
-from .shared_bootstrap import SharedBootstrapError, bootstrap_pah_shared
+from .shared_bootstrap import (
+    SharedBootstrapError, _source_version, _installed_version,
+    _installed_missing_graph_assets, _graph_assets_required,
+    bootstrap_pah_shared, declared_constraints, satisfies_all,
+)
 
 from .components import (
     BROWSER_ASSETS,
@@ -133,7 +137,8 @@ def install_python_components(root: Path, python: Path) -> None:
     print("\n== Python components ==")
     _run([python, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], cwd=root)
     # Install local, version-compatible PAH_Shared before PAH or pyPIQUE extras.
-    # The vendored 0.3 snapshot is the offline fallback when older machines lack a checkout.
+    # The 0.4 graph-view contract requires source assets; the old 0.3 vendor
+    # snapshot is not a compatible fallback. A local checkout is reinstalled.
     try:
         bootstrap_pah_shared(root, python, run=_run)
     except SharedBootstrapError as exc:
@@ -456,6 +461,25 @@ def doctor_report(root: Path) -> dict:
     if not report["python"]["ok"] or not report["venv"]["ok"]:
         report["ok"] = False
 
+    # Explicit shared-runtime readiness. Installed version metadata alone does
+    # not guarantee the graph renderer is present in this interpreter.
+    shared = {"ok": False, "version": None, "missing_assets": [], "error": None}
+    if venv_python.is_file():
+        try:
+            shared["version"] = _installed_version(venv_python, root)
+            constraints = declared_constraints(root)
+            valid = bool(shared["version"] and satisfies_all(shared["version"], constraints))
+            if valid and _graph_assets_required(shared["version"]):
+                shared["missing_assets"] = list(_installed_missing_graph_assets(venv_python, root))
+            shared["ok"] = valid and not shared["missing_assets"]
+            if not valid:
+                shared["error"] = "PAH_Shared is missing or violates " + ", ".join(constraints)
+        except SharedBootstrapError as exc:
+            shared["error"] = str(exc)
+    report["shared"] = shared
+    if not shared["ok"]:
+        report["ok"] = False
+
     for component in PYTHON_COMPONENTS:
         present = _component_present(root, component)
         item = {
@@ -550,6 +574,11 @@ def print_doctor(report: dict) -> None:
     print("\nHOST")
     print(f"{_status_mark(python['ok'])} Python {python['version']} (requires >= {python['minimum']})")
     print(f"{_status_mark(report['venv']['ok'])} Virtual environment: {report['venv']['path']}")
+    shared = report.get("shared", {})
+    detail = shared.get("error") or ("missing assets: " + ", ".join(shared.get("missing_assets", []))
+                                     if shared.get("missing_assets") else "")
+    print(f"{_status_mark(shared.get('ok', False))} PAH_Shared "
+          f"{shared.get('version') or 'not installed'}" + (f" — {detail}" if detail else ""))
 
     print("\nCOMPONENTS")
     for item in report["components"]:
@@ -924,10 +953,47 @@ def setup(
     return 1
 
 
+
+def advance_shared_checkout(root: Path) -> None:
+    """Explicitly fast-forward a local PAH_Shared Git checkout.
+
+    This is only called by ``update --latest-shared``. Setup and --no-pull
+    never use network, and we never fetch an arbitrary PAH_SHARED_SOURCE path
+    or rewrite a dirty/detached checkout.
+    """
+    if os.environ.get("PAH_SHARED_SOURCE"):
+        raise LifecycleError(
+            "--latest-shared does not pull PAH_SHARED_SOURCE overrides; "
+            "update that explicitly selected checkout yourself."
+        )
+    sources = (root.parent / "PAH_Shared", root / "modules" / "pah_shared",
+               root / "modules" / "PAH_Shared", root / "PAH_Shared")
+    checkout = next((p for p in sources if _source_version(p) is not None), None)
+    if checkout is None or not _is_git_repo(checkout):
+        raise LifecycleError(
+            "--latest-shared needs an existing PAH_Shared Git checkout (usually ../PAH_Shared). "
+            "Clone it locally first, or use PAH_SHARED_SOURCE for offline setup."
+        )
+    top_level = _git_output(checkout, ["rev-parse", "--show-toplevel"], check=False)
+    if not top_level or Path(top_level).resolve() != checkout.resolve():
+        raise LifecycleError(f"PAH_Shared source is not its own Git checkout: {checkout}")
+    if _git_output(checkout, ["status", "--porcelain"], check=False):
+        raise LifecycleError(f"PAH_Shared checkout is dirty: {checkout}; commit or stash changes first.")
+    branch = _git_output(checkout, ["symbolic-ref", "--short", "HEAD"], check=False)
+    if not branch:
+        raise LifecycleError(f"PAH_Shared checkout is detached: {checkout}; refusing to advance it.")
+    tracking = _git_output(checkout, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], check=False)
+    if not tracking:
+        raise LifecycleError(f"PAH_Shared checkout has no upstream: {checkout}; configure its tracking branch.")
+    print(f"\n== PAH_Shared checkout ==\nFast-forwarding {checkout} ({branch} from {tracking})")
+    _run(["git", "pull", "--ff-only"], cwd=checkout)
+
+
 def _reenter_update(
     root: Path,
     *,
     latest_modules: bool,
+    latest_shared: bool,
     skip_assets: bool,
     skip_tests: bool,
     skip_system_tools: bool,
@@ -943,6 +1009,8 @@ def _reenter_update(
     ]
     if latest_modules:
         command.append("--latest-modules")
+    if latest_shared:
+        command.append("--latest-shared")
     if skip_assets:
         command.append("--skip-assets")
     if skip_tests:
@@ -958,6 +1026,7 @@ def update(
     no_pull: bool = False,
     skip_assets: bool = False,
     latest_modules: bool = False,
+    latest_shared: bool = False,
     skip_tests: bool = False,
     skip_system_tools: bool = False,
 ) -> int:
@@ -965,6 +1034,8 @@ def update(
         raise LifecycleError("Git is required for PAH update.")
     if not (root / ".git").exists():
         raise LifecycleError("PAH update must be run from a Git checkout.")
+    if latest_shared and no_pull:
+        raise LifecycleError("--latest-shared requires a pull-enabled update; omit --no-pull.")
 
     print(f"PAH compatible update: {root}")
     if not no_pull:
@@ -982,10 +1053,13 @@ def update(
                 print(f"Untracked host files will be left untouched: {preview}")
         print("\n== Host repository ==")
         _run(["git", "pull", "--ff-only"], cwd=root)
+        if latest_shared:
+            advance_shared_checkout(root)
         # Re-enter after pulling so newly updated lifecycle code is used.
         return _reenter_update(
             root,
             latest_modules=latest_modules,
+            latest_shared=False,  # already fast-forwarded before re-entry
             skip_assets=skip_assets,
             skip_tests=skip_tests,
             skip_system_tools=skip_system_tools,
@@ -1046,6 +1120,10 @@ def _parser() -> argparse.ArgumentParser:
         help="Explicit developer mode: advance managed module main branches and leave pointer changes for review",
     )
     update_parser.add_argument(
+        "--latest-shared", action="store_true",
+        help="Explicitly fast-forward a clean, tracking PAH_Shared checkout before local reinstall",
+    )
+    update_parser.add_argument(
         "--skip-tests",
         action="store_true",
         help="With --latest-modules, skip host/module compatibility test suites",
@@ -1087,6 +1165,7 @@ def main(argv: list[str] | None = None) -> int:
                 no_pull=args.no_pull,
                 skip_assets=args.skip_assets,
                 latest_modules=args.latest_modules,
+                latest_shared=args.latest_shared,
                 skip_tests=args.skip_tests,
                 skip_system_tools=args.skip_system_tools,
             )

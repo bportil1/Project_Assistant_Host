@@ -556,7 +556,7 @@ for the additive identity fields, stale-selection header, compatibility and roll
 
 ### P5-04 — shared Quality Impact analysis tables
 
-The read-only Quality Impact tables use `pah-shared>=0.3,<0.4`'s exact
+The read-only Quality Impact tables use `pah-shared>=0.4,<0.5`'s exact
 interactive table implementation. PAH only supplies its already-computed rows.
 PAH_Shared owns filtering, sorting, pagination, neutral styling and
 CSV/PNG/SVG/LaTeX exports. Module-update selection tables remain separate

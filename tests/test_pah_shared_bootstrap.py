@@ -139,3 +139,87 @@ def test_conflicting_host_pypique_ranges_report_error(tmp_path: Path, monkeypatc
     with pytest.raises(SharedBootstrapError, match="no compatible local source"):
         bootstrap_pah_shared(tmp_path, Path("/venv/python"),
                              run=lambda *_a, **_k: pytest.fail("conflicting versions must not install"))
+
+
+def _graph_source(root: Path, name: str = "PAH_Shared") -> Path:
+    source = root / name
+    static = source / "src" / "pah_shared" / "static"
+    static.mkdir(parents=True)
+    (source / "pyproject.toml").write_text(
+        '[project]\nname="pah-shared"\nversion="0.4.0"\n', encoding="utf-8"
+    )
+    for asset in ("interactive_graph_view.mjs", "interactive_graph_view.css"):
+        (static / asset).write_text("graph asset", encoding="utf-8")
+    return source
+
+
+def test_0_4_same_version_reinstalls_local_source_to_refresh_graph_assets(tmp_path, monkeypatch):
+    _required_project(tmp_path, spec=">=0.4,<0.5")
+    source = _graph_source(tmp_path)
+    monkeypatch.setattr("pah.shared_bootstrap._installed_version", lambda *_: "0.4.0")
+    monkeypatch.setattr("pah.shared_bootstrap._installed_missing_graph_assets", lambda *_: ())
+    commands = []
+
+    def run(args, **kw):
+        commands.append((args, kw))
+        return subprocess.CompletedProcess(args, 0)
+
+    assert bootstrap_pah_shared(tmp_path, Path("/venv/python"), run=run) == "0.4.0"
+    assert len(commands) == 1
+    assert commands[0][0][-2:] == ["-e", source]
+    assert "--no-index" in commands[0][0]
+    assert commands[0][1]["cwd"] == tmp_path
+
+
+def test_shared_checkout_without_graph_assets_is_not_accepted(tmp_path, monkeypatch):
+    _required_project(tmp_path, spec=">=0.4,<0.5")
+    source = _graph_source(tmp_path)
+    (source / "src/pah_shared/static/interactive_graph_view.mjs").unlink()
+    monkeypatch.setattr("pah.shared_bootstrap._installed_version", lambda *_: "0.4.0")
+    with pytest.raises(SharedBootstrapError, match="incomplete.*interactive_graph_view.mjs"):
+        bootstrap_pah_shared(tmp_path, Path("/venv/python"),
+                             run=lambda *_a, **_k: pytest.fail("cannot install broken source"))
+
+
+def test_matching_old_wheel_without_graph_assets_fails_closed(tmp_path, monkeypatch):
+    _required_project(tmp_path, spec=">=0.4,<0.5")
+    monkeypatch.setattr("pah.shared_bootstrap._installed_version", lambda *_: "0.4.0")
+    monkeypatch.setattr("pah.shared_bootstrap._installed_missing_graph_assets",
+                        lambda *_: ("interactive_graph_view.mjs",))
+    with pytest.raises(SharedBootstrapError, match="lacks interactive_graph_view.mjs"):
+        bootstrap_pah_shared(tmp_path, Path("/venv/python"),
+                             run=lambda *_a, **_k: pytest.fail("no source to install"))
+
+
+def test_explicit_source_override_is_authoritative(tmp_path, monkeypatch):
+    _required_project(tmp_path, spec=">=0.4,<0.5")
+    source = _graph_source(tmp_path)
+    (source / "pyproject.toml").write_text('[project]\nname="pah-shared"\nversion="0.3.0"\n')
+    monkeypatch.setenv("PAH_SHARED_SOURCE", str(source))
+    monkeypatch.setattr("pah.shared_bootstrap._installed_version", lambda *_: "0.4.0")
+    with pytest.raises(SharedBootstrapError, match="no compatible local source"):
+        bootstrap_pah_shared(tmp_path, Path("/venv/python"),
+                             run=lambda *_a, **_k: pytest.fail("bad override cannot be bypassed"))
+
+
+def test_all_checked_out_module_constraints_are_honored(tmp_path, monkeypatch):
+    _required_project(tmp_path, spec=">=0.4,<0.5")
+    _graph_source(tmp_path)
+    module = tmp_path / "modules" / "ml_lab"
+    module.mkdir(parents=True)
+    (module / "pyproject.toml").write_text(
+        '[project.optional-dependencies]\nui=["pah-shared>=0.3,<0.4"]\n'
+    )
+    monkeypatch.setattr("pah.shared_bootstrap._installed_version", lambda *_: None)
+    assert declared_constraints(tmp_path) == (">=0.4,<0.5", ">=0.3,<0.4")
+    with pytest.raises(SharedBootstrapError, match="no compatible local source"):
+        bootstrap_pah_shared(tmp_path, Path("/venv/python"),
+                             run=lambda *_a, **_k: pytest.fail("conflicting module extra"))
+
+
+def test_code_analyzer_requirements_txt_participates_in_constraints(tmp_path):
+    _required_project(tmp_path, spec=">=0.4,<0.5")
+    path = tmp_path / "modules" / "code_analyzer" / "requirements.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text("pah-shared>=0.2,<0.4\n")
+    assert declared_constraints(tmp_path) == (">=0.4,<0.5", ">=0.2,<0.4")

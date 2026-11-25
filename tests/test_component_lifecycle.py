@@ -461,3 +461,51 @@ def test_setup_orchestrates_full_chain_and_optional_tool_failure_is_nonfatal(mon
 
     assert lifecycle.setup(tmp_path) == 0
     assert calls == ["submodules", "venv", "python", "assets", "system-tools", "doctor"]
+
+
+def test_latest_shared_disallows_implicit_fetch_or_dirty_checkout(monkeypatch, tmp_path):
+    from pah import lifecycle
+    from pah.shared_bootstrap import _source_version
+
+    root = tmp_path / "PAH"
+    root.mkdir()
+    (root / ".git").mkdir()
+    (tmp_path / "PAH_Shared").mkdir()
+    src = tmp_path / "PAH_Shared"
+    (src / "pyproject.toml").write_text('[project]\nname="pah-shared"\nversion="0.4.0"\n')
+    with pytest.raises(lifecycle.LifecycleError, match="--latest-shared requires"):
+        lifecycle.update(root, no_pull=True, latest_shared=True)
+
+    monkeypatch.setattr(lifecycle, "_is_git_repo", lambda *_: True)
+    monkeypatch.setattr(lifecycle, "_git_output", lambda _repo, args, **_k:
+                        str(src) if args[:2] == ["rev-parse", "--show-toplevel"] else " M changes.py")
+    with pytest.raises(lifecycle.LifecycleError, match="dirty"):
+        lifecycle.advance_shared_checkout(root)
+
+
+def test_latest_shared_performs_only_explicit_ff_only_update(monkeypatch, tmp_path):
+    from pah import lifecycle
+
+    root = tmp_path / "PAH"
+    root.mkdir()
+    checkout = tmp_path / "PAH_Shared"
+    checkout.mkdir()
+    (checkout / "pyproject.toml").write_text('[project]\nname="pah-shared"\nversion="0.4.0"\n')
+    monkeypatch.setattr(lifecycle, "_is_git_repo", lambda *_: True)
+
+    def git_result(_repo, args, **kw):
+        if args[:2] == ["rev-parse", "--show-toplevel"]:
+            return str(checkout)
+        if args[:2] == ["status", "--porcelain"]:
+            return ""
+        if args[:2] == ["symbolic-ref", "--short"]:
+            return "main"
+        if args[:2] == ["rev-parse", "--abbrev-ref"]:
+            return "origin/main"
+        raise AssertionError(args)
+
+    monkeypatch.setattr(lifecycle, "_git_output", git_result)
+    commands = []
+    monkeypatch.setattr(lifecycle, "_run", lambda args, **kw: commands.append((args, kw)))
+    lifecycle.advance_shared_checkout(root)
+    assert commands == [(["git", "pull", "--ff-only"], {"cwd": checkout})]
