@@ -46,3 +46,6 @@ pah/web/static/vendor/xterm/
 # PAH is only the orchestration host; module source belongs to standalone repos.
 # Tracked legacy gitlinks must also be retired from the index before this ignore applies.
 /modules/
+
+# Obsolete PAH-owned Python namespace; never reintroduce this shadow.
+/code_analyzer/

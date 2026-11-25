@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from datetime import datetime, timezone
 import platform
 import shutil
 import subprocess
@@ -169,6 +170,80 @@ def _editable_install_command(python: Path, spec: str) -> list[str | Path]:
     return [python, "-m", "pip", "install", "--no-build-isolation", "-e", spec]
 
 
+def preserve_legacy_code_analyzer_shadow(root: Path) -> Path | None:
+    """Retire an obsolete host-root ``code_analyzer`` namespace safely.
+
+    An old PAH integration once committed provider files beneath
+    ``PAH/code_analyzer``.  Removing those files from Git does not remove a
+    directory containing local/untracked content.  Such a directory can then
+    shadow the standalone Code Analyzer distribution in editable installs.
+
+    Never remove user files: relocate the *whole* legacy directory to a unique
+    sibling recovery folder, and refuse to touch symlinks, nested Git checkouts,
+    or host-owned tracked source.  Do not edit anything in PAH/modules/.
+    """
+    root = root.resolve()
+    shadow = root / "code_analyzer"
+    if not shadow.exists() and not shadow.is_symlink():
+        return None
+    if shadow.is_symlink() or not shadow.is_dir():
+        raise LifecycleError(
+            f"Unexpected legacy Code Analyzer import path: {shadow}; "
+            "refusing to follow a symlink or relocate a non-directory."
+        )
+    if (shadow / ".git").exists() or (shadow / ".git").is_symlink():
+        raise LifecycleError(
+            f"Legacy Code Analyzer path is a Git checkout: {shadow}; "
+            "refusing automatic relocation."
+        )
+    if (root / ".git").exists() and shutil.which("git"):
+        result = _run(
+            ["git", "ls-files", "--cached", "--full-name", "-z", "--", "code_analyzer"],
+            cwd=root, check=False, capture=True,
+        )
+        if result.returncode != 0:
+            raise LifecycleError(
+                "Cannot verify whether PAH/code_analyzer contains tracked files; "
+                "refusing to relocate it."
+            )
+        # A freshly applied `git apply` patch may delete the old tracked files
+        # from the worktree without staging their removal in Git's index yet.
+        # Only *present* tracked files must prevent relocation; deleted index
+        # entries are not source files to move or overwrite.
+        present_tracked = [
+            relative for relative in result.stdout.split("\0") if relative
+            and ((root / relative).exists() or (root / relative).is_symlink())
+        ]
+        if present_tracked:
+            raise LifecycleError(
+                "PAH/code_analyzer still contains host-tracked source files "
+                f"({', '.join(present_tracked[:3])}); refusing to relocate "
+                "them automatically. No files were changed."
+            )
+
+    recovery_root = root.parent / f"{root.name}_legacy_import_recovery"
+    recovery_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # Never overwrite a previous recovery directory, including across retries.
+    for number in range(1000):
+        suffix = f"-{number:03d}"
+        destination = recovery_root / f"code_analyzer_{stamp}{suffix}"
+        if not destination.exists() and not destination.is_symlink():
+            try:
+                shadow.rename(destination)
+            except OSError as exc:
+                raise LifecycleError(
+                    f"Could not preserve obsolete host-root code_analyzer at "
+                    f"{destination}: {exc}; original directory was not deleted."
+                ) from exc
+            print(
+                "Preserved legacy PAH-root code_analyzer import shadow at "
+                f"{destination}; standalone Code Analyzer remains authoritative."
+            )
+            return destination
+    raise LifecycleError("Could not choose a unique Code Analyzer recovery path.")
+
+
 def install_python_components(root: Path, python: Path) -> None:
     print("\n== Python components ==")
     preflight_standalone_sources(root)
@@ -190,6 +265,11 @@ def install_python_components(root: Path, python: Path) -> None:
                     "Use the standalone repository checkout adjacent to PAH."
                 )
             continue
+        if component.key == "code_analyzer":
+            # Keep stale namespace imports out of the *running* PAH interpreter.
+            # This handles worktree directories left after SRC-02 removed their
+            # tracked files; Git cannot clean untracked content on its own.
+            preserve_legacy_code_analyzer_shadow(root)
         print(f"Installing {component.label} from standalone source: {(root / component.path).resolve()}")
         _run(_editable_install_command(python, component.install_spec), cwd=root)
         if component.key == "code_analyzer":
