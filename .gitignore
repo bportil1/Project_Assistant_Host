@@ -42,3 +42,7 @@ htmlcov/
 # Vendored assets are supplied by the optional local installer
 pah/web/static/vendor/ace/
 pah/web/static/vendor/xterm/
+
+# PAH is only the orchestration host; module source belongs to standalone repos.
+# Tracked legacy gitlinks must also be retired from the index before this ignore applies.
+/modules/

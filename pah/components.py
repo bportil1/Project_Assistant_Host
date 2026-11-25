@@ -2,7 +2,7 @@
 
 The registry describes integration requirements without taking ownership away from
 standalone modules. Each module still owns its own pyproject and vendor scripts;
-PAH installs from sibling source repositories; its embedded Git submodules are legacy snapshots only.
+PAH installs from sibling source repositories. No module source belongs under PAH/modules/.
 """
 from __future__ import annotations
 

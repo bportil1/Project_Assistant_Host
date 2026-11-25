@@ -73,7 +73,7 @@ class ReferenceIntegration:
         if reference_class is None:
             raise ReferenceIntegrationError(
                 "ReferenceManager is not installed in the PAH environment. "
-                "Initialize modules/reference_manager and run scripts/setup.sh."
+                "Install the standalone Research_Paper_Repository_Manager source using PAH setup."
                 + (f" Import error: {self._import_error}" if self._import_error else "")
             )
         resolved = Path(root).expanduser().resolve()
@@ -108,7 +108,7 @@ class ReferenceIntegration:
         if reference_class is None:
             raise ReferenceIntegrationError(
                 "ReferenceManager is not installed in the PAH environment. "
-                "Initialize modules/reference_manager and run scripts/setup.sh."
+                "Install the standalone Research_Paper_Repository_Manager source using PAH setup."
                 + (f" Import error: {self._import_error}" if self._import_error else "")
             )
         with self._lock:

@@ -51,7 +51,7 @@ class DocumentIntegration:
         if document_class is None:
             raise DocumentIntegrationError(
                 "DocumentEngine is not installed in the PAH environment. "
-                "Initialize modules/tech_documents and run scripts/setup.sh."
+                "Install the standalone Research_Document_Workbench source using PAH setup."
                 + (f" Import error: {self._import_error}" if self._import_error else "")
             )
         with self._lock:

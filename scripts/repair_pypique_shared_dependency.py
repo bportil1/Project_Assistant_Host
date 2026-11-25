@@ -56,10 +56,14 @@ def repaired_content(content: str, installed_version: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--pypique', type=Path, default=Path('modules/pypique'))
+    parser.add_argument('--pypique', type=Path, default=Path(__file__).resolve().parents[2] / 'pyPIQUE')
     parser.add_argument('--apply', action='store_true', help='Write pyPIQUE pyproject.toml; default is dry run')
     args = parser.parse_args(argv)
-    target = args.pypique / 'pyproject.toml'
+    target_root = args.pypique.expanduser().resolve()
+    host_root = Path(__file__).resolve().parents[1]
+    if target_root == host_root or host_root in target_root.parents:
+        parser.error('Refusing to modify a path inside PAH; use a standalone pyPIQUE checkout')
+    target = target_root / 'pyproject.toml'
     if not target.is_file() or target.is_symlink():
         parser.error(f'Expected ordinary local pyPIQUE pyproject.toml: {target}')
     try:

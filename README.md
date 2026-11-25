@@ -325,21 +325,26 @@ Sprint 5B intentionally does not yet implement the pyPIQUE → HSQA_DBN conversi
 - `ipykernel`, `jupyter_client`, `nbformat`, and `nbconvert` for notebook workflows
 - Any additional system tools required by optional module features, such as Quarto or a LaTeX toolchain for selected document/presentation exports
 
-Clone the repository with its submodules:
+Clone PAH without recursively initializing any modules:
 
 ```bash
-git clone --recurse-submodules <PAH_REPO_URL>
+git clone <PAH_REPO_URL>
 cd Project_Assistant_Host
 ```
 
-The Code Analysis Lab providers are normal PAH Git submodules. Add them from their canonical GitHub repositories once in the PAH repository:
+**PAH owns no Git submodules.** Keep the separately owned source repositories
+(such as `Code_Repository_Cataloguer`, `pyPIQUE`, `HSQA_DBN`, `ML_Lab`,
+`Research_Document_Workbench`, and `Research_Paper_Repository_Manager`) as
+sibling checkouts alongside `Project_Assistant_Host`. PAH's package setup
+installs Python components from those independent repositories; workspace module
+selection and runtime instances do not populate or track `PAH/modules/`.
 
-```bash
-git submodule add git@github.com:bportil1/pyPIQUE.git modules/pypique
-git submodule add git@github.com:bportil1/HSQA_DBN.git modules/hsqa_dbn
-```
-
-Commit the resulting `.gitmodules` entries and gitlinks in PAH. Thereafter, ordinary clones use `--recurse-submodules`, and `./scripts/setup.sh` installs Code Analyzer, `pyPIQUE[full]`, and `hsqa-dbn[visual]` editable into PAH's `.venv`, allowing their `pah.modules` and `pah.runtimes` entry points to be discovered automatically.
+If migrating an older PAH checkout with populated tracked submodules, first
+review `python3 scripts/retire_embedded_modules.py` and then explicitly run
+`python3 scripts/retire_embedded_modules.py --apply`. It moves all existing
+embedded contents to a timestamped sibling recovery directory and stages
+only the host Git's legacy gitlink removals. It **never** edits or deletes the
+standalone repositories. Commit the Git removals separately after review.
 
 Run the setup script:
 
@@ -354,8 +359,8 @@ Typical source-checkout provisioning commands are:
 ```bash
 python3 scripts/vendor_ace.py
 python3 scripts/vendor_xterm.py
-python3 modules/tech_documents/scripts/vendor_ace.py
-python3 modules/tech_documents/scripts/vendor_reveal.py
+python3 ../Research_Document_Workbench/scripts/vendor_ace.py
+python3 ../Research_Document_Workbench/scripts/vendor_reveal.py
 ```
 
 These are local provisioning steps rather than runtime CDN dependencies. Once the assets are present in the repositories' static directories, normal PAH use loads them locally.
@@ -388,17 +393,19 @@ Use `--no-browser` if you do not want PAH to open a browser automatically.
 
 ## Updating
 
-PAH and its specialized tools are separate Git repositories connected through submodules. The parent repository records known-compatible module revisions.
+PAH is a standalone orchestration host. It does not own or advance module
+source repositories. Keep compatible module repositories as sibling checkouts,
+then use the PAH setup/update lifecycle to install their Python packages from
+those standalone sources. Workspace module enablement is a separate user action.
 
-To restore submodules to the revisions recorded by PAH:
+Older PAH checkouts may still contain tracked Git submodules. To migrate safely,
+first run `python3 scripts/retire_embedded_modules.py` (read-only preview), then
+`python3 scripts/retire_embedded_modules.py --apply` to preserve existing embedded
+worktrees in a sibling recovery directory and stage the gitlink removals. Never
+clean, hard-reset, or delete those directories before reviewing their changes.
 
-```bash
-git submodule update --init --recursive
-```
-
-Following the newest remote commit of every module is a different operation and can expose local integration changes or incompatible revisions. It should be done deliberately rather than as part of normal application startup.
-
-The project is moving toward a more unified component lifecycle so normal updates can verify module revisions, Python dependencies, browser assets, and hosting compatibility together. Until that lifecycle is fully consolidated, source checkouts should treat module updates and browser-asset provisioning as explicit maintenance operations.
+`Project_Assistant_Host/modules/` is an ignored, empty source placeholder;
+module runtime state lives separately under the per-instance runtime directory.
 
 ## Tests
 
@@ -542,9 +549,9 @@ remains independently runnable; PAH discovers its module/runtime adapters throug
 Python entry points, launches ML Lab's own UI, docks it in the Labs workspace, and
 imports recognized ML Lab result artifacts into PAH's neutral artifact registry.
 
-Add the ML Lab repository once at `modules/ml_lab` (for example with the helper
-`./scripts/add_ml_lab_submodule.sh <ml-lab-git-url>`), then run `./scripts/setup.sh`
-to install `modules/ml_lab[ui]` into PAH's environment.
+Maintain ML Lab at its standalone source checkout (`../ML_Lab` relative to PAH),
+then run `./scripts/setup.sh` to install `../ML_Lab[ui]` into PAH's environment.
+No PAH Git submodule is required or supported.
 
 
 ### P5-01: explicit host context identity

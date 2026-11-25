@@ -1,7 +1,7 @@
 """PAH-managed component revision status and safe update operations.
 
 This service is deliberately host-owned.  Modules remain ordinary standalone Git
-repositories/submodules; PAH only reports and coordinates their revision state.
+repositories; PAH only reports and coordinates their revision state.
 Remote access is never implicit in a status read: callers must explicitly ask to
 fetch or update.
 """

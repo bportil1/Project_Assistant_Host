@@ -10,13 +10,13 @@ def test_ml_lab_component_is_registered_for_setup_and_entry_point_discovery():
 
     python = {item.key: item for item in PYTHON_COMPONENTS}
     component = python["ml_lab"]
-    assert component.path == "modules/ml_lab"
-    assert component.install_spec == "modules/ml_lab[ui]"
+    assert component.path == "../ML_Lab"
+    assert component.install_spec == "../ML_Lab[ui]"
     assert component.pah_entry_points == (("pah.modules", "ml_lab"), ("pah.runtimes", "ml_lab"))
     assert component.compatibility_tests == ("tests/test_pah_integration.py",)
 
     git = {item.key: item for item in GIT_COMPONENTS}
-    assert git["ml_lab"].path == "modules/ml_lab"
+    assert git["ml_lab"].path == "../ML_Lab"
 
 
 def test_ml_lab_launcher_is_docked_in_pah_shell():

@@ -4672,7 +4672,7 @@
     if (!state.documents.available) {
       badge.className = 'badge missing';
       badge.textContent = 'docs missing';
-      setDocumentMessage('DocumentEngine is not installed. Add the tech-documents submodule and run scripts/setup.sh.', 'error');
+      setDocumentMessage('DocumentEngine is not installed. Install Research_Document_Workbench from its standalone repository and run scripts/setup.sh.', 'error');
       return;
     }
     badge.className = 'badge ready';
@@ -5186,7 +5186,7 @@
     if (!state.references.available) {
       badge.className = 'badge missing';
       badge.textContent = 'refs missing';
-      setReferenceMessage('ReferenceManager is not installed. Add the reference-manager submodule and run scripts/setup.sh.', 'error');
+      setReferenceMessage('ReferenceManager is not installed. Install Research_Paper_Repository_Manager from its standalone repository and run scripts/setup.sh.', 'error');
       return;
     }
     if (!state.references.configured) {
