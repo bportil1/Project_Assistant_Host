@@ -119,13 +119,9 @@ PYTHON_COMPONENTS = (
         install_spec="../Research_Paper_Repository_Manager[web]",
         imports=("reference_manager", "fitz", "flask"),
     ),
-    PythonComponent(
-        key="paper_searcher",
-        label="Research Search",
-        path="../Research_Paper_Repository_Manager/modules/paper_searcher",
-        install_spec="../Research_Paper_Repository_Manager/modules/paper_searcher",
-        imports=("paper_searcher", "flask"),
-    ),
+    # Research Search is a *companion service* owned by Reference Manager,
+    # not another PAH Python distribution. It is surfaced via FullTools and
+    # must not be required, installed or updated from nested Git checkouts.
 )
 
 
@@ -165,11 +161,8 @@ GIT_COMPONENTS = (
         label="Reference Manager",
         path="../Research_Paper_Repository_Manager",
     ),
-    GitComponent(
-        key="paper_searcher",
-        label="Research Search",
-        path="../Research_Paper_Repository_Manager/modules/paper_searcher",
-    ),
+    # Research Search is owned by the Reference Manager's runtime contract;
+    # no nested checkout is managed by the PAH Git component lifecycle.
 )
 
 

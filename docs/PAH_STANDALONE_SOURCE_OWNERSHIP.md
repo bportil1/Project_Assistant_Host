@@ -16,8 +16,15 @@ PAH resolves local Python packages from *adjacent* checkouts:
 | HSQA_DBN | `../HSQA_DBN` |
 | Document Workbench | `../Research_Document_Workbench` |
 | Reference Manager | `../Research_Paper_Repository_Manager` |
-| Research Search | `../Research_Paper_Repository_Manager/modules/paper_searcher` (source-owner nested component) |
+| Research Search | Optional companion of Reference Manager; **not a PAH-managed checkout or installed distribution** |
 | PAH_Shared | `../PAH_Shared` |
+
+Only the sibling standalone repositories listed above are managed as source checkouts.
+The Research Search companion is discovered and launched by the Reference Manager runtime
+when that optional service is available; its absence must not block PAH setup,
+Doctor readiness, or `--latest-modules`. Research Search's independent availability
+is displayed by its companion UI status, not by PAH's Python/Git component matrix.
+No PAH lifecycle command should initialize, reinstall, or fast-forward nested companion modules.
 
 Missing required source repositories (including PAH_Shared) fail preflight before pip installation. An installed wheel with a matching version is **not** a substitute for the standalone source checkout.
 PAH resolves PAH_Shared version constraints from the real standalone sources,

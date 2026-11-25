@@ -17,7 +17,7 @@ from pah.lifecycle import (
 )
 
 
-def test_component_registry_covers_nested_modules_and_browser_assets():
+def test_component_registry_uses_standalone_repositories_and_browser_assets():
     components = {component.key: component for component in PYTHON_COMPONENTS}
     assert components["code_analyzer"].install_spec.endswith("[web]")
     assert components["pypique"].install_spec == "../pyPIQUE[full]"
@@ -30,7 +30,8 @@ def test_component_registry_covers_nested_modules_and_browser_assets():
     assert components["ml_lab"].pah_entry_points == (("pah.modules", "ml_lab"), ("pah.runtimes", "ml_lab"))
     assert components["tech_documents"].install_spec.endswith("[web]")
     assert components["reference_manager"].install_spec.endswith("[web]")
-    assert components["paper_searcher"].path == "../Research_Paper_Repository_Manager/modules/paper_searcher"
+    assert "paper_searcher" not in components  # Optional Reference Manager companion
+    assert all("/modules/" not in item.path for item in components.values())
 
     git_components = {component.key: component for component in GIT_COMPONENTS}
     assert git_components["code_analyzer"].default_branch == "main"
@@ -38,7 +39,8 @@ def test_component_registry_covers_nested_modules_and_browser_assets():
     assert git_components["pypique"].repository_url == "git@github.com:bportil1/pyPIQUE.git"
     assert git_components["hsqa_dbn"].path == "../HSQA_DBN"
     assert git_components["hsqa_dbn"].repository_url == "git@github.com:bportil1/HSQA_DBN.git"
-    assert git_components["paper_searcher"].path == "../Research_Paper_Repository_Manager/modules/paper_searcher"
+    assert "paper_searcher" not in git_components
+    assert all("/modules/" not in item.path for item in git_components.values())
 
     assets = {asset.key: asset for asset in BROWSER_ASSETS}
     assert assets["pah_ace"].script == "scripts/vendor_ace.py"
@@ -48,12 +50,14 @@ def test_component_registry_covers_nested_modules_and_browser_assets():
 
 
 def test_component_and_asset_readiness_are_path_based(tmp_path: Path):
-    component = next(item for item in PYTHON_COMPONENTS if item.key == "paper_searcher")
-    component_root = tmp_path / component.path
+    host = tmp_path / "Project_Assistant_Host"
+    host.mkdir()
+    component = next(item for item in PYTHON_COMPONENTS if item.key == "reference_manager")
+    component_root = (host / component.path).resolve()
     component_root.mkdir(parents=True)
-    assert not _component_present(tmp_path, component)
+    assert not _component_present(host, component)
     (component_root / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
-    assert _component_present(tmp_path, component)
+    assert _component_present(host, component)
 
     asset = next(item for item in BROWSER_ASSETS if item.key == "pah_xterm")
     assert not _asset_present(tmp_path, asset)
@@ -76,7 +80,6 @@ def test_doctor_json_shape_explains_missing_fragments(tmp_path: Path):
         "ml_lab",
         "tech_documents",
         "reference_manager",
-        "paper_searcher",
     }
     assert {item["key"] for item in report["assets"]} >= {
         "pah_ace",

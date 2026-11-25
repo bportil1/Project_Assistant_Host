@@ -123,6 +123,8 @@ def preflight_standalone_sources(root: Path) -> None:
         source = (root / component.path).resolve()
         if component.key != "pah" and (source == root.resolve() or root.resolve() in source.parents):
             missing.append(f"{component.label}: source must not resolve inside PAH: {source}")
+        elif component.key != "pah" and source.parent != root.resolve().parent:
+            missing.append(f"{component.label}: source must be a sibling checkout of PAH: {source}")
         elif component.required and not _component_present(root, component):
             missing.append(f"{component.label}: {source}")
     # A previously installed PAH_Shared wheel is not authoritative source.
@@ -660,7 +662,7 @@ def print_doctor(report: dict) -> None:
     else:
         print("\n✗ PAH has missing required components.")
         print("  Repair: ./scripts/setup.sh")
-        print("  Submodules only: git submodule update --init --recursive")
+        print("  Module source updates are managed in standalone sibling repositories, not PAH submodules.")
         print("  Browser assets only: python3 scripts/vendor_assets.py")
 
 
@@ -841,11 +843,8 @@ def advance_latest_modules(
     root_changes = _pointer_change_lines(root)
     if root_changes:
         parent_changes["PAH host"] = root_changes
-    reference_root = root / "modules" / "reference_manager"
-    reference_changes = _pointer_change_lines(reference_root)
-    if reference_changes:
-        parent_changes["Reference Manager"] = reference_changes
-
+    # Nested module checkouts are not development roots or update targets.
+    # Do not inspect or mutate Reference Manager's companion submodules here.
     print("\n== Module revision summary ==")
     for item in results:
         old = item["old"][:10]
