@@ -4,10 +4,15 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from importlib import metadata
+from inspect import isclass
+import logging
 from typing import Any, Iterable, Mapping
 
 from pah.contracts import ModuleContext, RuntimeLaunch, RuntimeStatus, coerce_runtime_launch, coerce_runtime_status
 from pah.module_processes import ModuleProcessLauncher
+
+
+_LOG = logging.getLogger(__name__)
 
 
 class RuntimeRegistryError(RuntimeError):
@@ -54,8 +59,16 @@ class RuntimeRegistry:
             self.register(adapter)
 
     def register(self, adapter: Any, *, replace: bool = False) -> Any:
-        if callable(adapter) and not hasattr(adapter, "status") and not isinstance(adapter, Mapping):
+        # A class has a callable `status` *descriptor* but is not an adapter
+        # instance.  Treat classes as constructors before testing for factories.
+        # All registration paths (manual and installed entry points) use this
+        # one normalization point, so nothing can retain an unbound `status`.
+        if isclass(adapter):
             adapter = adapter()
+        elif callable(adapter) and not hasattr(adapter, "status") and not isinstance(adapter, Mapping):
+            adapter = adapter()
+        if isclass(adapter):
+            raise RuntimeRegistryError("Runtime adapter factory returned an uninstantiated class")
         module_id = _adapter_module_id(adapter)
         if module_id in self._adapters and not replace:
             raise RuntimeRegistryError(f"Runtime adapter for {module_id!r} is already registered")
@@ -93,8 +106,23 @@ class RuntimeRegistry:
                 launchable=False,
                 message="No runtime adapter is registered with PAH.",
             )
-        result = _adapter_method(adapter, "status")(context=context)
-        return coerce_runtime_status(result, module_id=module_id)
+        try:
+            result = _adapter_method(adapter, "status")(context=context)
+            return coerce_runtime_status(result, module_id=module_id)
+        except Exception as exc:
+            # Status observation is read-only. A malformed or temporarily
+            # failing submodule must not take down unrelated workflow stages
+            # or the orchestration/modules endpoint. The failure stays visible
+            # as an unavailable module and in the host's error log.
+            _LOG.exception("Runtime status failed for module %s", module_id)
+            return RuntimeStatus(
+                module_id=module_id,
+                available=False,
+                running=False,
+                launchable=False,
+                message=f"Runtime status failed ({type(exc).__name__}): {exc}",
+                metadata={"runtime_error": type(exc).__name__},
+            )
 
     def launch(self, module_id: str, context: ModuleContext | None = None, *, detached: bool = False) -> RuntimeLaunch:
         module_id = str(module_id)
@@ -327,9 +355,10 @@ class RuntimeRegistry:
             return ()
         for entry_point in candidates:
             try:
-                adapter = entry_point.load()
-                adapter = adapter() if callable(adapter) and not hasattr(adapter, "status") else adapter
-                self.register(adapter, replace=True)
+                # Registration owns constructor/factory normalization. Do not
+                # duplicate the old hasattr(status) heuristic here: it kept
+                # CodeAnalyzerRuntimeAdapter as an unbound class.
+                adapter = self.register(entry_point.load(), replace=True)
                 discovered.append(adapter)
             except Exception as exc:
                 self._discovery_errors.append({"entry_point": entry_point.name, "error": str(exc)})
